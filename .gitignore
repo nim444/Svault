@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.uv/
+
+# Svault runtime (never commit unlocked state)
+.svault/unlocked
+.svault/*.key
+
+# Encrypted vault IS safe to commit — it's age-encrypted
+# .svault/vault.age  ← intentionally NOT ignored
+
+# OS
+.DS_Store
