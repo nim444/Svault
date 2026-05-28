@@ -34,15 +34,15 @@
 - [x] Per-vault `.gitignore` written at init — `.session` can never be accidentally committed
 - [x] 12 unit tests — all passing
 
-#### Enhancement: Interactive TUI (Ratatui)
-- [ ] **Ratatui-powered CLI** — rich terminal UI for interactive workflows
-  - [ ] `svault init` — form-based setup (text fields, dropdown menus, toggles for auth methods)
-  - [ ] `svault list` — interactive vault browser (arrow keys, enter to select, view details)
-  - [ ] `svault secret list` — interactive secret browser with quick actions (add, remove, copy)
-  - [ ] `svault unlock` — interactive auth selection (highlighted menu for enabled methods)
-  - [ ] `svault status` — live dashboard showing vault state, lock timers, session info
-  - [ ] `--tui` flag — enable TUI mode (default for interactive terminal, fallback to `dialoguer` for scripts)
-  - [ ] `--plain` flag — disable TUI, use simple text output for piping
+#### [DONE] Enhancement: Interactive TUI (Ratatui)
+- [x] **Ratatui-powered TUI** — run `svault` with no subcommand to launch it (all subcommands still work for scripting)
+  - [x] Vault list (home) — arrow keys / j/k to navigate, lock state shown inline (locked / unlocked)
+  - [x] `c` create — form-based setup (name, description, allow agent select, agent list, rate limit, auto-lock toggle, auto-lock timer, login method select, passphrase + confirm)
+  - [x] `u` unlock / `l` lock — lock-aware: locked vaults route through a passphrase prompt and resume the pending action on success
+  - [x] `s` settings — edit form (description, allow agent, rate limit, auto-lock, timer, login method), re-signs `meta.yaml`
+  - [x] enter → secret browser — `a` add (set), enter/`g` view (get, masked toggle), `d` delete with confirm; requires an unlocked vault
+  - [x] Cached session passphrase reused everywhere — no re-prompt while unlocked; `l` from any screen locks and wipes the session
+  - [x] Plain-ASCII status line (ok / warning / error / note), context key hints in the footer
 
 ### [TODO] Step 2 — Policy engine
 - [ ] `svault.policy.yaml` — define callers, scopes, tiers per vault

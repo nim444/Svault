@@ -24,6 +24,10 @@ clap = { version = "4", features = ["derive"] }
 console = "0.15"
 dialoguer = "0.11"
 
+# Interactive TUI (Step 1+)
+ratatui = "0.29"
+crossterm = "0.28"
+
 # Crypto — AES-256-GCM + Argon2id + HMAC-SHA256
 aes-gcm = "0.10"
 argon2 = "0.5"
