@@ -1,5 +1,12 @@
 # Svault
 
+[![CI](https://github.com/Soluzy/Svault/actions/workflows/ci.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/svault-ai.svg)](https://crates.io/crates/svault-ai)
+[![downloads](https://img.shields.io/crates/d/svault-ai.svg)](https://crates.io/crates/svault-ai)
+[![docs.rs](https://img.shields.io/docsrs/svault-ai)](https://docs.rs/svault-ai)
+[![license](https://img.shields.io/crates/l/svault-ai.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
+
 > The secret manager that knows an AI is asking.
 
 Svault is an AI-aware secret access layer written in Rust. It sits between AI agents and your credentials — enforcing structured requests, detecting suspicious patterns, and making sure an agent has a real reason before it touches anything sensitive.
