@@ -36,6 +36,22 @@ curl -fsSL https://svault.soluzy.net/install.sh | bash
 
 ---
 
+## Interactive mode (TUI)
+
+Run `svault` with no subcommand to open the full-screen terminal UI:
+
+```bash
+svault
+```
+
+From the keyboard you can browse all vaults (with live lock state), `c` create,
+`u` unlock / `l` lock, `s` edit settings, and — once a vault is unlocked —
+`a` add, view, and `d` delete secrets. The TUI reuses the cached session
+passphrase, so an unlocked vault is never re-prompted. Every subcommand below
+still works for scripting and automation.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -120,6 +136,7 @@ The `reason` field becomes required in Step 2. An AI that cannot explain why it 
 ## Commands
 
 ```bash
+svault                             # launch the interactive TUI (no subcommand)
 svault create                      # create encrypted vault (name, description, agents, rate limit, auto-lock, login)
 svault settings [VAULT]            # view or change a vault's settings
 svault unlock   [VAULT]            # unlock vault, cache passphrase for session
@@ -163,7 +180,7 @@ svault install [--platform claude|cursor|...]             # wire into AI platfor
 | Phase | Status | What |
 |---|---|---|
 | **Step 1** | DONE | Local encrypted vault with AES-256-GCM + Argon2id |
-| **Step 1+** | NEXT | Interactive CLI with Ratatui TUI (forms, browsers, dashboards) |
+| **Step 1+** | DONE | Interactive Ratatui TUI (run `svault` with no args) — forms, browsers, lock-aware secret management |
 | **Step 2** | TODO | Policy engine — `reason` field, capability checks, rate limiting |
 | **Step 3** | TODO | Daemon + multi-select auth (Passphrase, YubiKey, TOTP, Touch ID/Face ID) |
 | **Step 4** | TODO | Desktop GUI (Tauri) for vault management + system tray |

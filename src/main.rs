@@ -3,6 +3,7 @@ mod crypto;
 mod meta;
 mod passphrase;
 mod session;
+mod tui;
 mod vault;
 
 use anyhow::Result;
@@ -17,8 +18,9 @@ use vault::{list_vault_dirs, Vault, SVAULT_DIR};
 #[derive(Parser)]
 #[command(name = "svault", about = "AI-aware secret access layer", version)]
 struct Cli {
+    /// Run with no subcommand to launch the interactive TUI.
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -80,7 +82,11 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
+    let Some(command) = cli.command else {
+        // No subcommand → interactive TUI.
+        return tui::run();
+    };
+    match command {
         Commands::Create { name }                      => cmd_create(name),
         Commands::Settings { vault }                   => cmd_settings(vault.as_deref()),
         Commands::Secret { action, name, vault }       => cmd_secret(&action, name.as_deref(), vault.as_deref()),
