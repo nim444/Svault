@@ -108,7 +108,7 @@ The `reason` field becomes required in Step 2. An AI that cannot explain why it 
   my-project/
     vault.enc     ← AES-256-GCM encrypted secrets  (safe to commit)
     meta.yaml     ← name, description, access rules (safe to commit, HMAC-signed)
-    .gitignore    ← auto-written at init, blocks .session from being committed
+    .gitignore    ← auto-written at create, blocks .session from being committed
     .session      ← passphrase cache while unlocked (gitignored, mode 0600)
 ```
 
@@ -121,21 +121,24 @@ The `reason` field becomes required in Step 2. An AI that cannot explain why it 
 
 ```bash
 svault create                      # create encrypted vault (name, description, agents, rate limit, auto-lock, login)
-svault settings [--vault NAME]     # view or change a vault's settings
-svault unlock [--vault NAME]       # unlock vault, cache passphrase for session
-svault lock   [--vault NAME]       # clear cached passphrase
-svault lock   --all                # lock all vaults
+svault settings [VAULT]            # view or change a vault's settings
+svault unlock   [VAULT]            # unlock vault, cache passphrase for session
+svault lock     [VAULT]            # clear cached passphrase
+svault lock     --all              # lock all vaults
 svault status                      # show lock state of all vaults
 
-svault secret add    <NAME> [--vault NAME]   # add or update a secret
-svault secret get    <NAME> [--vault NAME]   # retrieve a secret value
-svault secret list          [--vault NAME]   # list secret names (never values)
-svault secret remove <NAME> [--vault NAME]   # delete a secret
+svault secret add    <NAME> [-v VAULT]   # add or update a secret
+svault secret get    <NAME> [-v VAULT]   # retrieve a secret value
+svault secret list          [-v VAULT]   # list secret names (never values)
+svault secret remove <NAME> [-v VAULT]   # delete a secret
 
 svault vaults                      # list all vaults with metadata
 
-svault get <NAME> --scope <S> --reason "<R>"   # structured request (Step 2)
-svault install [--platform claude|cursor|...]  # wire into AI platform (Step 4)
+svault get <NAME> --scope <S> --reason "<R>" [-v VAULT]   # structured request (Step 2)
+svault install [--platform claude|cursor|...]             # wire into AI platform (Step 4)
+
+# VAULT is positional for create/settings/unlock/lock; secret & get use -v/--vault.
+# Omit it to use the only vault, or get prompted to pick when several exist.
 ```
 
 ---
