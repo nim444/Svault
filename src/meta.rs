@@ -51,6 +51,64 @@ impl Default for AccessConfig {
     }
 }
 
+/// How a vault is unlocked. Only passphrase is wired today; yubikey and
+/// google_auth are reserved for later steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoginMethod {
+    Passphrase,
+    Yubikey,
+    GoogleAuth,
+}
+
+impl Default for LoginMethod {
+    fn default() -> Self {
+        LoginMethod::Passphrase
+    }
+}
+
+impl std::fmt::Display for LoginMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoginMethod::Passphrase => write!(f, "passphrase"),
+            LoginMethod::Yubikey => write!(f, "yubikey"),
+            LoginMethod::GoogleAuth => write!(f, "google auth"),
+        }
+    }
+}
+
+/// Per-vault behavioural settings (separate from access policy).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultSettings {
+    /// Re-lock the vault when idle. Default: true.
+    #[serde(default = "default_autolock")]
+    pub autolock: bool,
+    /// How long before an idle vault auto-locks (e.g. "1d", "12h", "30m").
+    #[serde(default = "default_autolock_timer")]
+    pub autolock_timer: String,
+    /// How the vault is unlocked.
+    #[serde(default)]
+    pub login_method: LoginMethod,
+}
+
+fn default_autolock() -> bool {
+    true
+}
+
+fn default_autolock_timer() -> String {
+    "1d".to_string()
+}
+
+impl Default for VaultSettings {
+    fn default() -> Self {
+        Self {
+            autolock: default_autolock(),
+            autolock_timer: default_autolock_timer(),
+            login_method: LoginMethod::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultMeta {
     pub name: String,
@@ -61,6 +119,8 @@ pub struct VaultMeta {
     pub version: u32,
     #[serde(default)]
     pub access: AccessConfig,
+    #[serde(default)]
+    pub settings: VaultSettings,
 }
 
 fn default_version() -> u32 {
@@ -68,13 +128,14 @@ fn default_version() -> u32 {
 }
 
 impl VaultMeta {
-    pub fn new(name: String, description: String, access: AccessConfig) -> Self {
+    pub fn new(name: String, description: String, access: AccessConfig, settings: VaultSettings) -> Self {
         Self {
             name,
             description,
             created_at: Utc::now().to_rfc3339(),
             version: 1,
             access,
+            settings,
         }
     }
 

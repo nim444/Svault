@@ -21,8 +21,10 @@
 ## Progress
 
 ### [DONE] Step 1 — Local encrypted vault
-- [x] `svault init` — interactive setup, name / description / allow_agent / rate_limit / passphrase
-- [x] `svault secret add | get | list | remove`
+- [x] `svault create` — interactive setup: name / description / allow_agent / rate_limit / auto-lock / auto-lock timer (default 1d) / login method / passphrase (`init` kept as alias)
+- [x] `svault settings [--vault NAME]` — view and edit a vault's settings, re-signs meta.yaml
+- [x] `svault secret add | get | list | remove` — all accept `--vault NAME`; prompts which vault when several exist
+- [x] Login method field — passphrase today; yubikey + google auth reserved for later steps
 - [x] AES-256-GCM encryption, Argon2id key derivation
 - [x] HMAC-SHA256 signed `meta.yaml` — tampering is detectable
 - [x] `ZeroizeOnDrop` on `VaultKey` and secret store — memory wiped on drop

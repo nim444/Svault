@@ -39,10 +39,11 @@ curl -fsSL https://svault.soluzy.net/install.sh | bash
 ## Quick Start
 
 ```bash
-# 1. Create an encrypted vault
-svault init
+# 1. Create an encrypted vault (prompts for name, description, agents,
+#    rate limit, auto-lock, auto-lock timer, login method, passphrase)
+svault create
 
-# 2. Add secrets
+# 2. Add secrets (use --vault NAME when you have more than one vault)
 svault secret add DB_URL
 svault secret add API_KEY
 
@@ -53,10 +54,13 @@ svault unlock
 svault secret get DB_URL
 svault secret list
 
-# 5. Check lock status
+# 5. View or change a vault's settings
+svault settings
+
+# 6. Check lock status
 svault status
 
-# 6. Lock when done
+# 7. Lock when done
 svault lock
 ```
 
@@ -116,16 +120,17 @@ The `reason` field becomes required in Step 2. An AI that cannot explain why it 
 ## Commands
 
 ```bash
-svault init                        # create encrypted vault (prompts for name, passphrase, access rules)
+svault create                      # create encrypted vault (name, description, agents, rate limit, auto-lock, login)
+svault settings [--vault NAME]     # view or change a vault's settings
 svault unlock [--vault NAME]       # unlock vault, cache passphrase for session
 svault lock   [--vault NAME]       # clear cached passphrase
 svault lock   --all                # lock all vaults
 svault status                      # show lock state of all vaults
 
-svault secret add    <NAME>        # add or update a secret
-svault secret get    <NAME>        # retrieve a secret value
-svault secret list                 # list secret names (never values)
-svault secret remove <NAME>        # delete a secret
+svault secret add    <NAME> [--vault NAME]   # add or update a secret
+svault secret get    <NAME> [--vault NAME]   # retrieve a secret value
+svault secret list          [--vault NAME]   # list secret names (never values)
+svault secret remove <NAME> [--vault NAME]   # delete a secret
 
 svault vaults                      # list all vaults with metadata
 

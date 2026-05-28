@@ -62,6 +62,12 @@ impl Vault {
         Ok(Self { vault_dir: vault_dir.to_path_buf(), meta, key })
     }
 
+    /// Re-sign and persist updated metadata (settings, description, access).
+    /// Requires the vault to be open so the HMAC can be recomputed with the key.
+    pub fn save_meta(&self, meta: &VaultMeta) -> Result<()> {
+        meta.save(&self.vault_dir, self.key.bytes())
+    }
+
     pub fn add_secret(&self, name: &str, value: &str) -> Result<()> {
         let mut secrets = self.load_secrets()?;
         secrets.insert(name.to_string(), value.to_string());
@@ -130,7 +136,7 @@ pub fn list_vault_dirs_in(base: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::meta::{AccessConfig, VaultMeta};
+    use crate::meta::{AccessConfig, VaultMeta, VaultSettings};
     use tempfile::TempDir;
 
     fn tmp_vault(dir: &TempDir, name: &str, passphrase: &str) -> Vault {
@@ -139,6 +145,7 @@ mod tests {
             name.to_string(),
             "test vault".to_string(),
             AccessConfig::default(),
+            VaultSettings::default(),
         );
         Vault::init(&vault_dir, passphrase, meta).expect("init failed")
     }
