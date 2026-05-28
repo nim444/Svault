@@ -1,18 +1,11 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-.venv/
-.uv/
+# Rust
+target/
+Cargo.lock
 
-# Svault runtime (never commit unlocked state)
-.svault/unlocked
-.svault/*.key
-
-# Encrypted vault IS safe to commit — it's age-encrypted
-# .svault/vault.age  ← intentionally NOT ignored
+# Svault user vaults — NEVER commit to public repo
+# Each user creates their own .svault/ directory locally
+# This includes vault.enc, meta.yaml, session files, etc.
+.svault/
 
 # OS
 .DS_Store

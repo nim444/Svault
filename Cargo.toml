@@ -1,0 +1,48 @@
+[package]
+name = "svault"
+version = "0.1.0"
+edition = "2021"
+authors = ["Soluzy <nima@soluzy.ro>"]
+description = "AI-aware secret access layer — enforces structured requests and detects suspicious patterns"
+license = "Apache-2.0"
+repository = "https://github.com/Soluzy/Svault"
+homepage = "https://github.com/Soluzy/Svault"
+documentation = "https://docs.rs/svault"
+readme = "README.md"
+keywords = ["security", "secrets", "vault", "ai", "encryption"]
+categories = ["authentication", "cryptography", "command-line-utilities"]
+
+[[bin]]
+name = "svault"
+path = "src/main.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Terminal output + prompts
+console = "0.15"
+dialoguer = "0.11"
+
+# Crypto — AES-256-GCM + Argon2id + HMAC-SHA256
+aes-gcm = "0.10"
+argon2 = "0.5"
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+hex = "0.4"
+
+# Memory safety — zero secrets on drop
+zeroize = { version = "1", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Error handling
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"

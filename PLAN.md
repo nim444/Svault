@@ -1,52 +1,145 @@
-# Svault — MVP Plan
-
-## Goal
-
-A working local encrypted vault you can commit to git safely.
-Nothing fancy. Just: init → add secret → get secret → it works.
-
-## MVP Steps
-
-### Step 1 — Encrypted vault (local, no daemon)
-- [ ] `svault init` — generate age keypair, store private key protected by passphrase, create empty `vault.age`
-- [ ] `svault secret add <NAME>` — prompt for value, encrypt and append to vault
-- [ ] `svault secret get <NAME>` — prompt for passphrase, decrypt vault, return value
-- [ ] `svault secret list` — list secret names only (never values)
-- [ ] Vault file (`vault.age`) is safe to commit — encrypted at rest
-
-### Step 2 — Policy file
-- [ ] `svault.policy.yaml` — define callers, scopes, tiers
-- [ ] `svault get <NAME> --scope X --reason "..."` — structured request, validated against policy
-
-### Step 3 — Daemon + unlock
-- [ ] `svault unlock` — decrypt vault into memory, start local socket
-- [ ] `svault lock` — clear memory, stop socket
-- [ ] Daemon handles requests so passphrase only needed once per session
-
-### Step 4 — MCP tool
-- [ ] `svault mcp` — start MCP server exposing `svault_get_secret`
-- [ ] `svault install` — write MCP config to `.claude/settings.json`
-
-## What's NOT in MVP
-
-- Cloud tier / Claude scoring
-- Team dashboard
-- External backends (Vaultwarden, Infisical, etc.)
-- Touch ID / YubiKey
-- Binary distribution / install script
+# Svault — Build Plan
 
 ## Stack
 
-- Python 3.11+
-- `typer` — CLI framework
-- `rich` — terminal output (tables, colours, prompts)
-- `cryptography` — age-compatible encryption (Fernet or X25519+ChaCha20)
-- `pyyaml` — policy file parsing
-- `uv` — package management
+- **Rust** — single native binary, no runtime deps
+- `clap` — CLI argument parsing
+- `ratatui` — Terminal UI framework (TUI) for interactive CLI (Step 1+)
+- `crossterm` — Cross-platform terminal backend for Ratatui
+- `console` + `dialoguer` — rich terminal output and prompts (fallback for non-TUI mode)
+- `aes-gcm` — AES-256-GCM encryption
+- `argon2` — Argon2id key derivation (GPU-resistant)
+- `hmac` + `sha2` — HMAC-SHA256 meta.yaml integrity + TOTP (Google Authenticator)
+- `zeroize` — secrets zeroed from memory on drop
+- `totp-rs` — Time-based OTP (TOTP) generation + validation for Google Authenticator (Step 3)
+- `qrcode` — QR code generation for TOTP enrollment (Step 3)
+- `yubico` — YubiKey HMAC-SHA1 challenge-response (Step 3)
+- `security-framework` — macOS Touch ID / Face ID via Keychain (Step 3, macOS only)
+- `tauri` — Cross-platform GUI client (Rust + WebView, Step 4)
+- `serde_json` — JSON serialization for GUI ↔ daemon communication (Step 4)
+
+## Progress
+
+### ✅ Step 1 — Local encrypted vault
+- [x] `svault init` — interactive setup, name / description / allow_agent / rate_limit / passphrase
+- [x] `svault secret add | get | list | remove`
+- [x] AES-256-GCM encryption, Argon2id key derivation
+- [x] HMAC-SHA256 signed `meta.yaml` — tampering is detectable
+- [x] `ZeroizeOnDrop` on `VaultKey` and secret store — memory wiped on drop
+- [x] `vault.enc` + `meta.yaml` safe to commit (encrypted / signed, no secret values)
+- [x] Session-based lock/unlock simulation (file-based, mode 0600, atomic write)
+- [x] `svault status` — lock state of all vaults
+- [x] Per-vault `.gitignore` written at init — `.session` can never be accidentally committed
+- [x] 12 unit tests — all passing
+
+#### Enhancement: Interactive TUI (Ratatui)
+- [ ] **Ratatui-powered CLI** — rich terminal UI for interactive workflows
+  - [ ] `svault init` — form-based setup (text fields, dropdown menus, toggles for auth methods)
+  - [ ] `svault list` — interactive vault browser (arrow keys, enter to select, view details)
+  - [ ] `svault secret list` — interactive secret browser with quick actions (add, remove, copy)
+  - [ ] `svault unlock` — interactive auth selection (highlighted menu for enabled methods)
+  - [ ] `svault status` — live dashboard showing vault state, lock timers, session info
+  - [ ] `--tui` flag — enable TUI mode (default for interactive terminal, fallback to `dialoguer` for scripts)
+  - [ ] `--plain` flag — disable TUI, use simple text output for piping
+
+### 🔲 Step 2 — Policy engine
+- [ ] `svault.policy.yaml` — define callers, scopes, tiers per vault
+- [ ] `svault get <NAME> --scope <S> --reason "<R>"` — structured request
+- [ ] Policy checks: reason present → capability check → rate limit → burst detection
+- [ ] Sensitivity tiers: `low` (auto-approve) / `medium` (log) / `high` (human confirm)
+- [ ] `svault policy check <caller>` — show what a caller can access
+
+### 🔲 Step 3 — Daemon + multi-select auth unlock
+- [ ] **Multi-select auth at init** — `svault init` prompts user to choose/combine auth methods:
+  - [ ] Passphrase (always available, works everywhere)
+  - [ ] YubiKey (HMAC-SHA1 challenge-response, hardware-backed)
+  - [ ] Google Authenticator (Time-based OTP, TOTP, phone-based)
+  - [ ] Touch ID / Face ID (macOS Keychain, biometric unlock)
+  - [ ] Users can enable any combination (e.g., Passphrase + YubiKey, Passphrase + OTP, Touch ID + Passphrase, all four)
+  - [ ] Store auth config in `meta.yaml` (which methods are enabled for this vault)
+- [ ] Real daemon — unlock once, serve requests over local Unix socket, no file-based session
+- [ ] `svault unlock` — interactive prompt shows enabled methods, user selects which to use
+  - [ ] Passphrase-only vault: `svault unlock` prompts for passphrase
+  - [ ] YubiKey-enabled vault: `svault unlock --yubikey` — HMAC-SHA1 challenge-response
+    - Challenge stored in `meta.yaml` at init (not secret)
+    - YubiKey slot 2 configured for HMAC-SHA1
+    - Response → Argon2id → vault key. Hardware never exposes the HMAC secret.
+  - [ ] OTP-enabled vault: `svault unlock --otp <code>` — 6-digit TOTP from Google Authenticator
+    - Secret seed stored encrypted in `meta.yaml` (useless without vault key)
+    - On init: QR code displayed, user scans with Google Authenticator / Authy / Microsoft Authenticator
+  - [ ] Touch ID / Face ID (macOS): `svault unlock --biometric` — fingerprint or face recognition
+    - Uses macOS Keychain to store vault key securely
+    - Prompts for biometric unlock, Keychain handles auth
+    - Falls back to passphrase if biometric fails
+    - macOS only; ignored on Linux/Windows
+  - [ ] Multi-method unlock: `svault unlock --yubikey --otp <code> --phrase --biometric` — user selects combination
+- [ ] Recovery fallback at init — passphrase OR recovery key if hardware methods are lost
+- [ ] Auto-lock: idle timeout (default 15 min) — reset on every secret request
+- [ ] Hard max lock (default 8h) — re-locks unconditionally regardless of activity
+- [ ] On lock: secrets wiped from memory immediately (`zeroize`)
+- [ ] Both timers configurable in `.svault/config.yaml`
+
+### 🔲 Step 4 — GUI client (Tauri)
+- [ ] `svault-gui` — cross-platform desktop app (macOS, Linux, Windows)
+  - [ ] **Vault dashboard** — list all vaults, show lock/unlock status, last accessed
+  - [ ] **Lock/unlock panel** — quick unlock with selected auth methods (passphrase, biometric, etc.)
+  - [ ] **Auto-lock settings** — visual controls for idle timeout (default 15 min) and hard max lock (default 8h)
+  - [ ] **Session monitor** — show active sessions, locked/unlocked state, auto-lock countdown timer
+  - [ ] **Secret management** — view secret names (never values), add/remove secrets with GUI
+  - [ ] **Policy viewer** — inspect what a caller can access (from `svault.policy.yaml`)
+  - [ ] **Status notifications** — system tray icon, notifications for lock/unlock, timeouts
+  - [ ] **Settings UI** — configure Svault defaults, daemon socket path, log level
+  - [ ] **Audit log viewer** — see who accessed what (from policy logs)
+  - [ ] Built with Tauri: lightweight, single binary, works offline, no runtime deps
+
+### 🔲 Step 5 — Platform install + MCP
+- [ ] `svault mcp` — start MCP server exposing `svault_get_secret(name, scope, reason)`
+- [ ] `svault install` — auto-detect platform, write MCP config
+- [ ] Claude Code: MCP server + PreToolUse hook (blocks direct `.env` reads) + PostToolUse hook (scans output for leaked credentials)
+- [ ] Cursor, Codex, Copilot, Aider, VS Code: MCP server
+- [ ] `--project` flag — project-scoped install, files are git-committable
+- [ ] GUI client integration — optional: Svault GUI can show active MCP sessions
+
+### 🔲 Cloud tier (optional)
+- [ ] `svault.soluzy.net/api/score` — Claude Haiku scores justification for anomaly detection
+- [ ] Personal plan $1–2/month — 10k scored requests/month
+- [ ] Team plan $8–15/month — shared audit dashboard, Slack alerts
+
+## Auth method comparison
+
+| Method | UX | Security | Notes |
+|---|---|---|---|
+| Passphrase | Type passphrase | Strong if long | Always available, works anywhere |
+| YubiKey | Touch key | Strong, hardware-backed | Fast daily use, requires YubiKey |
+| Google Authenticator (TOTP) | Scan QR + enter 6-digit code | Medium-strong, time-based | Works on phone, no hardware needed |
+| Touch ID / Face ID (macOS) | Fingerprint or face scan | Strong, biometric | Fastest unlock, macOS only |
+| Passphrase + YubiKey | Touch + type | Strongest (2FA) | Hardware + knowledge, high-security vaults |
+| Passphrase + TOTP | Type + enter 6-digit code | Very strong (2FA) | No hardware needed, something-you-know + something-you-have |
+| Passphrase + Touch ID | Type + biometric (macOS) | Very strong (2FA) | Knowledge + biometric, fastest on Mac |
+| YubiKey + Touch ID (macOS) | Touch key + fingerprint | Strongest (2FA hardware) | Hardware + biometric, maximum portability |
+| All four (Passphrase + YubiKey + TOTP + Touch ID) | Type + key + code + biometric | Maximum security | All factors; requires YubiKey + macOS |
+| Multi-select custom | User chooses enabled methods at init | Configurable | Flexible per-vault security posture |
+
+## Next Steps: Build Sequence
+
+1. **Step 1 Enhancement** — Interactive TUI with Ratatui (form-based init, interactive browsers, live dashboard)
+2. **Step 2** — Policy engine (structured requests with `reason` + capability checks)
+3. **Step 3** — Daemon + multi-select auth (passphrase, YubiKey, TOTP, Touch ID)
+4. **Step 4** — GUI client (Tauri desktop app for vault management)
+5. **Step 5** — MCP integration + platform installs (Claude Code, Cursor, etc.)
+6. **Cloud tier** (optional) — Justification scoring + premium plans
+
+## What's NOT planned (yet)
+
+- External backends (Vaultwarden, Infisical, AWS SM — v0.2)
+- Secret rotation
+- Windows support (session file uses Unix permissions; daemon design is Unix-first)
+- Linux biometric support (fingerprint readers — possible future, needs libpam + libfprint)
 
 ## Run locally
 
 ```bash
-uv sync
-uv run svault version
+cargo build --release
+./target/release/svault --help
+cargo test
 ```
