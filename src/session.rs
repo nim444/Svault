@@ -74,3 +74,43 @@ pub fn lock_all(svault_dir: &Path) -> Result<usize> {
     }
     Ok(count)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn unlock_caches_then_lock_clears() {
+        let dir = TempDir::new().unwrap();
+        let vault_dir = dir.path().join("v");
+        std::fs::create_dir_all(&vault_dir).unwrap();
+
+        assert!(!is_unlocked(&vault_dir));
+
+        unlock(&vault_dir, "my-pass").unwrap();
+        assert!(is_unlocked(&vault_dir));
+        assert_eq!(get_passphrase(&vault_dir).as_deref(), Some("my-pass"));
+
+        lock(&vault_dir).unwrap();
+        assert!(!is_unlocked(&vault_dir));
+        assert_eq!(get_passphrase(&vault_dir), None);
+    }
+
+    #[test]
+    fn lock_all_locks_every_unlocked_vault() {
+        let svault = TempDir::new().unwrap();
+        let a = svault.path().join("a");
+        let b = svault.path().join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        unlock(&a, "pa").unwrap();
+        unlock(&b, "pb").unwrap();
+
+        assert_eq!(lock_all(svault.path()).unwrap(), 2);
+        assert!(!is_unlocked(&a));
+        assert!(!is_unlocked(&b));
+        // Nothing left to lock the second time.
+        assert_eq!(lock_all(svault.path()).unwrap(), 0);
+    }
+}

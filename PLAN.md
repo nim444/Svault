@@ -32,7 +32,7 @@
 - [x] Session-based lock/unlock simulation (file-based, mode 0600, atomic write)
 - [x] `svault status` — lock state of all vaults
 - [x] Per-vault `.gitignore` written at init — `.session` can never be accidentally committed
-- [x] 12 unit tests — all passing
+- [x] 18 unit tests — all passing (crypto, vault, session, passphrase)
 
 #### [DONE] Enhancement: Interactive TUI (Ratatui)
 - [x] **Ratatui-powered TUI** — run `svault` with no subcommand to launch it (all subcommands still work for scripting)

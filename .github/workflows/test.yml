@@ -1,0 +1,35 @@
+name: test
+
+# Reusable build + test job. Each per-OS workflow calls this with its own
+# runner (and optional container) so every platform gets its own badge.
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: Runner image to run on.
+        required: true
+        type: string
+      container:
+        description: Optional container image (used for Fedora).
+        required: false
+        type: string
+        default: ""
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ${{ inputs.os }}
+    container: ${{ inputs.container }}
+    steps:
+      # Fedora's base image is minimal — install the C linker plus the tools
+      # checkout and rust-toolchain need. No-op on the bare-runner platforms.
+      - name: Install build tools (Fedora)
+        if: inputs.container != ''
+        run: dnf install -y gcc git tar
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --verbose
+      - run: cargo test --locked --verbose

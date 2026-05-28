@@ -38,3 +38,30 @@ pub fn check(passphrase: &str) -> Option<StrengthWarning> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strong_passphrase_passes() {
+        assert!(check("Str0ng!Phrase#99").is_none());
+    }
+
+    #[test]
+    fn short_passphrase_warns() {
+        assert!(check("ab1!").is_some());
+    }
+
+    #[test]
+    fn single_character_type_warns() {
+        // 16 chars but lowercase only — fails the variety check.
+        assert!(check("abcdefghijklmnop").is_some());
+    }
+
+    #[test]
+    fn common_word_warns() {
+        // Long and varied, but contains "password".
+        assert!(check("MyPassword123!").is_some());
+    }
+}

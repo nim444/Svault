@@ -1,0 +1,16 @@
+name: ubuntu
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ubuntu-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+    with:
+      os: ubuntu-latest
