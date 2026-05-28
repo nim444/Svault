@@ -1,5 +1,5 @@
 [package]
-name = "svault"
+name = "svault-ai"
 version = "0.1.0"
 edition = "2021"
 authors = ["Soluzy <nima@soluzy.ro>"]
@@ -7,7 +7,7 @@ description = "AI-aware secret access layer — enforces structured requests and
 license = "Apache-2.0"
 repository = "https://github.com/Soluzy/Svault"
 homepage = "https://github.com/Soluzy/Svault"
-documentation = "https://docs.rs/svault"
+documentation = "https://docs.rs/svault-ai"
 readme = "README.md"
 keywords = ["security", "secrets", "vault", "ai", "encryption"]
 categories = ["authentication", "cryptography", "command-line-utilities"]
