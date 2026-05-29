@@ -33,3 +33,14 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # Supply-chain gate (finding #9): fail on any RustSec advisory —
+      # vulnerabilities, unsound, or unmaintained — across the dependency tree.
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit --deny warnings

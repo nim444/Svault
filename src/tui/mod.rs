@@ -289,7 +289,8 @@ pub struct UnlockForm {
 
 pub struct Reveal {
     pub name: String,
-    pub value: String,
+    /// Wrapped so a revealed secret is wiped from memory when the modal closes (#6).
+    pub value: zeroize::Zeroizing<String>,
     pub masked: bool,
 }
 
@@ -724,6 +725,14 @@ impl App {
     }
 
     fn submit_recover(&mut self, mut form: RecoverForm) {
+        if let Err(e) = crate::passphrase::meets_floor(&form.new_pass) {
+            form.error = Some(e);
+            form.new_pass.clear();
+            form.confirm.clear();
+            form.focus = 1;
+            self.screen = Screen::Recover(form);
+            return;
+        }
         if form.new_pass != form.confirm {
             form.error = Some("Passphrases do not match".into());
             form.new_pass.clear();
@@ -1011,6 +1020,11 @@ impl App {
         }
         if form.passphrase.is_empty() {
             form.error = Some("Passphrase is required".into());
+            self.screen = Screen::Create(form);
+            return Ok(());
+        }
+        if let Err(e) = crate::passphrase::meets_floor(&form.passphrase) {
+            form.error = Some(e);
             self.screen = Screen::Create(form);
             return Ok(());
         }

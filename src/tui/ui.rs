@@ -788,7 +788,7 @@ fn draw_secrets(frame: &mut Frame, area: Rect, scr: &mut SecretScreen) {
         let value = if reveal.masked {
             mask(&reveal.value)
         } else {
-            reveal.value.clone()
+            reveal.value.to_string()
         };
         let lines = vec![
             Line::from(""),

@@ -28,8 +28,11 @@ pub enum Request {
     Ping,
     /// List unlocked vaults with their remaining idle / hard-max timers.
     Status,
-    /// Validate the passphrase and cache the derived key in memory.
-    Unlock { vault: String, passphrase: String },
+    /// Cache a vault's derived key (hex-encoded, 32 bytes) in memory. The key is
+    /// derived client-side from the passphrase, so the passphrase itself never
+    /// crosses the socket (finding #3). The daemon validates the key opens the
+    /// vault before caching it.
+    Unlock { vault: String, key: String },
     /// Drop one vault's key.
     Lock { vault: String },
     /// Drop every cached key.
@@ -156,13 +159,26 @@ mod imp {
             Request::Ping => Response::Pong {
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
-            Request::Unlock { vault, passphrase } => {
+            Request::Unlock { vault, key } => {
+                // Decode the client-derived key; the passphrase never reaches here.
+                let key_bytes = match hex::decode(&key)
+                    .ok()
+                    .and_then(|b| <[u8; 32]>::try_from(b).ok())
+                {
+                    Some(k) => k,
+                    None => {
+                        return Response::Error {
+                            message: "invalid key encoding".to_string(),
+                        }
+                    }
+                };
                 let dir = vault_dir(base, &vault);
-                match Vault::open(&dir, &passphrase) {
-                    Ok(v) => {
+                // Validate the key actually opens this vault before caching it.
+                match Vault::open_with_key(&dir, VaultKey::from_bytes(key_bytes)) {
+                    Ok(_) => {
                         let now = Instant::now();
                         let held = Held {
-                            key: Zeroizing::new(*v.key().bytes()),
+                            key: Zeroizing::new(key_bytes),
                             unlocked_at: now,
                             last_used: now,
                         };
@@ -221,7 +237,10 @@ mod imp {
                 let dir = vault_dir(base, &vault);
                 match Vault::open_with_key(&dir, VaultKey::from_bytes(key_bytes)) {
                     Ok(v) => match v.get_secret(&secret) {
-                        Ok(Some(value)) => Response::Secret { value },
+                        // Zeroizing<String> → the transport copy; the original wipes on drop.
+                        Ok(Some(value)) => Response::Secret {
+                            value: value.to_string(),
+                        },
                         Ok(None) => Response::NotFound,
                         Err(e) => Response::Error {
                             message: e.to_string(),
@@ -315,6 +334,77 @@ mod imp {
         });
     }
 
+    /// Set by the SIGTERM/SIGINT handler; polled by the signal watcher thread.
+    static SIGNAL_FLAG: AtomicBool = AtomicBool::new(false);
+
+    /// Async-signal-safe handler: just flips an atomic (no allocation/I/O).
+    extern "C" fn on_term_signal(_sig: libc::c_int) {
+        SIGNAL_FLAG.store(true, Ordering::SeqCst);
+    }
+
+    /// Turn SIGTERM/SIGINT into a *graceful* shutdown so keys are zeroized and
+    /// the socket/pid files are cleaned up, instead of an abrupt terminate (#17).
+    /// A watcher thread flips the accept loop's `shutdown` flag and wakes it by
+    /// connecting, reusing the same teardown as a `Shutdown` request.
+    fn install_signal_watcher(shutdown: Arc<AtomicBool>, sock: PathBuf) {
+        let handler = on_term_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        unsafe {
+            libc::signal(libc::SIGTERM, handler);
+            libc::signal(libc::SIGINT, handler);
+        }
+        std::thread::spawn(move || loop {
+            if SIGNAL_FLAG.load(Ordering::SeqCst) {
+                shutdown.store(true, Ordering::SeqCst);
+                let _ = UnixStream::connect(&sock); // unblock accept()
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        });
+    }
+
+    /// True when the connecting peer runs as our own effective UID.
+    /// Defense-in-depth over the 0600 socket: even if the socket perms were
+    /// somehow loosened, a different-UID process is refused (#1). Portable
+    /// across the daemon's targets: `SO_PEERCRED` on Linux, `getpeereid` on
+    /// macOS/BSD (std's `peer_cred` is still unstable).
+    fn peer_is_self(stream: &UnixStream) -> bool {
+        use std::os::unix::io::AsRawFd;
+        let me = unsafe { libc::geteuid() };
+        let fd = stream.as_raw_fd();
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let peer_uid = {
+            let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+            let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+            let rc = unsafe {
+                libc::getsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_PEERCRED,
+                    (&mut cred as *mut libc::ucred).cast::<libc::c_void>(),
+                    &mut len,
+                )
+            };
+            if rc != 0 {
+                return false;
+            }
+            cred.uid
+        };
+
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let peer_uid = {
+            let mut uid: libc::uid_t = 0;
+            let mut gid: libc::gid_t = 0;
+            let rc = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+            if rc != 0 {
+                return false;
+            }
+            uid
+        };
+
+        peer_uid == me
+    }
+
     /// The accept loop. Returns when a `Shutdown` request unblocks it.
     fn serve(
         listener: UnixListener,
@@ -327,6 +417,7 @@ mod imp {
         let shutdown = Arc::new(AtomicBool::new(false));
         let active = Arc::new(AtomicUsize::new(0));
         let sock = socket_path(&base);
+        install_signal_watcher(shutdown.clone(), sock.clone());
         for stream in listener.incoming() {
             if shutdown.load(Ordering::SeqCst) {
                 break;
@@ -335,6 +426,10 @@ mod imp {
                 Ok(s) => s,
                 Err(_) => continue,
             };
+            // Peer-UID bond: only serve connections from our own UID (#1).
+            if !peer_is_self(&s) {
+                continue; // drop — different UID
+            }
             // Connection ceiling: refuse new work when too many handlers are
             // already live, instead of spawning unbounded threads.
             if active.load(Ordering::SeqCst) >= max_conns {
@@ -443,7 +538,7 @@ mod imp {
     /// Foreground server loop (`svault daemon run`).
     pub fn run() -> Result<()> {
         let base = base_dir();
-        std::fs::create_dir_all(&base).context("create .svault directory")?;
+        crate::secfile::create_dir_owner_only(&base).context("create .svault directory")?;
         let sock = socket_path(&base);
         if sock.exists() {
             if ping(&base) {
@@ -456,8 +551,12 @@ mod imp {
         let (idle, max) = (cfg.lock.idle_timeout_secs, cfg.lock.max_unlocked_secs);
         let max_conns = cfg.daemon.max_connections;
 
-        let listener =
-            UnixListener::bind(&sock).with_context(|| format!("bind {}", sock.display()))?;
+        // Bind under a tight umask so the socket is born 0600 — no TOCTOU window
+        // between bind and chmod where it's group/world-accessible (#16).
+        let old_umask = unsafe { libc::umask(0o077) };
+        let bind_result = UnixListener::bind(&sock);
+        unsafe { libc::umask(old_umask) };
+        let listener = bind_result.with_context(|| format!("bind {}", sock.display()))?;
         std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
         write_pid(&base)?;
 
@@ -480,7 +579,7 @@ mod imp {
         use std::process::{Command, Stdio};
 
         let base = base_dir();
-        std::fs::create_dir_all(&base)?;
+        crate::secfile::create_dir_owner_only(&base)?;
         if is_running(&base) {
             let pid = read_pid(&base)
                 .map(|p| p.to_string())
@@ -490,10 +589,17 @@ mod imp {
         let _ = std::fs::remove_file(socket_path(&base)); // clear any stale socket
 
         let exe = std::env::current_exe().context("locate svault binary")?;
+        // Cap daemon.log growth (#17): rotate to .log.1 once it passes ~5 MB.
+        let log_p = log_path(&base);
+        if let Ok(meta) = std::fs::metadata(&log_p) {
+            if meta.len() > 5 * 1024 * 1024 {
+                let _ = std::fs::rename(&log_p, log_p.with_extension("log.1"));
+            }
+        }
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(log_path(&base))?;
+            .open(&log_p)?;
         let log_err = log.try_clone()?;
 
         let mut cmd = Command::new(exe);
@@ -732,6 +838,13 @@ mod imp {
             v.add_secret("API_KEY", "s3cr3t").unwrap();
         }
 
+        /// Derive a vault's key the way the client now does (#3) and hex-encode
+        /// it, for building `Unlock { key }` requests in tests.
+        fn key_hex(base: &Path, name: &str, pass: &str) -> String {
+            let v = Vault::open(&vault_dir(base, name), pass).unwrap();
+            hex::encode(v.key().bytes())
+        }
+
         /// Bind a daemon on a temp base and wait until it answers.
         /// Default connection ceiling for tests that don't care about the cap.
         const TEST_MAX_CONNS: usize = 64;
@@ -778,26 +891,26 @@ mod imp {
                 Response::NotUnlocked
             ));
 
-            // Wrong passphrase → Error.
+            // Wrong key → Error (a bogus key doesn't open the vault).
             assert!(matches!(
                 send(
                     &base,
                     &Request::Unlock {
                         vault: "v".into(),
-                        passphrase: "wrong".into()
+                        key: hex::encode([0u8; 32])
                     }
                 )
                 .unwrap(),
                 Response::Error { .. }
             ));
 
-            // Correct passphrase → Unlocked, then Get returns the value.
+            // Correct (client-derived) key → Unlocked, then Get returns the value.
             assert!(matches!(
                 send(
                     &base,
                     &Request::Unlock {
                         vault: "v".into(),
-                        passphrase: "Str0ng!Pass#99".into()
+                        key: key_hex(&base, "v", "Str0ng!Pass#99")
                     }
                 )
                 .unwrap(),
@@ -917,7 +1030,7 @@ mod imp {
                 &base,
                 &Request::Unlock {
                     vault: "v".into(),
-                    passphrase: "Str0ng!Pass#99".into(),
+                    key: key_hex(&base, "v", "Str0ng!Pass#99"),
                 },
             )
             .unwrap();
@@ -996,7 +1109,7 @@ mod imp {
                 &base,
                 &Request::Unlock {
                     vault: "v".into(),
-                    passphrase: "Str0ng!Pass#99".into(),
+                    key: key_hex(&base, "v", "Str0ng!Pass#99"),
                 },
             )
             .unwrap();
@@ -1231,7 +1344,7 @@ mod proto_tests {
             Request::Status,
             Request::Unlock {
                 vault: "v".into(),
-                passphrase: "p".into(),
+                key: "deadbeef".into(),
             },
             Request::Lock { vault: "v".into() },
             Request::LockAll,

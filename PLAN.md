@@ -120,7 +120,10 @@
 - [x] **Connect resilience** — `daemon::send` retries the socket connect with short backoff (absorbs OS listener-backlog drops under burst).
 - [x] Suite now 82 (+1 ignored stress benchmark); clippy clean.
 
-### [TODO] Step 4 — GUI client (Tauri)
+### [TODO] 2.0.0 — GUI client (Tauri)
+> Version plan: the CLI is hardened to a stable **1.0.0** first; the GUI is a
+> deliberate **2.0.0**, and Claude / AI-platform access is **3.0.0**. 0.7.0+ is
+> security hardening (see the [findings register](docs/security-review/findings/0.6.0.md)).
 - [ ] `svault-gui` — cross-platform desktop app (macOS, Linux, Windows)
   - [ ] **Vault dashboard** — list all vaults, show lock/unlock status, last accessed
   - [ ] **Lock/unlock panel** — quick unlock with selected auth methods (passphrase, biometric, etc.)
@@ -133,7 +136,7 @@
   - [ ] **Audit log viewer** — see who accessed what (from policy logs)
   - [ ] Built with Tauri: lightweight, single binary, works offline, no runtime deps
 
-### [TODO] Step 5 — Platform install + MCP
+### [TODO] 3.0.0 — Claude / AI-platform access (MCP)
 - [ ] `svault mcp` — start MCP server exposing `svault_get_secret(name, scope, reason)`
 - [ ] `svault install` — auto-detect platform, write MCP config
 - [ ] Claude Code: MCP server + PreToolUse hook (blocks direct `.env` reads) + PostToolUse hook (scans output for leaked credentials)
@@ -187,14 +190,17 @@
 | All four (Passphrase + YubiKey + TOTP + Touch ID) | Type + key + code + biometric | Maximum security | All factors; requires YubiKey + macOS |
 | Multi-select custom | User chooses enabled methods at init | Configurable | Flexible per-vault security posture |
 
-## Next Steps: Build Sequence
+## Build sequence (by version)
 
-1. **Step 1 Enhancement** — Interactive TUI with Ratatui (form-based init, interactive browsers, live dashboard)
-2. **Step 2** — Policy engine (structured requests with `reason` + capability checks)
-3. **Step 3** — Daemon + multi-select auth (passphrase, YubiKey, TOTP, Touch ID)
-4. **Step 4** — GUI client (Tauri desktop app for vault management)
-5. **Step 5** — MCP integration + platform installs (Claude Code, Cursor, etc.)
-6. **Cloud tier** (optional) — Justification scoring + premium plans
+Done: Step 1 (vault) · Step 1+ (TUI) · Step 2 (policy engine) · Step 3
+(daemon + recovery) · 0.6.0 (security hardening).
+
+1. **0.7.0 → 1.0.0** — security hardening (review findings), supply-chain CI
+   gate, and install channels → a stable, audited CLI. **(current focus)**
+2. **2.0.0** — GUI client (Tauri desktop app for vault management)
+3. **3.0.0** — Claude / AI-platform access: MCP server + platform hooks
+   (Claude Code, Cursor, Copilot, VS Code, Aider)
+4. **Cloud tier** (optional) — justification scoring + premium plans
 
 ## What's NOT planned (yet)
 

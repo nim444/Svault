@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use rand::RngCore;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::crypto::{self, VaultKey, SALT_SIZE};
 use crate::meta::VaultMeta;
@@ -26,7 +26,12 @@ impl Vault {
         if vault_dir.exists() {
             return Err(anyhow!("Vault already exists at {}", vault_dir.display()));
         }
-        std::fs::create_dir_all(vault_dir)?;
+        // Owner-only .svault/ and vault dir so other local users can't even
+        // traverse in to read the (encrypted) files or the session (#16).
+        if let Some(parent) = vault_dir.parent() {
+            crate::secfile::create_dir_owner_only(parent)?;
+        }
+        crate::secfile::create_dir_owner_only(vault_dir)?;
 
         // Write a local .gitignore so the session file and the logs can never be
         // accidentally committed even if the repo-level .gitignore is missing or wrong.
@@ -120,8 +125,13 @@ impl Vault {
         self.save_secrets(&secrets)
     }
 
-    pub fn get_secret(&self, name: &str) -> Result<Option<String>> {
-        Ok(self.load_secrets()?.get(name).cloned())
+    /// Returns the value wrapped in `Zeroizing` so the caller's copy is wiped on
+    /// drop (#6); the bulk decrypted store is already zeroized via `SecretStore`.
+    pub fn get_secret(&self, name: &str) -> Result<Option<Zeroizing<String>>> {
+        Ok(self
+            .load_secrets()?
+            .get(name)
+            .map(|v| Zeroizing::new(v.clone())))
     }
 
     pub fn list_secret_names(&self) -> Result<Vec<String>> {
@@ -228,7 +238,7 @@ mod tests {
         let v = tmp_vault(&dir, "test", "Str0ng!Pass#99");
 
         v.add_secret("API_KEY", "super-secret-value").unwrap();
-        let val = v.get_secret("API_KEY").unwrap();
+        let val = v.get_secret("API_KEY").unwrap().map(|z| z.to_string());
         assert_eq!(val, Some("super-secret-value".to_string()));
     }
 
@@ -270,11 +280,11 @@ mod tests {
         // Re-open from disk
         let v2 = Vault::open(&vault_dir, "Str0ng!Pass#99").unwrap();
         assert_eq!(
-            v2.get_secret("DB_URL").unwrap(),
+            v2.get_secret("DB_URL").unwrap().map(|z| z.to_string()),
             Some("postgres://localhost/mydb".to_string())
         );
         assert_eq!(
-            v2.get_secret("REDIS_URL").unwrap(),
+            v2.get_secret("REDIS_URL").unwrap().map(|z| z.to_string()),
             Some("redis://localhost:6379".to_string())
         );
     }
@@ -291,7 +301,10 @@ mod tests {
             Vault::open_with_key(&vault_dir, crypto::VaultKey::from_bytes(key_bytes)).unwrap();
         assert_eq!(reopened.meta.name, "test");
         assert_eq!(
-            reopened.get_secret("API_KEY").unwrap(),
+            reopened
+                .get_secret("API_KEY")
+                .unwrap()
+                .map(|z| z.to_string()),
             Some("value".to_string())
         );
     }
@@ -313,7 +326,7 @@ mod tests {
         // New passphrase opens it and the secret survived the re-encryption.
         let v = Vault::open(&vault_dir, "New!Pass#22").unwrap();
         assert_eq!(
-            v.get_secret("DB_URL").unwrap(),
+            v.get_secret("DB_URL").unwrap().map(|z| z.to_string()),
             Some("postgres://x".to_string())
         );
     }

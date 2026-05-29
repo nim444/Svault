@@ -30,13 +30,23 @@ mod imp {
     }
 
     /// Cache a vault's key in the daemon. `None` = no daemon (fall back).
+    ///
+    /// The key is derived (and the passphrase validated) **client-side** by
+    /// opening the vault here; only the 32-byte derived key crosses the socket,
+    /// never the passphrase (finding #3). A wrong passphrase fails locally and
+    /// never reaches the daemon.
     pub fn unlock(vault: &str, passphrase: &str) -> Option<Result<()>> {
         if !available() {
             return None;
         }
+        let dir = base().join(vault);
+        let key_hex = match crate::vault::Vault::open(&dir, passphrase) {
+            Ok(v) => hex::encode(v.key().bytes()),
+            Err(e) => return Some(Err(e)),
+        };
         let req = Request::Unlock {
             vault: vault.to_string(),
-            passphrase: passphrase.to_string(),
+            key: key_hex,
         };
         Some(match daemon::send(&base(), &req) {
             Ok(Response::Unlocked) => Ok(()),

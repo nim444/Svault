@@ -8,6 +8,7 @@ mod passphrase;
 mod policy;
 mod portable;
 mod recovery;
+mod secfile;
 mod session;
 mod tui;
 mod usage;
@@ -22,6 +23,15 @@ use std::path::{Path, PathBuf};
 use crypto::VaultKey;
 use meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
 use vault::{list_vault_dirs, Vault, SVAULT_DIR};
+use zeroize::Zeroizing;
+
+/// Prompt for a secret (passphrase, recovery code, or secret value) and return
+/// it wrapped in `Zeroizing` so the heap copy is wiped on drop (finding #6).
+fn prompt_secret(prompt: impl Into<String>) -> Result<Zeroizing<String>> {
+    Ok(Zeroizing::new(
+        Password::new().with_prompt(prompt).interact()?,
+    ))
+}
 
 #[derive(Parser)]
 #[command(name = "svault", about = "AI-aware secret access layer", version)]
@@ -38,6 +48,9 @@ enum Commands {
     Create {
         #[arg(long)]
         name: Option<String>,
+        /// Skip the passphrase strength floor (for non-interactive / scripted use)
+        #[arg(long)]
+        force: bool,
     },
     /// View or change a vault's settings (description, agents, rate limit, auto-lock, login)
     Settings {
@@ -100,6 +113,9 @@ enum Commands {
     Recover {
         /// Vault name (positional). Omit to use the only vault or pick interactively.
         vault: Option<String>,
+        /// Skip the passphrase strength floor (for non-interactive / scripted use)
+        #[arg(long)]
+        force: bool,
     },
     /// Export a vault to a portable encrypted bundle
     Export {
@@ -134,7 +150,7 @@ fn main() -> Result<()> {
         return tui::run();
     };
     match command {
-        Commands::Create { name } => cmd_create(name),
+        Commands::Create { name, force } => cmd_create(name, force),
         Commands::Settings { vault } => cmd_settings(vault.as_deref()),
         Commands::Secret {
             action,
@@ -161,7 +177,7 @@ fn main() -> Result<()> {
             vault,
         } => cmd_get(&name, &scope, &reason, caller.as_deref(), vault.as_deref()),
         Commands::Policy { action, caller } => cmd_policy(&action, caller.as_deref()),
-        Commands::Recover { vault } => cmd_recover(vault.as_deref()),
+        Commands::Recover { vault, force } => cmd_recover(vault.as_deref(), force),
         Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
         Commands::Import { file, name } => cmd_import(&file, name.as_deref()),
         Commands::Daemon { action, fix } => cmd_daemon(&action, fix),
@@ -195,7 +211,7 @@ fn vault_leaf(dir: &Path) -> String {
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
-fn cmd_create(name_arg: Option<String>) -> Result<()> {
+fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
     println!(
         "{}",
         style("┌─ New Vault ─────────────────────────────┐").dim()
@@ -260,7 +276,18 @@ fn cmd_create(name_arg: Option<String>) -> Result<()> {
     let login_method = prompt_login_method(None)?;
 
     println!();
-    let passphrase = Password::new().with_prompt("  Passphrase").interact()?;
+    // Hard entropy floor (finding #12): re-prompt until it clears, unless --force.
+    let passphrase = loop {
+        let p = prompt_secret("  Passphrase")?;
+        match passphrase::meets_floor(&p) {
+            Ok(()) => break p,
+            Err(e) if force => {
+                println!("{} {} (--force)", style("warning:").yellow(), e);
+                break p;
+            }
+            Err(e) => eprintln!("{} {}", style("error:").red(), e),
+        }
+    };
 
     if let Some(w) = passphrase::check(&passphrase) {
         println!("{} {}", style("warning:").yellow(), w.0);
@@ -273,10 +300,8 @@ fn cmd_create(name_arg: Option<String>) -> Result<()> {
         }
     }
 
-    let confirm = Password::new()
-        .with_prompt("  Confirm passphrase")
-        .interact()?;
-    if passphrase != confirm {
+    let confirm = prompt_secret("  Confirm passphrase")?;
+    if *passphrase != *confirm {
         eprintln!("{} Passphrases do not match", style("error:").red());
         std::process::exit(1);
     }
@@ -469,9 +494,7 @@ fn cmd_unlock(vault_name: Option<&str>) -> Result<()> {
         return Ok(());
     }
 
-    let passphrase = Password::new()
-        .with_prompt(format!("  Passphrase for '{}'", meta.name))
-        .interact()?;
+    let passphrase = prompt_secret(format!("  Passphrase for '{}'", meta.name))?;
 
     // Prefer the daemon: it validates the passphrase and holds the derived key
     // in memory — no .session file is written.
@@ -639,9 +662,7 @@ fn cmd_secret(action: &str, name: Option<&str>, vault_name: Option<&str>) -> Res
                 Some(n) => n.to_string(),
                 None => Input::new().with_prompt("  Secret name").interact_text()?,
             };
-            let value = Password::new()
-                .with_prompt(format!("  Value for '{secret_name}'"))
-                .interact()?;
+            let value = prompt_secret(format!("  Value for '{secret_name}'"))?;
             vault.add_secret(&secret_name, &value)?;
             usage::human(&vault_dir, "secret.add", Some(&secret_name));
             println!(
@@ -661,7 +682,7 @@ fn cmd_secret(action: &str, name: Option<&str>, vault_name: Option<&str>) -> Res
             match vault.get_secret(secret_name)? {
                 Some(value) => {
                     usage::human(&vault_dir, "secret.get", Some(secret_name));
-                    println!("{value}");
+                    println!("{}", *value);
                 }
                 None => {
                     eprintln!(
@@ -856,7 +877,7 @@ fn cmd_get(
                         style("granted:").green().bold(),
                         name
                     );
-                    println!("{value}");
+                    println!("{}", *value);
                     Ok(())
                 }
                 None => {
@@ -1039,7 +1060,7 @@ fn unlocked_secret_names(vault_dir: &Path) -> Vec<String> {
 
 // ── Recovery, export, import ────────────────────────────────────────────────
 
-fn cmd_recover(vault_name: Option<&str>) -> Result<()> {
+fn cmd_recover(vault_name: Option<&str>, force: bool) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta = VaultMeta::load_unverified(&vault_dir)?;
 
@@ -1052,9 +1073,7 @@ fn cmd_recover(vault_name: Option<&str>) -> Result<()> {
         std::process::exit(1);
     }
 
-    let code = Password::new()
-        .with_prompt(format!("  Recovery code for '{}'", meta.name))
-        .interact()?;
+    let code = prompt_secret(format!("  Recovery code for '{}'", meta.name))?;
 
     // Confirm the code opens this vault before asking for a new passphrase.
     recovery::unlock_with_code(&vault_dir, &code).unwrap_or_else(|e| {
@@ -1066,14 +1085,22 @@ fn cmd_recover(vault_name: Option<&str>) -> Result<()> {
         "{} Recovery code accepted — set a new passphrase.",
         style("ok:").green()
     );
-    let new_pass = Password::new().with_prompt("  New passphrase").interact()?;
+    let new_pass = loop {
+        let p = prompt_secret("  New passphrase")?;
+        match passphrase::meets_floor(&p) {
+            Ok(()) => break p,
+            Err(e) if force => {
+                println!("{} {} (--force)", style("warning:").yellow(), e);
+                break p;
+            }
+            Err(e) => eprintln!("{} {}", style("error:").red(), e),
+        }
+    };
     if let Some(w) = passphrase::check(&new_pass) {
         println!("{} {}", style("warning:").yellow(), w.0);
     }
-    let confirm = Password::new()
-        .with_prompt("  Confirm passphrase")
-        .interact()?;
-    if new_pass != confirm {
+    let confirm = prompt_secret("  Confirm passphrase")?;
+    if *new_pass != *confirm {
         eprintln!("{} Passphrases do not match", style("error:").red());
         std::process::exit(1);
     }
@@ -1103,7 +1130,8 @@ fn cmd_export(vault_name: Option<&str>, out: Option<&str>) -> Result<()> {
     let out_path = out
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(format!("{}.svault-export.json", meta.name)));
-    std::fs::write(&out_path, json)?;
+    // A bundle is a full backup (carries the wrapped key) — write it owner-only (#14).
+    secfile::write_owner_only(&out_path, json.as_bytes())?;
 
     // Keep the bundle out of git so it can't be pushed by mistake.
     let out_dir = out_path.parent().filter(|p| !p.as_os_str().is_empty());
@@ -1159,17 +1187,19 @@ fn cmd_import(file: &str, name: Option<&str>) -> Result<()> {
     // is HMAC-signed — re-sign it with the vault key so the directory and
     // metadata agree. That needs the passphrase.
     if renamed {
-        let passphrase = Password::new()
-            .with_prompt(format!(
-                "  Passphrase for '{}' (to finish importing as '{}')",
-                bundle.name, target
-            ))
-            .interact()
-            .unwrap_or_else(|e| {
-                let _ = std::fs::remove_dir_all(&dir);
-                eprintln!("{} {}", style("error:").red(), e);
-                std::process::exit(1);
-            });
+        let passphrase = Zeroizing::new(
+            Password::new()
+                .with_prompt(format!(
+                    "  Passphrase for '{}' (to finish importing as '{}')",
+                    bundle.name, target
+                ))
+                .interact()
+                .unwrap_or_else(|e| {
+                    let _ = std::fs::remove_dir_all(&dir);
+                    eprintln!("{} {}", style("error:").red(), e);
+                    std::process::exit(1);
+                }),
+        );
         match Vault::open(&dir, &passphrase) {
             Ok(vault) => {
                 let mut meta = vault.meta.clone();
@@ -1274,9 +1304,7 @@ fn open_unlocked_or_prompt(vault_dir: &Path, vault_name: &str) -> Result<Vault> 
             let _ = session::lock(vault_dir); // stale/invalid cached key — drop it
         }
     }
-    let passphrase = Password::new()
-        .with_prompt(format!("  Passphrase for '{vault_name}'"))
-        .interact()?;
+    let passphrase = prompt_secret(format!("  Passphrase for '{vault_name}'"))?;
     Vault::open(vault_dir, &passphrase).map_err(|e| {
         eprintln!("{} {}", style("error:").red(), e);
         std::process::exit(1);
