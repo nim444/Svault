@@ -113,6 +113,9 @@ enum Commands {
     Import {
         /// Path to the .svault-export.json bundle
         file: String,
+        /// Import under this name instead of the bundle's own (auto-suffixed if it also exists)
+        #[arg(long)]
+        name: Option<String>,
     },
     /// Background unlock daemon (Unix): run | start | stop | status | doctor
     Daemon {
@@ -160,7 +163,7 @@ fn main() -> Result<()> {
         Commands::Policy { action, caller } => cmd_policy(&action, caller.as_deref()),
         Commands::Recover { vault } => cmd_recover(vault.as_deref()),
         Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
-        Commands::Import { file } => cmd_import(&file),
+        Commands::Import { file, name } => cmd_import(&file, name.as_deref()),
         Commands::Daemon { action, fix } => cmd_daemon(&action, fix),
     }
 }
@@ -1120,29 +1123,90 @@ fn cmd_export(vault_name: Option<&str>, out: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_import(file: &str) -> Result<()> {
+fn cmd_import(file: &str, name: Option<&str>) -> Result<()> {
     let raw = std::fs::read_to_string(file).unwrap_or_else(|e| {
         eprintln!("{} cannot read {}: {}", style("error:").red(), file, e);
         std::process::exit(1);
     });
 
-    let name = portable::import_bundle(&raw, Path::new(SVAULT_DIR)).unwrap_or_else(|e| {
+    let bundle = portable::parse_bundle(&raw).unwrap_or_else(|e| {
         eprintln!("{} {}", style("error:").red(), e);
         std::process::exit(1);
     });
-    usage::human(&Path::new(SVAULT_DIR).join(&name), "import", None);
+    let base = Path::new(SVAULT_DIR);
+
+    // Resolve a free name: the requested name (or the bundle's own), suffixed if
+    // it's already taken — so re-importing onto the same machine never errors.
+    let desired = name.unwrap_or(&bundle.name);
+    let target = portable::unique_vault_name(base, desired);
+    let renamed = target != bundle.name;
+    if target != desired {
+        println!(
+            "{} '{}' already exists — importing as '{}'",
+            style("note:").cyan(),
+            desired,
+            target
+        );
+    }
+
+    portable::import_bundle_as(&raw, base, &target).unwrap_or_else(|e| {
+        eprintln!("{} {}", style("error:").red(), e);
+        std::process::exit(1);
+    });
+    let dir = base.join(&target);
+
+    // If the name changed, meta.name still says the bundle's original name and
+    // is HMAC-signed — re-sign it with the vault key so the directory and
+    // metadata agree. That needs the passphrase.
+    if renamed {
+        let passphrase = Password::new()
+            .with_prompt(format!(
+                "  Passphrase for '{}' (to finish importing as '{}')",
+                bundle.name, target
+            ))
+            .interact()
+            .unwrap_or_else(|e| {
+                let _ = std::fs::remove_dir_all(&dir);
+                eprintln!("{} {}", style("error:").red(), e);
+                std::process::exit(1);
+            });
+        match Vault::open(&dir, &passphrase) {
+            Ok(vault) => {
+                let mut meta = vault.meta.clone();
+                meta.name = target.clone();
+                if let Err(e) = vault.save_meta(&meta) {
+                    let _ = std::fs::remove_dir_all(&dir);
+                    eprintln!("{} could not finalize rename: {}", style("error:").red(), e);
+                    std::process::exit(1);
+                }
+            }
+            Err(_) => {
+                // Don't leave a half-imported vault whose name doesn't match.
+                let _ = std::fs::remove_dir_all(&dir);
+                eprintln!(
+                    "{} wrong passphrase — import cancelled. Re-run to try again.",
+                    style("error:").red()
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
+    usage::human(&dir, "import", None);
 
     println!(
         "{} Imported '{}' into {}/{}/",
         style("ok:").green().bold(),
-        name,
+        target,
         SVAULT_DIR,
-        name
+        target
     );
-    println!(
-        "{}",
-        style("  Unlock it with its original passphrase (or 'svault recover').").dim()
-    );
+    if !renamed {
+        println!(
+            "{}",
+            style("  Unlock it with its original passphrase (or 'svault recover').").dim()
+        );
+    }
     Ok(())
 }
 

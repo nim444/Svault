@@ -99,6 +99,9 @@ pub enum Pending {
     List,
     Secrets,
     Settings,
+    /// A renamed import: re-sign `meta.name` to the form's name once the
+    /// passphrase opens the freshly-imported vault.
+    FinishImport,
 }
 
 /// The focusable fields of the create form, in display order. Handlers match on
@@ -640,17 +643,38 @@ impl App {
                     self.screen = Screen::Import(form);
                     return Ok(());
                 }
-                match std::fs::read_to_string(path)
+                let base = std::path::Path::new(SVAULT_DIR);
+                let result = std::fs::read_to_string(path)
                     .map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))
                     .and_then(|raw| {
-                        crate::portable::import_bundle(&raw, std::path::Path::new(SVAULT_DIR))
-                    }) {
-                    Ok(name) => {
-                        let dir = std::path::Path::new(SVAULT_DIR).join(&name);
+                        let bundle = crate::portable::parse_bundle(&raw)?;
+                        let target = crate::portable::unique_vault_name(base, &bundle.name);
+                        crate::portable::import_bundle_as(&raw, base, &target)?;
+                        Ok((bundle.name, target))
+                    });
+                match result {
+                    Ok((orig, target)) => {
+                        let dir = base.join(&target);
                         crate::usage::human(&dir, "import", None);
-                        self.refresh_vaults();
-                        self.set_status(MsgKind::Ok, format!("Imported '{name}'"));
-                        self.screen = Screen::List;
+                        if target == orig {
+                            self.refresh_vaults();
+                            self.set_status(MsgKind::Ok, format!("Imported '{target}'"));
+                            self.screen = Screen::List;
+                        } else {
+                            // Name collided → re-sign meta.name once the
+                            // passphrase opens the freshly-imported vault.
+                            self.set_status(
+                                MsgKind::Info,
+                                format!("'{orig}' exists — importing as '{target}'; enter passphrase to finish"),
+                            );
+                            self.screen = Screen::Unlock(UnlockForm {
+                                vault_dir: dir,
+                                name: target,
+                                passphrase: String::new(),
+                                error: None,
+                                pending: Pending::FinishImport,
+                            });
+                        }
                     }
                     Err(e) => {
                         form.error = Some(format!("{e}"));
@@ -1137,6 +1161,13 @@ impl App {
     fn key_unlock(&mut self, mut form: UnlockForm, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Esc => {
+                // Cancelling a renamed import leaves a vault whose dir name and
+                // meta.name disagree — drop it so nothing half-imported lingers.
+                if matches!(form.pending, Pending::FinishImport) {
+                    let _ = std::fs::remove_dir_all(&form.vault_dir);
+                    self.refresh_vaults();
+                    self.set_status(MsgKind::Warn, "Import cancelled");
+                }
                 self.screen = Screen::List;
             }
             KeyCode::Backspace => {
@@ -1156,6 +1187,15 @@ impl App {
                             let meta = VaultMeta::load_unverified(&form.vault_dir)?;
                             self.screen =
                                 Screen::Settings(SettingsForm::from_meta(form.vault_dir, meta));
+                        }
+                        Pending::FinishImport => {
+                            // Re-sign meta.name so it matches the (suffixed) dir.
+                            let mut meta = vault.meta.clone();
+                            meta.name = form.name.clone();
+                            vault.save_meta(&meta)?;
+                            self.refresh_vaults();
+                            self.set_status(MsgKind::Ok, format!("Imported as '{}'", form.name));
+                            self.screen = Screen::List;
                         }
                     }
                 }

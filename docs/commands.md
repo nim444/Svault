@@ -37,7 +37,7 @@ See [Recovery](recovery.md) for how the recovery key and bundle work.
 ```bash
 svault recover [VAULT]                   # use the recovery code to reset a lost passphrase
 svault export  [VAULT] [--out FILE]      # write a portable encrypted bundle (default: <name>.svault-export.json)
-svault import  <FILE>                    # restore a vault from a bundle
+svault import  <FILE> [--name NEW]       # restore a vault (auto-suffixes / --name on collision)
 ```
 
 ## Daemon (Unix)

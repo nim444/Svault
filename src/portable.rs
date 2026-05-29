@@ -97,15 +97,34 @@ pub fn parse_bundle(raw: &str) -> Result<ExportBundle> {
     Ok(bundle)
 }
 
-/// Write a validated bundle into `svault_base/<name>/`. Refuses to overwrite an
-/// existing vault. Returns the imported vault's name.
-pub fn import_bundle(raw: &str, svault_base: &Path) -> Result<String> {
+/// Pick a free vault name under `base`: `desired` if it's unused, otherwise
+/// `desired-2`, `desired-3`, … This is how re-importing a vault onto a machine
+/// that already has it gets a unique name instead of an error.
+pub fn unique_vault_name(base: &Path, desired: &str) -> String {
+    if !base.join(desired).exists() {
+        return desired.to_string();
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{desired}-{n}");
+        if !base.join(&candidate).exists() {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Write a validated bundle into `svault_base/<target_name>/`. Refuses to
+/// overwrite an existing directory (callers pick a free name first, e.g. via
+/// [`unique_vault_name`]). This does **not** touch the HMAC-signed `meta.yaml`:
+/// if `target_name` differs from the bundle's own name, the caller must re-sign
+/// `meta.name` with the vault key so the directory and metadata agree.
+pub fn import_bundle_as(raw: &str, svault_base: &Path, target_name: &str) -> Result<()> {
     let bundle = parse_bundle(raw)?;
-    let target = svault_base.join(&bundle.name);
+    let target = svault_base.join(target_name);
     if target.exists() {
         return Err(anyhow!(
-            "a vault named '{}' already exists — names must be unique",
-            bundle.name
+            "a vault named '{target_name}' already exists — names must be unique"
         ));
     }
 
@@ -119,8 +138,9 @@ pub fn import_bundle(raw: &str, svault_base: &Path) -> Result<String> {
             .map_err(|_| anyhow!("bundle file '{name}' is not valid hex"))?;
         std::fs::write(target.join(name), bytes)?;
     }
-    Ok(bundle.name)
+    Ok(())
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -205,8 +225,7 @@ mod tests {
 
         // Import into a fresh base dir and re-open with the original passphrase.
         let dst = TempDir::new().unwrap();
-        let name = import_bundle(&json, dst.path()).unwrap();
-        assert_eq!(name, "v");
+        import_bundle_as(&json, dst.path(), "v").unwrap();
         let dir = dst.path().join("v");
         assert!(dir.join("recovery.enc").exists());
         assert!(Vault::open(&dir, "Str0ng!Pass#99").is_ok());
@@ -236,14 +255,61 @@ mod tests {
     }
 
     #[test]
+    fn unique_vault_name_suffixes_on_collision() {
+        let base = TempDir::new().unwrap();
+        assert_eq!(unique_vault_name(base.path(), "v"), "v");
+        std::fs::create_dir_all(base.path().join("v")).unwrap();
+        assert_eq!(unique_vault_name(base.path(), "v"), "v-2");
+        std::fs::create_dir_all(base.path().join("v-2")).unwrap();
+        assert_eq!(unique_vault_name(base.path(), "v"), "v-3");
+    }
+
+    #[test]
+    fn reimport_on_same_base_uses_a_suffixed_name() {
+        use crate::vault::Vault;
+        let src = TempDir::new().unwrap();
+        make_vault(src.path(), "v");
+        let json = build_bundle(&src.path().join("v"), "v", "local").unwrap();
+
+        let dst = TempDir::new().unwrap();
+        import_bundle_as(&json, dst.path(), "v").unwrap(); // first import → "v"
+        let target = unique_vault_name(dst.path(), "v");
+        assert_eq!(target, "v-2"); // collision → suffixed
+        import_bundle_as(&json, dst.path(), &target).unwrap();
+        // Both copies exist and open with the original passphrase.
+        assert!(Vault::open(&dst.path().join("v"), "Str0ng!Pass#99").is_ok());
+        assert!(Vault::open(&dst.path().join("v-2"), "Str0ng!Pass#99").is_ok());
+    }
+
+    #[test]
+    fn rename_after_import_resigns_meta_to_match_dir() {
+        use crate::vault::Vault;
+        let src = TempDir::new().unwrap();
+        make_vault(src.path(), "v");
+        let json = build_bundle(&src.path().join("v"), "v", "local").unwrap();
+        let dst = TempDir::new().unwrap();
+        import_bundle_as(&json, dst.path(), "v-2").unwrap();
+        let dir = dst.path().join("v-2");
+
+        // What the CLI/TUI do after a renamed import: re-sign meta.name.
+        let vault = Vault::open(&dir, "Str0ng!Pass#99").unwrap();
+        let mut m = vault.meta.clone();
+        m.name = "v-2".to_string();
+        vault.save_meta(&m).unwrap();
+
+        let reopened = Vault::open(&dir, "Str0ng!Pass#99").unwrap();
+        assert_eq!(reopened.meta.name, "v-2");
+    }
+
+    #[test]
     fn import_refuses_to_overwrite_an_existing_vault() {
         let src = TempDir::new().unwrap();
         make_vault(src.path(), "v");
         let json = build_bundle(&src.path().join("v"), "v", "local").unwrap();
 
         let dst = TempDir::new().unwrap();
-        import_bundle(&json, dst.path()).unwrap();
-        // Second import of the same name is rejected.
-        assert!(import_bundle(&json, dst.path()).is_err());
+        import_bundle_as(&json, dst.path(), "v").unwrap();
+        // Second import to the same name is rejected (callers suffix instead).
+        assert!(import_bundle_as(&json, dst.path(), "v").is_err());
     }
 }
