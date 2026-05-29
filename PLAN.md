@@ -21,7 +21,8 @@
 ## Progress
 
 ### [DONE] Step 1 — Local encrypted vault
-- [x] `svault create` — interactive setup: name / description / allow_agent / rate_limit / auto-lock / auto-lock timer (default 1d) / login method / passphrase (`init` kept as alias)
+- [x] `svault create` — interactive setup: storage backend (local default; Soluzy cloud / self-hosted / S3 — placeholders, coming soon) / name / description / allow_agent / rate_limit / auto-lock / auto-lock timer (default 1d) / login method / passphrase (`init` kept as alias)
+- [x] Storage backend recorded in `meta.yaml` (`storage:`) and shown as a `storage:name` prefix in `svault vaults` / `svault status` / TUI; vault names must be unique (duplicate create rejected)
 - [x] `svault settings [--vault NAME]` — view and edit a vault's settings, re-signs meta.yaml
 - [x] `svault secret add | get | list | remove` — all accept `--vault NAME`; prompts which vault when several exist
 - [x] Login method field — passphrase today; yubikey + google auth reserved for later steps

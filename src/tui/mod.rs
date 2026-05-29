@@ -46,6 +46,7 @@ pub struct Status {
 #[derive(Clone)]
 pub struct VaultRow {
     pub name: String,
+    pub storage: String,
     pub dir: PathBuf,
     pub description: String,
     pub unlocked: bool,
@@ -59,6 +60,7 @@ fn load_vaults() -> Vec<VaultRow> {
             let unlocked = session::is_unlocked(&dir);
             Some(VaultRow {
                 name: meta.name,
+                storage: meta.storage,
                 dir,
                 description: meta.description,
                 unlocked,
@@ -78,6 +80,7 @@ pub enum Pending {
 }
 
 pub struct CreateForm {
+    pub storage: usize, // 0 local · 1 remote (coming soon)
     pub name: String,
     pub description: String,
     pub allow_mode: usize, // 0 all · 1 none · 2 list
@@ -93,7 +96,7 @@ pub struct CreateForm {
 }
 
 impl CreateForm {
-    const FIELDS: usize = 10;
+    const FIELDS: usize = 11;
 
     fn new() -> Self {
         let default_name = std::env::current_dir()
@@ -101,6 +104,7 @@ impl CreateForm {
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
             .unwrap_or_else(|| "my-vault".to_string());
         Self {
+            storage: 0,
             name: default_name,
             description: String::new(),
             allow_mode: 0,
@@ -118,13 +122,13 @@ impl CreateForm {
 
     fn text_field(&mut self) -> Option<&mut String> {
         Some(match self.focus {
-            0 => &mut self.name,
-            1 => &mut self.description,
-            3 => &mut self.allow_list,
-            4 => &mut self.rate_limit,
-            6 => &mut self.autolock_timer,
-            8 => &mut self.passphrase,
-            9 => &mut self.confirm,
+            1 => &mut self.name,
+            2 => &mut self.description,
+            4 => &mut self.allow_list,
+            5 => &mut self.rate_limit,
+            7 => &mut self.autolock_timer,
+            9 => &mut self.passphrase,
+            10 => &mut self.confirm,
             _ => return None,
         })
     }
@@ -516,7 +520,12 @@ impl App {
         }
         let vault_dir = PathBuf::from(SVAULT_DIR).join(&name);
         if vault_dir.exists() {
-            form.error = Some(format!("Vault '{name}' already exists"));
+            let existing = VaultMeta::load_unverified(&vault_dir)
+                .map(|m| m.storage)
+                .unwrap_or_else(|_| "local".to_string());
+            form.error = Some(format!(
+                "a vault named '{name}' already exists ({existing}:{name}) — names must be unique across storage"
+            ));
             self.screen = Screen::Create(form);
             return Ok(());
         }
@@ -537,7 +546,8 @@ impl App {
             _ => AllowAgent::List(parse_agents(&form.allow_list)),
         };
         let login_note = form.login_method != 0;
-        let meta = VaultMeta::new(
+        let storage_note = form.storage != 0;
+        let mut meta = VaultMeta::new(
             name.clone(),
             form.description.clone(),
             AccessConfig {
@@ -550,11 +560,17 @@ impl App {
                 login_method: LoginMethod::Passphrase,
             },
         );
+        meta.storage = storage_id(form.storage).to_string();
 
         match Vault::init(&vault_dir, &form.passphrase, meta) {
             Ok(_) => {
                 self.refresh_vaults();
-                if login_note {
+                if storage_note {
+                    self.set_status(
+                        MsgKind::Warn,
+                        format!("Vault '{name}' created (remote storage is coming soon — stored locally)"),
+                    );
+                } else if login_note {
                     self.set_status(
                         MsgKind::Warn,
                         format!("Vault '{name}' created (only passphrase is wired today)"),
@@ -904,6 +920,17 @@ impl App {
 
 // ── Free helpers ───────────────────────────────────────────────────────────────
 
+/// Map the storage picker index to a backend id stored in meta.yaml.
+/// Only "local" is wired today; the rest are reserved placeholders.
+fn storage_id(idx: usize) -> &'static str {
+    match idx {
+        0 => "local",
+        1 => "cloud",
+        2 => "self-hosted",
+        _ => "s3",
+    }
+}
+
 fn parse_agents(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(|s| s.trim().to_string())
@@ -913,9 +940,10 @@ fn parse_agents(raw: &str) -> Vec<String> {
 
 fn create_adjust(form: &mut CreateForm, forward: bool) {
     match form.focus {
-        2 => form.allow_mode = cycle(form.allow_mode, 3, forward),
-        5 => form.autolock = !form.autolock,
-        7 => form.login_method = cycle(form.login_method, 3, forward),
+        0 => form.storage = cycle(form.storage, 4, forward),
+        3 => form.allow_mode = cycle(form.allow_mode, 3, forward),
+        6 => form.autolock = !form.autolock,
+        8 => form.login_method = cycle(form.login_method, 3, forward),
         _ => {}
     }
 }

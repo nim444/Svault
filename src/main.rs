@@ -137,6 +137,8 @@ fn cmd_create(name_arg: Option<String>) -> Result<()> {
         style("┌─ New Vault ─────────────────────────────┐").dim()
     );
 
+    let storage = prompt_storage_backend()?;
+
     let default_name = std::env::current_dir()
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
@@ -152,7 +154,16 @@ fn cmd_create(name_arg: Option<String>) -> Result<()> {
 
     let vault_dir = PathBuf::from(SVAULT_DIR).join(&name);
     if vault_dir.exists() {
-        eprintln!("{} Vault '{}' already exists", style("error:").red(), name);
+        let existing = VaultMeta::load_unverified(&vault_dir)
+            .map(|m| m.storage)
+            .unwrap_or_else(|_| "local".to_string());
+        eprintln!(
+            "{} a vault named '{}' already exists ({}:{}) — names must be unique across storage backends",
+            style("error:").red(),
+            name,
+            existing,
+            name,
+        );
         std::process::exit(1);
     }
 
@@ -208,7 +219,7 @@ fn cmd_create(name_arg: Option<String>) -> Result<()> {
 
     println!("\n  Creating vault...");
 
-    let meta = VaultMeta::new(
+    let mut meta = VaultMeta::new(
         name.clone(),
         description,
         AccessConfig {
@@ -221,14 +232,16 @@ fn cmd_create(name_arg: Option<String>) -> Result<()> {
             login_method,
         },
     );
+    meta.storage = storage.to_string();
     Vault::init(&vault_dir, &passphrase, meta)?;
 
     println!();
     println!(
         "  {:<14} {}",
         style("Name").dim(),
-        style(&name).bold().cyan()
+        style(format!("{}:{}", storage, &name)).bold().cyan()
     );
+    println!("  {:<14} {}", style("Storage").dim(), style(storage).cyan());
     println!(
         "  {:<14} {}",
         style("Location").dim(),
@@ -418,12 +431,12 @@ fn cmd_status() -> Result<()> {
     }
 
     println!(
-        "{:<20} {:<12} {}",
+        "{:<26} {:<12} {}",
         style("VAULT").bold(),
         style("STATUS").bold(),
         style("DESCRIPTION").bold()
     );
-    println!("{}", style("─".repeat(55)).dim());
+    println!("{}", style("─".repeat(60)).dim());
 
     for dir in &dirs {
         if let Ok(meta) = VaultMeta::load_unverified(dir) {
@@ -433,8 +446,8 @@ fn cmd_status() -> Result<()> {
                 style("locked").dim().to_string()
             };
             println!(
-                "{:<20} {:<12} {}",
-                style(&meta.name).cyan(),
+                "{:<26} {:<12} {}",
+                style(format!("{}:{}", meta.storage, meta.name)).cyan(),
                 status,
                 if meta.description.is_empty() {
                     "-".into()
@@ -572,19 +585,21 @@ fn cmd_vaults() -> Result<()> {
         return Ok(());
     }
     println!(
-        "{:<20} {:<30} {:<20} {:<12} {}",
+        "{:<12} {:<20} {:<28} {:<18} {:<12} {}",
+        style("STORAGE").bold(),
         style("NAME").bold(),
         style("DESCRIPTION").bold(),
         style("ALLOW AGENT").bold(),
         style("RATE LIMIT").bold(),
         style("CREATED").bold(),
     );
-    println!("{}", style("─".repeat(90)).dim());
+    println!("{}", style("─".repeat(98)).dim());
     for dir in &dirs {
         if let Ok(meta) = VaultMeta::load_unverified(dir) {
             let created = &meta.created_at[..10];
             println!(
-                "{:<20} {:<30} {:<20} {:<12} {}",
+                "{:<12} {:<20} {:<28} {:<18} {:<12} {}",
+                meta.storage,
                 style(&meta.name).cyan(),
                 if meta.description.is_empty() {
                     "-".into()
@@ -955,6 +970,37 @@ fn prompt_allow_agent(current: Option<&AllowAgent>) -> Result<AllowAgent> {
 
 /// Prompt for login method. Only passphrase works today — yubikey and google
 /// auth are shown but fall back to passphrase with a notice.
+/// Where the encrypted vault lives. Only local storage is implemented today;
+/// remote (Soluzy cloud / self-hosted) is a reserved placeholder for a later step.
+/// Storage backend ids, indexed to match the picker order. Only "local" is
+/// wired today; the rest are reserved placeholders (remote sync is coming soon).
+const STORAGE_IDS: [&str; 4] = ["local", "cloud", "self-hosted", "s3"];
+
+fn prompt_storage_backend() -> Result<&'static str> {
+    let choices = &[
+        "local — encrypted vault on this machine (default)",
+        "Soluzy cloud (coming soon)",
+        "self-hosted (coming soon)",
+        "S3 / MinIO (coming soon)",
+    ];
+
+    let idx = Select::new()
+        .with_prompt("  Storage")
+        .items(choices)
+        .default(0)
+        .interact()?;
+
+    if idx != 0 {
+        println!(
+            "{} Remote storage isn't wired yet — the vault is created with the \
+             '{}' target but data stays local until remote sync ships.",
+            style("note:").cyan(),
+            STORAGE_IDS[idx],
+        );
+    }
+    Ok(STORAGE_IDS[idx])
+}
+
 fn prompt_login_method(current: Option<LoginMethod>) -> Result<LoginMethod> {
     let choices = &[
         "passphrase",

@@ -152,7 +152,10 @@ fn draw_list(
                 v.description.as_str()
             };
             ListItem::new(Line::from(vec![
-                Span::styled(format!("{:<20}", v.name), Style::default().fg(CYAN)),
+                Span::styled(
+                    format!("{:<26}", format!("{}:{}", v.storage, v.name)),
+                    Style::default().fg(CYAN),
+                ),
                 Span::styled(format!("{badge}  "), badge_style),
                 Span::styled(desc.to_string(), Style::default().fg(Color::Gray)),
             ]))
@@ -184,6 +187,15 @@ fn login_label(method: usize) -> &'static str {
         0 => "passphrase",
         1 => "yubikey (coming soon)",
         _ => "google auth (coming soon)",
+    }
+}
+
+fn storage_label(storage: usize) -> &'static str {
+    match storage {
+        0 => "local",
+        1 => "Soluzy cloud (coming soon)",
+        2 => "self-hosted (coming soon)",
+        _ => "S3 / MinIO (coming soon)",
     }
 }
 
@@ -226,6 +238,7 @@ fn field_lines<'a>(fields: &'a [(&'a str, String)], focus: usize) -> Vec<Line<'a
 
 fn draw_create(frame: &mut Frame, area: Rect, form: &CreateForm) {
     let fields = [
+        ("Storage", storage_label(form.storage).to_string()),
         ("Name", form.name.clone()),
         ("Description", form.description.clone()),
         (

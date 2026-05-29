@@ -67,8 +67,9 @@ still works for scripting and automation.
 ## Quick Start
 
 ```bash
-# 1. Create an encrypted vault (prompts for name, description, agents,
+# 1. Create an encrypted vault (prompts for storage, name, description, agents,
 #    rate limit, auto-lock, auto-lock timer, login method, passphrase)
+#    Storage: local (default). Soluzy cloud / self-hosted / S3 — coming soon.
 svault create
 
 # 2. Add secrets (use --vault NAME when you have more than one vault)
@@ -178,7 +179,7 @@ Run `svault policy init` to scaffold one, and `svault policy check <caller>` to 
 .svault/
   my-project/
     vault.enc     ← AES-256-GCM encrypted secrets  (safe to commit)
-    meta.yaml     ← name, description, access rules (safe to commit, HMAC-signed)
+    meta.yaml     ← name, storage backend, description, access rules (safe to commit, HMAC-signed)
     .gitignore    ← auto-written at create, blocks .session + audit.log from being committed
     .session      ← passphrase cache while unlocked (gitignored, mode 0600)
     audit.log     ← policy decisions for 'svault get' (gitignored, mode 0600)
@@ -189,11 +190,26 @@ Run `svault policy init` to scaffold one, and `svault policy check <caller>` to 
 
 ---
 
+## Storage backends
+
+At create time you pick where a vault lives. **`local`** is the default and the only backend wired today; **`cloud`** (Soluzy SaaS), **`self-hosted`**, and **`s3`** are reserved placeholders — remote sync ships in a later step.
+
+The chosen backend is recorded in `meta.yaml` (`storage:`) and shown as a `storage:name` prefix everywhere a vault is listed (`svault vaults`, `svault status`, the TUI):
+
+```
+local:my-project        unlocked   primary app secrets
+cloud:shared-secrets    locked     team-wide credentials
+```
+
+The prefix keeps vault identity unambiguous per backend, and **vault names must be unique** — creating a second vault with an existing name is rejected, so the same name can't be duplicated across storage.
+
+---
+
 ## Commands
 
 ```bash
 svault                             # launch the interactive TUI (no subcommand)
-svault create                      # create encrypted vault (name, description, agents, rate limit, auto-lock, login)
+svault create                      # create encrypted vault (storage backend, name, description, agents, rate limit, auto-lock, login)
 svault settings [VAULT]            # view or change a vault's settings
 svault unlock   [VAULT]            # unlock vault, cache passphrase for session
 svault lock     [VAULT]            # clear cached passphrase
@@ -205,7 +221,7 @@ svault secret get    <NAME> [-v VAULT]   # retrieve a secret value
 svault secret list          [-v VAULT]   # list secret names (never values)
 svault secret remove <NAME> [-v VAULT]   # delete a secret
 
-svault vaults                      # list all vaults with metadata
+svault vaults                      # list all vaults with metadata (storage:name prefix)
 
 # Policy engine — the agent path (Step 2)
 svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # policy-gated request
@@ -255,7 +271,7 @@ svault install [--platform claude|cursor|...]             # wire into AI platfor
 cargo test
 ```
 
-33 tests covering: roundtrip encryption, wrong key rejection, bit-flip authentication failure, different salts produce different keys, vault create/open, wrong passphrase, add/get/list/remove, persistence across reopen, tampered vault.enc rejected, tampered meta.yaml rejected, session unlock/lock/lock-all, passphrase strength checks, audit log record/read, rate-limit parsing, and the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode).
+34 tests covering: roundtrip encryption, wrong key rejection, bit-flip authentication failure, different salts produce different keys, vault create/open, wrong passphrase, add/get/list/remove, persistence across reopen, tampered vault.enc rejected, tampered meta.yaml rejected, session unlock/lock/lock-all, passphrase strength checks, audit log record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), and storage-backend metadata roundtrip.
 
 CI runs the suite on Ubuntu, Fedora, macOS, and Windows on every push and pull request.
 
