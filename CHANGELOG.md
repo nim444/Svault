@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.0] - Unreleased
+## [0.8.0] - Unreleased
+
+A security-review-response + hardening release. Acts on the three independent
+0.7.0 model reviews (`docs/security-review/reviews/0.7.0-*.md`), consolidated with
+maintainer dispositions in `docs/security-review/findings/0.7.0.md`. All three
+re-confirmed the advisory-policy gap (#2/#5/#22) as the 1.0.0 blocker; that policy
+work is **deferred to 0.9.0** (not dropped) so this stays a clean hardening
+release. Everything else the review surfaced is addressed here.
+
+### Fixed
+- **Owner-only TUI export** (review N-3) — the TUI export wrote the bundle (which wraps the vault key) with the default umask, leaving it potentially world-readable; it now uses `secfile::write_owner_only` like the CLI path.
+- **Owner-only import directory** (review N-4) — importing a bundle created the vault directory with the default `0755`; it is now `0700` (`secfile::create_dir_owner_only`), matching `Vault::init`. Regression test added.
+- **`daemon.log` rotated file is `0600`** (review N-10) — the log is opened with mode `0600` so a rotated/recreated file is never group/other-readable (it already sat inside the `0700` `.svault/`).
+- **Daemon transport zeroization** (review N-6) — the serialized reply buffer and the in-memory `Response::Secret` value are now wiped (`zeroize`) after the secret is written to the socket, instead of lingering in freed heap.
+- **`sigaction` for shutdown signals** (review N-9) — SIGTERM/SIGINT handlers are installed via `libc::sigaction` (zeroed mask, `SA_RESTART`) rather than the legacy `signal()`, for well-defined semantics across Unix variants.
+
+### Deferred (gates 1.0.0)
+- Policy engine as an enforced control: evaluate policy + write the audit record inside the daemon `Get` path (#2/#5, review N-1/N-2/N-5/#22), authenticate the caller, sign/pin `svault.policy.yaml`, and fail closed on an unparseable policy. This is the last substantive gap before a 1.0.0 "stable CLI" label and is scheduled for 0.9.0.
+
+## [0.7.0] - 2026-05-29
 
 Continued security hardening on the road to a stable 1.0.0 CLI (GUI is planned
 for 2.0.0, Claude/AI-platform access for 3.0.0). Acts on the 0.6.0 review

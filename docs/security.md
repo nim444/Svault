@@ -5,7 +5,7 @@
 | Encryption | AES-256-GCM |
 | Key derivation | Argon2id (64 MB memory, 3 iterations) — GPU-resistant |
 | Metadata integrity | HMAC-SHA256 — tampering with `meta.yaml` is detected |
-| Memory safety | `VaultKey` and secrets derive `ZeroizeOnDrop` — wiped on drop |
+| Memory safety | `VaultKey`, returned secret values, prompts, and the daemon's reply buffer are `Zeroizing`/`ZeroizeOnDrop` — wiped after use. (The transient decrypted secret map built while reading a vault is freed but not individually wiped — a best-effort residue in the cooperative/at-rest model.) |
 | Session file | Created atomically with mode `0600`, never at permissive permissions |
 | Vault file | Safe to commit to git — encrypted at rest |
 

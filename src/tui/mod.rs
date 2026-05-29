@@ -810,7 +810,9 @@ impl App {
             Ok(json) => {
                 let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
                 let out = format!("{}-{}.svault-export.json", meta.name, ts);
-                match std::fs::write(&out, json) {
+                // The bundle wraps the vault key — write it owner-only, matching
+                // the CLI export path. A default-umask write would be world-readable.
+                match crate::secfile::write_owner_only(Path::new(&out), json.as_bytes()) {
                     Ok(_) => {
                         // Keep the bundle out of git so it can't be pushed by mistake.
                         crate::portable::ensure_export_gitignored(Path::new("."));

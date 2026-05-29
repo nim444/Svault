@@ -99,7 +99,7 @@ mod imp {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
-    use zeroize::Zeroizing;
+    use zeroize::{Zeroize, Zeroizing};
 
     /// Per-connection read timeout. A client that opens the socket but never
     /// finishes sending a request can't pin a handler thread forever; the read
@@ -237,7 +237,8 @@ mod imp {
                 let dir = vault_dir(base, &vault);
                 match Vault::open_with_key(&dir, VaultKey::from_bytes(key_bytes)) {
                     Ok(v) => match v.get_secret(&secret) {
-                        // Zeroizing<String> → the transport copy; the original wipes on drop.
+                        // The original Zeroizing<String> wipes on drop; this transport
+                        // copy and the serialized buffer are wiped after reply() (N-6).
                         Ok(Some(value)) => Response::Secret {
                             value: value.to_string(),
                         },
@@ -260,8 +261,11 @@ mod imp {
         let mut s = serde_json::to_string(resp)
             .unwrap_or_else(|_| r#"{"status":"error","message":"encode failed"}"#.to_string());
         s.push('\n');
-        w.write_all(s.as_bytes())?;
-        w.flush()
+        let res = w.write_all(s.as_bytes()).and_then(|_| w.flush());
+        // A Secret reply serializes the plaintext into this buffer — wipe it
+        // before the allocation is freed rather than leaving it in the heap (N-6).
+        s.zeroize();
+        res
     }
 
     /// Serve one connection: read newline-delimited requests until EOF.
@@ -308,8 +312,13 @@ mod imp {
                 }
             };
             let is_shutdown = matches!(req, Request::Shutdown);
-            let resp = handle(&store, &base, idle, max, req);
+            let mut resp = handle(&store, &base, idle, max, req);
             let _ = reply(&mut writer, &resp);
+            // Wipe the secret value held in the in-memory response now that it's
+            // been written, so it doesn't linger in the freed allocation (N-6).
+            if let Response::Secret { value } = &mut resp {
+                value.zeroize();
+            }
             if is_shutdown {
                 shutdown.store(true, Ordering::SeqCst);
                 // Wake the blocking accept loop so it notices the flag and exits.
@@ -348,9 +357,15 @@ mod imp {
     /// connecting, reusing the same teardown as a `Shutdown` request.
     fn install_signal_watcher(shutdown: Arc<AtomicBool>, sock: PathBuf) {
         let handler = on_term_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        // sigaction (POSIX, well-defined cross-Unix semantics) rather than the
+        // legacy signal(), whose behaviour is unspecified on some variants (N-9).
         unsafe {
-            libc::signal(libc::SIGTERM, handler);
-            libc::signal(libc::SIGINT, handler);
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = handler;
+            libc::sigemptyset(&mut action.sa_mask);
+            action.sa_flags = libc::SA_RESTART;
+            libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
+            libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
         }
         std::thread::spawn(move || loop {
             if SIGNAL_FLAG.load(Ordering::SeqCst) {
@@ -575,6 +590,7 @@ mod imp {
     /// printing, so callers like the TUI (which can't write to stdout) can show
     /// it in their own status line.
     pub fn start_quiet() -> Result<String> {
+        use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::process::CommandExt;
         use std::process::{Command, Stdio};
 
@@ -599,6 +615,7 @@ mod imp {
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
+            .mode(0o600)
             .open(&log_p)?;
         let log_err = log.try_clone()?;
 
