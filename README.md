@@ -18,7 +18,7 @@
 
 </div>
 
-![Svault Banner](https://raw.githubusercontent.com/Soluzy/Svault/main/_docs/banner.jpg)
+![Svault Banner](https://raw.githubusercontent.com/Soluzy/Svault/main/docs/banner.jpg)
 
 Svault is an **AI-aware secret access layer** written in Rust. It sits between AI agents and your credentials — enforcing structured requests, detecting suspicious patterns, and making sure an agent has a real reason before it touches anything sensitive.
 
