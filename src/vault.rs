@@ -149,7 +149,12 @@ impl Vault {
     fn save_secrets(&self, secrets: &HashMap<String, String>) -> Result<()> {
         let json = SecretStore(serde_json::to_string(secrets)?);
         let encrypted = std::fs::read(self.vault_dir.join("vault.enc"))?;
-        let salt: [u8; SALT_SIZE] = encrypted[..SALT_SIZE].try_into().unwrap();
+        if encrypted.len() < SALT_SIZE {
+            return Err(anyhow!("vault.enc is too short — may be corrupted"));
+        }
+        let salt: [u8; SALT_SIZE] = encrypted[..SALT_SIZE]
+            .try_into()
+            .expect("slice length checked against SALT_SIZE above");
         let data = crypto::encrypt(&self.key, &salt, json.0.as_bytes())?;
         std::fs::write(self.vault_dir.join("vault.enc"), data)?;
         Ok(())
@@ -328,6 +333,24 @@ mod tests {
 
         let result = Vault::open(&vault_dir, "Str0ng!Pass#99");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn truncated_vault_enc_errors_not_panics() {
+        let dir = TempDir::new().unwrap();
+        let vault_dir = dir.path().join("test");
+        let v = tmp_vault(&dir, "test", "Str0ng!Pass#99");
+
+        // Truncate vault.enc below SALT_SIZE so the salt slice can't be taken.
+        let enc_path = vault_dir.join("vault.enc");
+        std::fs::write(&enc_path, vec![0u8; SALT_SIZE - 1]).unwrap();
+
+        // save_secrets must return an error rather than panic on the short slice.
+        let mut secrets = HashMap::new();
+        secrets.insert("K".to_string(), "v".to_string());
+        let result = v.save_secrets(&secrets);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too short"));
     }
 
     #[test]

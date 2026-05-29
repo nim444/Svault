@@ -136,38 +136,67 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
 // ── Footer ─────────────────────────────────────────────────────────────────────
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let hint = if app.confirm_quit {
-        "enter  quit        esc / any key  stay"
+    // Each screen has a full hint and a compact fallback. On a narrow terminal
+    // the single-line footer would clip the full hint from the right — losing
+    // the "help" and "quit" hints entirely — so we drop to the compact form,
+    // which always keeps "h/? help" discoverable. Press h or ? for the full
+    // keybinding overlay.
+    let (full, compact): (&str, &str) = if app.confirm_quit {
+        ("enter  quit        esc / any key  stay", "enter quit  esc stay")
     } else if app.show_help {
-        "any key / esc  close help"
+        ("any key / esc  close help", "any key  close")
     } else {
         match &app.screen {
-            Screen::List => {
-                "↑/↓ move   enter open   c create   u unlock   l lock   s settings   v activity   e export   i import   r recover   d daemon   ? help   q quit"
-            }
-            Screen::Activity(_) => "↑/↓ scroll   esc / b back   q quit",
-            Screen::Create(_) => {
-                "↑/↓ field   ←/→ change   space toggle   enter next/create   esc cancel"
-            }
-            Screen::Settings(_) => {
-                "↑/↓ field   ←/→ change   space toggle   enter next/save   esc cancel"
-            }
-            Screen::Unlock(_) => "type passphrase   enter unlock   esc cancel",
+            Screen::List => (
+                "↑/↓ move   enter open   c create   u unlock   l lock   s settings   v activity   e export   i import   r recover   d daemon   h/? help   q quit",
+                "↑/↓ move   enter open   h/? help   q quit",
+            ),
+            Screen::Activity(_) => ("↑/↓ scroll   esc / b back   q quit", "↑/↓ scroll   esc back"),
+            Screen::Create(_) => (
+                "↑/↓ field   ←/→ change   space toggle   enter next/create   esc cancel",
+                "↑/↓ field   enter next   esc cancel",
+            ),
+            Screen::Settings(_) => (
+                "↑/↓ field   ←/→ change   space toggle   enter next/save   esc cancel",
+                "↑/↓ field   enter next   esc cancel",
+            ),
+            Screen::Unlock(_) => (
+                "type passphrase   enter unlock   esc cancel",
+                "enter unlock   esc cancel",
+            ),
             Screen::Secrets(scr) => {
                 if scr.reveal.is_some() {
-                    "space reveal/hide   esc close"
+                    ("space reveal/hide   esc close", "space hide   esc close")
                 } else if scr.pending_delete.is_some() {
-                    "y confirm delete   n cancel"
+                    ("y confirm delete   n cancel", "y delete   n cancel")
                 } else {
-                    "↑/↓ move   enter view   a add   d delete   l lock   ? help   esc back"
+                    (
+                        "↑/↓ move   enter view   a add   d delete   l lock   h/? help   esc back",
+                        "↑/↓ move   enter view   h/? help   esc back",
+                    )
                 }
             }
-            Screen::SecretAdd(_) => "↑/↓ field   enter next/save   esc cancel",
-            Screen::RecoveryCode(_) => "press 'y' to confirm you have saved the code",
-            Screen::Import(_) => "type/paste path to bundle   enter import   esc cancel",
-            Screen::Recover(_) => "↑/↓ field   enter next/recover   esc cancel",
+            Screen::SecretAdd(_) => (
+                "↑/↓ field   enter next/save   esc cancel",
+                "↑/↓ field   enter save   esc cancel",
+            ),
+            Screen::RecoveryCode(_) => (
+                "press 'y' to confirm you have saved the code",
+                "'y' to confirm saved",
+            ),
+            Screen::Import(_) => (
+                "type/paste path to bundle   enter import   esc cancel",
+                "enter import   esc cancel",
+            ),
+            Screen::Recover(_) => (
+                "↑/↓ field   enter next/recover   esc cancel",
+                "↑/↓ field   enter next   esc cancel",
+            ),
         }
     };
+    // Inner width = area minus the two vertical border columns.
+    let avail = area.width.saturating_sub(2) as usize;
+    let hint = if full.chars().count() <= avail { full } else { compact };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border());
@@ -189,6 +218,7 @@ fn draw_help(frame: &mut Frame, area: Rect, screen: &Screen) {
             ("a", "add a secret"),
             ("d", "delete the selected secret"),
             ("l", "lock the vault"),
+            ("h or ?", "show this help"),
             ("esc or b", "back to vault list"),
         ],
         // Default to the list bindings — the main hub.
@@ -205,6 +235,7 @@ fn draw_help(frame: &mut Frame, area: Rect, screen: &Screen) {
             ("e / i", "export / import an encrypted bundle"),
             ("r", "recover a vault with its recovery code"),
             ("d", "start / stop the background daemon (Unix)"),
+            ("h or ?", "show this help"),
             ("q", "quit"),
         ],
     };

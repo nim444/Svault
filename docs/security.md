@@ -19,7 +19,7 @@
 
 Two ways to stay unlocked, both owner-only:
 
-- **File session** (default, all platforms) — `svault unlock` caches the passphrase in `.svault/<vault>/.session` (mode `0600`). On `lock` the file is overwritten with zeros and deleted.
+- **File session** (default, all platforms) — `svault unlock` caches the vault's **derived key** (32 bytes, hex) in `.svault/<vault>/.session` (mode `0600`) — never the passphrase. A stolen `.session` opens that one vault, but doesn't reveal the passphrase (which may protect other vaults or services). On `lock` the file is overwritten with zeros and deleted.
 - **Daemon** (Unix, opt-in) — when `svault daemon start` is running, `unlock` hands the derived key to the daemon, which keeps it **in memory only**; no `.session` file is written. Keys are zeroized on lock, on idle / hard-max auto-lock, and on shutdown. See [Daemon](daemon.md). The daemon never exposes write operations or the passphrase over its socket — only scoped reads.
 
 ## Threat model notes

@@ -25,7 +25,7 @@ The `reason` field is required by the [policy engine](policy-engine.md). An AI t
     recovery.enc  ← vault key wrapped under the recovery
                     code                                  (safe to commit)
     .gitignore    ← auto-written at create; blocks .session + logs
-    .session      ← passphrase cache while unlocked       (gitignored, mode 0600)
+    .session      ← derived-key cache while unlocked      (gitignored, mode 0600)
     audit.log     ← policy decisions for 'svault get'     (gitignored, mode 0600)
     usage.log     ← activity timeline, human + agent       (gitignored, mode 0600)
 ```

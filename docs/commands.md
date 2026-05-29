@@ -4,8 +4,8 @@
 svault                             # launch the interactive TUI (no subcommand)
 svault create                      # create encrypted vault (name, description, agents, rate limit, auto-lock)
 svault settings [VAULT]            # view or change a vault's settings
-svault unlock   [VAULT]            # unlock vault, cache passphrase for the session
-svault lock     [VAULT]            # clear the cached passphrase
+svault unlock   [VAULT]            # unlock vault, cache derived key for the session
+svault lock     [VAULT]            # clear the cached key
 svault lock     --all              # lock every vault
 svault status                      # show lock state of all vaults
 svault vaults                      # list all vaults with metadata (storage:name prefix)
@@ -37,7 +37,7 @@ See [Recovery](recovery.md) for how the recovery key and bundle work.
 ```bash
 svault recover [VAULT]                   # use the recovery code to reset a lost passphrase
 svault export  [VAULT] [--out FILE]      # write a portable encrypted bundle (default: <name>.svault-export.json)
-svault import  <FILE>                    # restore a vault from a bundle
+svault import  <FILE> [--name NEW]       # restore a vault (auto-suffixes / --name on collision)
 ```
 
 ## Daemon (Unix)
@@ -92,7 +92,7 @@ postgres://app:s3cr3t@db.internal:5432/billing
 
 ## 2. Unlock once, use all session
 
-`unlock` caches the passphrase so you aren't re-prompted on every read.
+`unlock` caches the vault's derived key (not the passphrase) so you aren't re-prompted on every read.
 
 ```bash
 $ svault unlock billing-api

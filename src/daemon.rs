@@ -93,10 +93,25 @@ mod imp {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use zeroize::Zeroizing;
+
+    /// Per-connection read timeout. A client that opens the socket but never
+    /// finishes sending a request can't pin a handler thread forever; the read
+    /// errors out and the connection is dropped. Every real client does a fast
+    /// connect → send → read → close, well under this.
+    const CONN_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// Decrements the live-connection counter when a handler thread ends, even
+    /// on panic (unwinding runs Drop), so the ceiling can't leak slots.
+    struct ConnGuard(Arc<AtomicUsize>);
+    impl Drop for ConnGuard {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
 
     pub fn base_dir() -> PathBuf {
         PathBuf::from(SVAULT_DIR)
@@ -123,6 +138,15 @@ mod imp {
 
     type Store = Arc<Mutex<HashMap<String, Held>>>;
 
+    /// Lock the key store, recovering the guard even if a previous holder
+    /// panicked (poisoned the mutex). A single panicking connection handler must
+    /// not take the whole daemon — and every still-held key — down with it. The
+    /// worst a poisoned lock leaves behind is a possibly half-updated `last_used`
+    /// timestamp; it can never leak or corrupt a key, so recovering is safe.
+    fn lock_store(store: &Store) -> std::sync::MutexGuard<'_, HashMap<String, Held>> {
+        store.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     // ── Request handling ──────────────────────────────────────────────────
 
     fn handle(store: &Store, base: &Path, idle: u64, max: u64, req: Request) -> Response {
@@ -140,7 +164,7 @@ mod imp {
                             unlocked_at: now,
                             last_used: now,
                         };
-                        store.lock().unwrap().insert(vault, held);
+                        lock_store(store).insert(vault, held);
                         Response::Unlocked
                     }
                     Err(e) => Response::Error {
@@ -149,20 +173,20 @@ mod imp {
                 }
             }
             Request::Lock { vault } => {
-                let removed = store.lock().unwrap().remove(&vault).is_some();
+                let removed = lock_store(store).remove(&vault).is_some();
                 Response::Locked {
                     count: usize::from(removed),
                 }
             }
             Request::LockAll => {
-                let mut s = store.lock().unwrap();
+                let mut s = lock_store(store);
                 let count = s.len();
                 s.clear(); // dropping each Held zeroizes its key
                 Response::Locked { count }
             }
             Request::Status => {
                 let now = Instant::now();
-                let s = store.lock().unwrap();
+                let s = lock_store(store);
                 let mut vaults: Vec<VaultStatus> = s
                     .iter()
                     .map(|(name, h)| {
@@ -183,7 +207,7 @@ mod imp {
                 // the lock, then open + decrypt OUTSIDE it so concurrent Gets
                 // don't serialize on the mutex.
                 let key_bytes = {
-                    let mut s = store.lock().unwrap();
+                    let mut s = lock_store(store);
                     match s.get_mut(&vault) {
                         Some(h) => {
                             h.last_used = Instant::now();
@@ -234,6 +258,9 @@ mod imp {
             Ok(s) => s,
             Err(_) => return,
         };
+        // Bound how long a single request read may block so a stalled client
+        // can't hold the handler (and a connection slot) open indefinitely.
+        let _ = reader_stream.set_read_timeout(Some(CONN_READ_TIMEOUT));
         let mut writer = stream;
         let mut reader = BufReader::new(reader_stream);
         let mut line = String::new();
@@ -277,7 +304,7 @@ mod imp {
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_secs(10));
             let now = Instant::now();
-            let mut s = store.lock().unwrap();
+            let mut s = lock_store(&store);
             s.retain(|_, h| {
                 let idle_used = now.duration_since(h.last_used).as_secs();
                 let age = now.duration_since(h.unlocked_at).as_secs();
@@ -287,22 +314,51 @@ mod imp {
     }
 
     /// The accept loop. Returns when a `Shutdown` request unblocks it.
-    fn serve(listener: UnixListener, store: Store, base: PathBuf, idle: u64, max: u64) {
+    fn serve(
+        listener: UnixListener,
+        store: Store,
+        base: PathBuf,
+        idle: u64,
+        max: u64,
+        max_conns: usize,
+    ) {
         let shutdown = Arc::new(AtomicBool::new(false));
+        let active = Arc::new(AtomicUsize::new(0));
         let sock = socket_path(&base);
         for stream in listener.incoming() {
             if shutdown.load(Ordering::SeqCst) {
                 break;
             }
-            let s = match stream {
+            let mut s = match stream {
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            let (st, bs, sd, sk) = (store.clone(), base.clone(), shutdown.clone(), sock.clone());
-            std::thread::spawn(move || serve_conn(s, st, bs, idle, max, sd, sk));
+            // Connection ceiling: refuse new work when too many handlers are
+            // already live, instead of spawning unbounded threads.
+            if active.load(Ordering::SeqCst) >= max_conns {
+                let _ = reply(
+                    &mut s,
+                    &Response::Error {
+                        message: "daemon busy: too many connections".to_string(),
+                    },
+                );
+                continue; // drop s → closes the socket
+            }
+            active.fetch_add(1, Ordering::SeqCst);
+            let (st, bs, sd, sk, ac) = (
+                store.clone(),
+                base.clone(),
+                shutdown.clone(),
+                sock.clone(),
+                active.clone(),
+            );
+            std::thread::spawn(move || {
+                let _guard = ConnGuard(ac); // decrements the live count on exit/panic
+                serve_conn(s, st, bs, idle, max, sd, sk);
+            });
         }
         // Lock everything (zeroize keys) and clean up our files.
-        store.lock().unwrap().clear();
+        lock_store(&store).clear();
         let _ = std::fs::remove_file(&sock);
         let _ = std::fs::remove_file(pid_path(&base));
     }
@@ -337,10 +393,33 @@ mod imp {
         std::fs::metadata(sock).ok().map(|m| m.mode() & 0o777)
     }
 
+    /// Connect to the daemon socket, retrying briefly on transient failures.
+    /// Under burst connect-churn the OS listener backlog can momentarily reject
+    /// a connect (the daemon is alive, the accept queue is just full); a few
+    /// short retries absorb that blip instead of surfacing a hard error to the
+    /// caller. A genuinely-down daemon still fails fast (~all retries are cheap).
+    fn connect_retry(sock: &Path) -> std::io::Result<UnixStream> {
+        const ATTEMPTS: u32 = 4;
+        let mut last_err = None;
+        for attempt in 0..ATTEMPTS {
+            match UnixStream::connect(sock) {
+                Ok(s) => return Ok(s),
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt + 1 < ATTEMPTS {
+                        // 1ms, 2ms, 4ms — total worst case ~7ms.
+                        std::thread::sleep(Duration::from_millis(1u64 << attempt));
+                    }
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| std::io::Error::other("connect failed")))
+    }
+
     /// Send one request to a running daemon and read its reply.
     pub fn send(base: &Path, req: &Request) -> Result<Response> {
         let mut stream =
-            UnixStream::connect(socket_path(base)).context("connect to svault daemon")?;
+            connect_retry(&socket_path(base)).context("connect to svault daemon")?;
         let mut line = serde_json::to_string(req)?;
         line.push('\n');
         stream.write_all(line.as_bytes())?;
@@ -372,8 +451,9 @@ mod imp {
             let _ = std::fs::remove_file(&sock); // stale socket from a crash
         }
 
-        let cfg = SvaultConfig::load().lock;
-        let (idle, max) = (cfg.idle_timeout_secs, cfg.max_unlocked_secs);
+        let cfg = SvaultConfig::load();
+        let (idle, max) = (cfg.lock.idle_timeout_secs, cfg.lock.max_unlocked_secs);
+        let max_conns = cfg.daemon.max_connections;
 
         let listener =
             UnixListener::bind(&sock).with_context(|| format!("bind {}", sock.display()))?;
@@ -384,10 +464,10 @@ mod imp {
         spawn_ticker(store.clone(), idle, max);
 
         eprintln!(
-            "svault daemon listening on {} (idle {idle}s, hard-max {max}s)",
+            "svault daemon listening on {} (idle {idle}s, hard-max {max}s, max-conns {max_conns})",
             sock.display()
         );
-        serve(listener, store, base, idle, max);
+        serve(listener, store, base, idle, max, max_conns);
         Ok(())
     }
 
@@ -652,11 +732,18 @@ mod imp {
         }
 
         /// Bind a daemon on a temp base and wait until it answers.
+        /// Default connection ceiling for tests that don't care about the cap.
+        const TEST_MAX_CONNS: usize = 64;
+
         fn start_test_daemon(base: PathBuf, idle: u64, max: u64) {
+            start_test_daemon_capped(base, idle, max, TEST_MAX_CONNS);
+        }
+
+        fn start_test_daemon_capped(base: PathBuf, idle: u64, max: u64, max_conns: usize) {
             let sock = socket_path(&base);
             let listener = UnixListener::bind(&sock).unwrap();
             let store: Store = Arc::new(Mutex::new(HashMap::new()));
-            std::thread::spawn(move || serve(listener, store, base, idle, max));
+            std::thread::spawn(move || serve(listener, store, base, idle, max, max_conns));
         }
 
         fn wait_up(base: &Path) {
@@ -770,6 +857,55 @@ mod imp {
         }
 
         #[test]
+        fn connections_do_not_leak_slots() {
+            // Each connection must free its slot when its handler ends (ConnGuard),
+            // so the daemon keeps answering far past the ceiling in *total*
+            // connects. If the counter leaked, it would wedge after TEST_MAX_CONNS.
+            let tmp = TempDir::new().unwrap();
+            let base = tmp.path().to_path_buf();
+            make_vault(&base, "v", "Str0ng!Pass#99");
+            start_test_daemon(base.clone(), 900, 28800);
+            wait_up(&base);
+            for _ in 0..(TEST_MAX_CONNS * 3) {
+                assert!(matches!(
+                    send(&base, &Request::Ping).unwrap(),
+                    Response::Pong { .. }
+                ));
+            }
+            let _ = send(&base, &Request::Shutdown);
+        }
+
+        #[test]
+        fn poisoned_store_still_locks() {
+            // A connection handler that panics while holding the lock poisons
+            // the mutex. lock_store must still hand back the guard so the daemon
+            // (and every key it holds) survives instead of aborting on the next
+            // lock().unwrap().
+            let store: Store = Arc::new(Mutex::new(HashMap::new()));
+            let s2 = store.clone();
+            let _ = std::thread::spawn(move || {
+                let _g = s2.lock().unwrap();
+                panic!("poison the mutex");
+            })
+            .join();
+
+            // Confirm the mutex really is poisoned (bare lock would propagate it).
+            assert!(store.lock().is_err());
+
+            // lock_store recovers the guard and the store stays usable.
+            let mut g = lock_store(&store);
+            g.insert(
+                "v".to_string(),
+                Held {
+                    key: Zeroizing::new([7u8; 32]),
+                    unlocked_at: Instant::now(),
+                    last_used: Instant::now(),
+                },
+            );
+            assert_eq!(g.len(), 1);
+        }
+
+        #[test]
         fn concurrent_gets_all_succeed() {
             let tmp = TempDir::new().unwrap();
             let base = tmp.path().to_path_buf();
@@ -810,6 +946,227 @@ mod imp {
                 h.join().unwrap();
             }
             let _ = send(&base, &Request::Shutdown);
+        }
+
+        /// Heavy concurrency / pressure simulation. Ignored by default (and in
+        /// CI) — it's a manual benchmark, not a correctness gate. It drives the
+        /// real `serve`/`handle` path (one thread per connection, the shared
+        /// `Arc<Mutex>` key store, AES-256-GCM decrypt on every `Get`) under
+        /// sustained parallel load, then floods connections past the ceiling.
+        /// It records latency percentiles, throughput, and refusal counts to a
+        /// log file and prints a summary.
+        ///
+        /// Run it (release build strongly recommended):
+        ///   cargo test --release daemon_stress_simulation -- --ignored --nocapture
+        /// Tunables (env):
+        ///   SVAULT_STRESS_THREADS   parallel reader threads        (default 64)
+        ///   SVAULT_STRESS_READS     Get requests per thread        (default 2000)
+        ///   SVAULT_STRESS_FLOOD     idle connections in the flood  (default 256)
+        ///   SVAULT_STRESS_LOG       report path  (default target/stress-report.log)
+        #[test]
+        #[ignore = "manual pressure benchmark; run with --ignored --nocapture"]
+        fn daemon_stress_simulation() {
+            use std::io::Write as _;
+            use std::os::unix::net::UnixStream;
+            use std::sync::atomic::{AtomicU64, Ordering};
+
+            fn env_usize(key: &str, default: usize) -> usize {
+                std::env::var(key)
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(default)
+            }
+
+            let threads = env_usize("SVAULT_STRESS_THREADS", 64);
+            let reads = env_usize("SVAULT_STRESS_READS", 2000);
+            let flood = env_usize("SVAULT_STRESS_FLOOD", 256);
+            // Default ceiling matches the shipped config default so the run
+            // reflects real behavior; override to study the cap's effect.
+            let max_conns = env_usize("SVAULT_STRESS_MAXCONN", 512);
+            let log_path = std::env::var("SVAULT_STRESS_LOG")
+                .unwrap_or_else(|_| "target/stress-report.log".to_string());
+
+            let tmp = TempDir::new().unwrap();
+            let base = tmp.path().to_path_buf();
+            make_vault(&base, "v", "Str0ng!Pass#99");
+            start_test_daemon_capped(base.clone(), 900, 28800, max_conns);
+            wait_up(&base);
+            send(
+                &base,
+                &Request::Unlock {
+                    vault: "v".into(),
+                    passphrase: "Str0ng!Pass#99".into(),
+                },
+            )
+            .unwrap();
+
+            // ── Phase 1: sustained concurrent reads ──────────────────────────
+            // Three outcomes, kept distinct:
+            //   correct   — Get returned the right value
+            //   refused   — daemon answered "busy" (backpressure at the ceiling);
+            //               acceptable, the real client falls back to a prompt
+            //   conn_err  — couldn't even connect (OS listener-backlog drop under
+            //               connect churn); a capacity symptom, not a logic bug
+            //   wrong     — connected, got a response, but it was wrong
+            //               (wrong value / NotUnlocked / NotFound). A real bug —
+            //               must be zero no matter how hard we push.
+            let refused = Arc::new(AtomicU64::new(0));
+            let conn_err = Arc::new(AtomicU64::new(0));
+            let wrong = Arc::new(AtomicU64::new(0));
+            let total_ops = threads * reads;
+            let started = Instant::now();
+            let mut handles = Vec::new();
+            for _ in 0..threads {
+                let b = base.clone();
+                let refused = refused.clone();
+                let conn_err = conn_err.clone();
+                let wrong = wrong.clone();
+                handles.push(std::thread::spawn(move || {
+                    // Per-op latencies in microseconds, collected per thread then merged.
+                    let mut lat = Vec::with_capacity(reads);
+                    for _ in 0..reads {
+                        let t0 = Instant::now();
+                        let resp = send(
+                            &b,
+                            &Request::Get {
+                                vault: "v".into(),
+                                secret: "API_KEY".into(),
+                            },
+                        );
+                        let us = t0.elapsed().as_micros() as u64;
+                        match resp {
+                            Ok(Response::Secret { value }) if value == "s3cr3t" => lat.push(us),
+                            Ok(Response::Error { ref message })
+                                if message.contains("too many connections") =>
+                            {
+                                refused.fetch_add(1, Ordering::Relaxed);
+                            }
+                            // Transport failure — never reached the daemon
+                            // (connect refused / backlog drop). Capacity symptom.
+                            Err(_) => {
+                                conn_err.fetch_add(1, Ordering::Relaxed);
+                            }
+                            // Connected and got a response, but it was wrong.
+                            _ => {
+                                wrong.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    lat
+                }));
+            }
+            let mut all_lat: Vec<u64> = Vec::with_capacity(total_ops);
+            for h in handles {
+                all_lat.extend(h.join().unwrap());
+            }
+            let wall = started.elapsed();
+            let refused_count = refused.load(Ordering::Relaxed);
+            let conn_err_count = conn_err.load(Ordering::Relaxed);
+            let wrong_count = wrong.load(Ordering::Relaxed);
+
+            all_lat.sort_unstable();
+            let pct = |p: f64| -> u64 {
+                if all_lat.is_empty() {
+                    return 0;
+                }
+                let idx = ((all_lat.len() as f64 - 1.0) * p).round() as usize;
+                all_lat[idx]
+            };
+            let mean = if all_lat.is_empty() {
+                0
+            } else {
+                all_lat.iter().sum::<u64>() / all_lat.len() as u64
+            };
+            let ops_sec = all_lat.len() as f64 / wall.as_secs_f64();
+
+            // ── Phase 2: connection flood (exercise the ceiling, #8) ─────────
+            // Open many connections that connect but never send, holding handler
+            // slots, then probe. We report how many probes were refused with the
+            // "busy" error vs answered; the daemon must stay alive throughout.
+            let mut idle_conns = Vec::new();
+            for _ in 0..flood {
+                if let Ok(s) = UnixStream::connect(socket_path(&base)) {
+                    idle_conns.push(s);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(200)); // let handlers register
+            let mut refused = 0u32;
+            let mut answered = 0u32;
+            for _ in 0..32 {
+                match send(&base, &Request::Ping) {
+                    Ok(Response::Pong { .. }) => answered += 1,
+                    Ok(Response::Error { .. }) => refused += 1,
+                    _ => refused += 1,
+                }
+            }
+            drop(idle_conns); // close them → handlers exit → slots free
+            std::thread::sleep(Duration::from_millis(300));
+            let recovered = matches!(send(&base, &Request::Ping), Ok(Response::Pong { .. }));
+
+            // ── Report ───────────────────────────────────────────────────────
+            let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+            let report = format!(
+                "\
+=== Svault daemon stress simulation ===
+when                 {ts}
+build                {} (release={})
+host threads avail   {}
+--- phase 1: sustained concurrent reads ---
+reader threads       {threads}
+reads per thread     {reads}
+total Get ops        {total_ops}
+correct              {}
+refused (busy)       {refused_count}
+conn err (backlog)   {conn_err_count}
+wrong (real bug)     {wrong_count}
+wall time            {:.3}s
+throughput (correct) {ops_sec:.0} ops/sec
+latency min          {} us
+latency mean         {mean} us
+latency p50          {} us
+latency p90          {} us
+latency p99          {} us
+latency max          {} us
+--- phase 2: connection flood (ceiling = {max_conns}) ---
+idle connections     {flood}
+probes answered      {answered}
+probes refused busy  {refused}
+recovered after drain {recovered}
+",
+                env!("CARGO_PKG_VERSION"),
+                cfg!(not(debug_assertions)),
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(0),
+                all_lat.len(),
+                wall.as_secs_f64(),
+                all_lat.first().copied().unwrap_or(0),
+                pct(0.50),
+                pct(0.90),
+                pct(0.99),
+                all_lat.last().copied().unwrap_or(0),
+            );
+
+            print!("{report}");
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                let _ = writeln!(f, "{report}");
+                println!("(report appended to {log_path})");
+            }
+
+            let _ = send(&base, &Request::Shutdown);
+
+            // Correctness gates that still hold even under heavy load. Busy
+            // refusals are acceptable backpressure; a wrong/dropped value or a
+            // transport-level failure on an *accepted* request would be a bug.
+            assert_eq!(
+                wrong_count, 0,
+                "every accepted Get must return the correct value (refusals/connect errors excluded)"
+            );
+            assert!(recovered, "daemon must recover after the connection flood");
         }
     }
 }

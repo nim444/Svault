@@ -19,7 +19,8 @@ result. See the per-release findings register for that human review of record.
 |---|---|
 | [PROMPT.md](PROMPT.md) | A reusable, model-agnostic prompt for commissioning an **independent** security review of the current codebase. Kept current with the latest released version and features. |
 | [reviews/](reviews/) | The reviews themselves, named `<version>-<reviewer>.md` (more than one independent reviewer per release is encouraged). |
-| [findings/](findings/) | The consolidated **findings register** per release — every reviewer's findings de-duplicated into one table with cross-model agreement, our disposition, and justification notes. This is the document of record for what we decided and why. |
+| [findings/](findings/) | The consolidated **findings register** per release — every reviewer's findings de-duplicated into one table with cross-model agreement, our disposition, and justification notes. This is the document of record for what we decided and why. Later releases add a **carry-forward** register (e.g. [findings/0.6.0.md](findings/0.6.0.md)) restating each prior finding as fixed / improved / unchanged. |
+| [stress/](stress/) | **Concurrency / pressure simulations** per release — a logged stress run of the daemon under heavy parallel load, backing the connection-DoS findings. See [stress/0.6.0.md](stress/0.6.0.md). |
 
 ## Reviews
 
@@ -27,7 +28,9 @@ The reviewers below are **AI models**, run for breadth and cross-checking. Their
 are not the final word: they are consolidated and then **reviewed, triaged, and signed off
 by a human maintainer** in the per-release findings register —
 **[findings/0.5.0.md](findings/0.5.0.md)** (all 22 findings dispositioned by Nima Karimi,
-2026-05-29).
+2026-05-29). **0.6.0** acted on four of them (#4, #8, #13, #20) plus added connect
+resilience and a logged stress simulation — see the carry-forward register
+**[findings/0.6.0.md](findings/0.6.0.md)** and **[stress/0.6.0.md](stress/0.6.0.md)**.
 
 | Version | Date | Reviewer | Overall posture | Review |
 |---|---|---|---|---|

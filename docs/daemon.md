@@ -1,12 +1,12 @@
 # Daemon
 
-The daemon is an optional background process that holds unlocked vault keys **in memory** and serves secret reads over a local Unix socket. It replaces the file-based `.session` (which stores the passphrase on disk) with a real "unlock once, use many times" session whose key material never touches disk.
+The daemon is an optional background process that holds unlocked vault keys **in memory** and serves secret reads over a local Unix socket. It replaces the file-based `.session` (which stores the derived key on disk) with a real "unlock once, use many times" session whose key material never touches disk.
 
 It is **Unix-only** (macOS, Linux). On Windows the `daemon` commands print a note and everything falls back to the file session — no behavior changes.
 
 ## Why
 
-Without the daemon, `svault unlock` caches your passphrase in `.svault/<vault>/.session` (mode `0600`) so later commands don't re-prompt. The daemon is the stronger option:
+Without the daemon, `svault unlock` caches the vault's derived key (not the passphrase) in `.svault/<vault>/.session` (mode `0600`) so later commands don't re-prompt. The daemon is the stronger option:
 
 - The derived key lives only in the daemon's memory — there's **no `.session` file** written while the daemon is up.
 - Keys are zeroized the moment a vault is locked, evicted by a timeout, or the daemon shuts down.
@@ -53,9 +53,22 @@ Two timers, both configurable in `.svault/config.yaml`:
 lock:
   idle_timeout_secs: 900
   max_unlocked_secs: 28800
+daemon:
+  max_connections: 512
 ```
 
 A background ticker checks roughly every 10 seconds and evicts (and zeroizes) any key past either limit.
+
+## Connection limits
+
+The daemon serves one thread per connection. To bound that (so a runaway or hostile same-UID process can't spawn unbounded handler threads), it enforces a ceiling and a per-connection timeout:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `daemon.max_connections` | `512` | Maximum simultaneously-served connections. Beyond it, new connections get a `too many connections` error and the client falls back. |
+| (fixed) read timeout | `30 s` | A connection that opens but never finishes sending a request is dropped, so it can't pin a handler. |
+
+The default is generous enough that realistic single-user / multi-agent concurrency never hits it (see the [stress simulation](security-review/stress/0.6.0.md) — 64-way concurrent reads refused nothing at the default). Lower it on small or shared hosts; raise it on big multi-agent boxes. The client (`daemon::send`) also retries a connect a few times with short backoff, so a momentary OS listener-backlog drop under burst is served rather than failing hard.
 
 ## doctor
 

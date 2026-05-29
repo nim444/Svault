@@ -28,7 +28,7 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 **Repository**: https://github.com/Soluzy/Svault
 **Description**: An AI-aware secret manager written in Rust. It sits between AI agents and credentials, enforcing structured requests (scope + reason) and policy controls.
 
-**Important**: Review the **latest version** available in the repository (as of your knowledge cutoff or by inspecting the code directly). Pay special attention to the Unix daemon feature that was added in version 0.5.0.
+**Important**: Review the **latest version** available in the repository (as of your knowledge cutoff or by inspecting the code directly). Pay special attention to the Unix daemon (added in 0.5.0) and the 0.6.0 security-hardening changes: the file session now caches the derived **key** rather than the passphrase, the daemon has a configurable connection ceiling + per-connection read timeout, the key-store lock recovers from poisoning, and `daemon::send` retries connects. Do not assume these are correct — verify them and look for what they missed.
 
 ### Instructions
 
@@ -50,7 +50,8 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 - Cryptographic design and implementation quality
 - Secret handling (memory safety, zeroization, logging, exposure windows)
 - The policy engine for AI/agent access
-- **The Unix daemon (0.5.0+)**: architecture, security properties, limitations, socket model, auto-lock behavior, and how it changes the previous passphrase-on-disk risk
+- **The Unix daemon (0.5.0+)**: architecture, security properties, limitations, socket model, auto-lock behavior, the connection ceiling / read timeout (0.6.0), and how it changes the previous on-disk risk
+- **Session at rest (0.6.0)**: the file session now stores the derived key (hex, mode 0600), not the passphrase — assess the residual risk (key-equivalent at rest, Windows ACL gap) and whether key-vs-passphrase materially helps
 - Recovery and portability features
 - Supply chain security (dependencies, build & release process, distribution)
 - Code quality, testing coverage, and attack scenario coverage
@@ -98,7 +99,7 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 
 ## Recommendations for Corporate Adoption
 
-[Prioritized, actionable, reflecting the current 0.5.0 state]
+[Prioritized, actionable, reflecting the current (0.6.0) state]
 
 ## Overall Risk Assessment by Context
 

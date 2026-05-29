@@ -67,7 +67,7 @@ svault create
 svault secret add DB_URL
 svault secret add API_KEY
 
-# 3. Unlock for your session (passphrase cached, not prompted again)
+# 3. Unlock for your session (derived key cached, not prompted again)
 svault unlock
 
 # 4. Use secrets without re-entering the passphrase
@@ -99,7 +99,7 @@ Run `svault` with no subcommand to open the full-screen terminal UI:
 svault
 ```
 
-Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s` edit settings, and — once a vault is unlocked — `a` add, view, and `d` delete secrets. The TUI reuses the cached session passphrase, so an unlocked vault is never re-prompted. Every subcommand still works for scripting.
+Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s` edit settings, and — once a vault is unlocked — `a` add, view, and `d` delete secrets. The TUI reuses the cached session key, so an unlocked vault is never re-prompted. Every subcommand still works for scripting.
 
 **Full keybindings → [docs/tui.md](docs/tui.md)**
 
@@ -237,7 +237,9 @@ flowchart TD
 cargo test
 ```
 
-74 tests covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, tampered `meta.yaml` rejected, session unlock/lock/lock-all, passphrase strength checks, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, full recover-and-rekey roundtrip (old passphrase rejected, secret preserved, code still valid), export-bundle checksum integrity, build→import recreating an openable vault + overwrite rejection, storage-backend metadata roundtrip, the daemon (protocol JSON roundtrip, auto-lock idle/hard-max/active decisions, a unix unlock→get→lock→shutdown integration test, and a concurrent-reads stress test), usage-log source stamping (event tagged with the current surface; old logs parse as unknown), and TUI key dispatch (field navigation, the rate-limit space-toggle regression, paste handling, and the help overlay).
+82 tests (plus one `#[ignore]`d stress benchmark) covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, **truncated `vault.enc` errors instead of panicking**, tampered `meta.yaml` rejected, session unlock/lock/lock-all, **the session caching a derived key (never a passphrase)**, passphrase strength checks, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, full recover-and-rekey roundtrip (old passphrase rejected, secret preserved, code still valid), export-bundle checksum integrity, build→import recreating an openable vault, **import name-collision suffixing + rename re-signing meta**, storage-backend metadata roundtrip, the daemon (protocol JSON roundtrip, auto-lock idle/hard-max/active decisions, a unix unlock→get→lock→shutdown integration test, a concurrent-reads stress test, **poisoned-mutex recovery**, and **connection-slot accounting**), usage-log source stamping (event tagged with the current surface; old logs parse as unknown), and TUI key dispatch (field navigation, the rate-limit space-toggle regression, paste handling, and **help opening with `h` or `?`**).
+
+A heavier concurrency / pressure simulation runs on demand (`cargo test --release daemon_stress_simulation -- --ignored --nocapture`); methodology and a recorded run are in [docs/security-review/stress/0.6.0.md](docs/security-review/stress/0.6.0.md).
 
 CI runs the suite on **Ubuntu, Fedora, macOS, and Windows** on every push and pull request.
 

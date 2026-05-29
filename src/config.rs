@@ -34,12 +34,37 @@ impl Default for LockConfig {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DaemonConfig {
+    /// Hard ceiling on simultaneously-served connections. Bounds the
+    /// thread-per-connection model so a runaway or hostile same-UID process
+    /// can't spawn unbounded handler threads (finding #8). The default is
+    /// generous enough that realistic single-user agent concurrency never hits
+    /// it; lower it on small/shared hosts, raise it on big multi-agent boxes.
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
+}
+
+fn default_max_connections() -> usize {
+    512
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: default_max_connections(),
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SvaultConfig {
     #[serde(default)]
     pub backend: Backend,
     #[serde(default)]
     pub lock: LockConfig,
+    #[serde(default)]
+    pub daemon: DaemonConfig,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

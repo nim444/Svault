@@ -107,6 +107,19 @@
 - [x] On lock: secrets wiped from memory immediately (`zeroize`) *(daemon keys are `Zeroizing`)*
 - [x] Both timers configurable in `.svault/config.yaml`
 
+### [DONE] Security hardening (0.6.0)
+
+> Acts on the 0.5.0 security-review register. Full carry-forward status for all
+> 22 findings is in [docs/security-review/findings/0.6.0.md](docs/security-review/findings/0.6.0.md);
+> the logged stress run is in [docs/security-review/stress/0.6.0.md](docs/security-review/stress/0.6.0.md).
+
+- [x] **#4 — session caches the derived key, not the passphrase** — `.session` now stores the 32-byte derived key (hex, mode 0600) on every platform incl. the TUI; a stolen session no longer leaks the reusable passphrase. *(Remaining: Windows ACL/DPAPI + route TUI through the daemon — deferred.)*
+- [x] **#8 — daemon connection ceiling** — configurable `daemon.max_connections` (default 512) + 30s per-connection read timeout + slot accounting that survives panics. Validated by a logged concurrency stress simulation (128k concurrent reads, 0 wrong values).
+- [x] **#13 — daemon survives a poisoned mutex** — key-store lock taken with poison recovery so a panicking handler can't down the daemon.
+- [x] **#20 — truncated `vault.enc` errors instead of panicking** — checked length guard on the salt slice.
+- [x] **Connect resilience** — `daemon::send` retries the socket connect with short backoff (absorbs OS listener-backlog drops under burst).
+- [x] Suite now 82 (+1 ignored stress benchmark); clippy clean.
+
 ### [TODO] Step 4 — GUI client (Tauri)
 - [ ] `svault-gui` — cross-platform desktop app (macOS, Linux, Windows)
   - [ ] **Vault dashboard** — list all vaults, show lock/unlock status, last accessed

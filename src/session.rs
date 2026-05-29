@@ -1,8 +1,11 @@
-/// File-based lock/unlock simulation for MVP.
+/// File-based lock/unlock for the no-daemon path.
 ///
-/// The passphrase is stored in .svault/<name>/.session (mode 0600).
-/// This is NOT the production daemon — that's Step 3.
-/// Purpose: simulate the unlock-once-use-many-times UX.
+/// The session caches the vault's **derived key** (32 bytes, hex-encoded) in
+/// `.svault/<name>/.session` (mode 0600 on Unix) — never the passphrase. This
+/// is deliberate (finding #4): a stolen `.session` lets an attacker open this
+/// one vault (same as before), but it no longer leaks the reusable passphrase,
+/// which may protect other vaults or services. The daemon (keys in memory, no
+/// file) remains the preferred path when it's running; this is the fallback.
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
@@ -10,10 +13,11 @@ fn session_path(vault_dir: &Path) -> PathBuf {
     vault_dir.join(".session")
 }
 
-/// Store passphrase and mark vault as unlocked.
-/// File is created atomically with mode 0600 — never visible at permissive permissions.
-pub fn unlock(vault_dir: &Path, passphrase: &str) -> Result<()> {
+/// Cache the derived key (hex) and mark the vault unlocked. Written atomically
+/// with mode 0600 on Unix so it's never world-readable.
+pub fn unlock_with_key(vault_dir: &Path, key: &[u8; 32]) -> Result<()> {
     let path = session_path(vault_dir);
+    let encoded = hex::encode(key);
 
     #[cfg(unix)]
     {
@@ -25,11 +29,11 @@ pub fn unlock(vault_dir: &Path, passphrase: &str) -> Result<()> {
             .truncate(true)
             .mode(0o600)
             .open(&path)?;
-        f.write_all(passphrase.as_bytes())?;
+        f.write_all(encoded.as_bytes())?;
     }
 
     #[cfg(not(unix))]
-    std::fs::write(&path, passphrase)?;
+    std::fs::write(&path, &encoded)?;
 
     Ok(())
 }
@@ -46,17 +50,23 @@ pub fn lock(vault_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Returns true if the vault has an active session.
+/// Returns true if the vault has an active session holding a usable key. A
+/// `.session` that exists but doesn't decode to a 32-byte key (e.g. a stale
+/// pre-0.6 file that cached a passphrase) counts as locked, so status and the
+/// prompt paths agree.
 pub fn is_unlocked(vault_dir: &Path) -> bool {
-    session_path(vault_dir).exists()
+    get_key(vault_dir).is_some()
 }
 
-/// Read cached passphrase from session file.
-pub fn get_passphrase(vault_dir: &Path) -> Option<String> {
+/// Read the cached derived key from the session file. Returns `None` if the
+/// file is missing or doesn't hold a valid 32-byte hex key (e.g. a stale
+/// pre-0.6 session that cached a passphrase) — the caller then treats the vault
+/// as locked and re-prompts.
+pub fn get_key(vault_dir: &Path) -> Option<[u8; 32]> {
     let path = session_path(vault_dir);
-    std::fs::read_to_string(&path)
-        .ok()
-        .map(|s| s.trim().to_string())
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let bytes = hex::decode(contents.trim()).ok()?;
+    bytes.try_into().ok()
 }
 
 /// Lock all vaults in .svault/
@@ -81,20 +91,35 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn unlock_caches_then_lock_clears() {
+    fn unlock_caches_key_then_lock_clears() {
         let dir = TempDir::new().unwrap();
         let vault_dir = dir.path().join("v");
         std::fs::create_dir_all(&vault_dir).unwrap();
 
         assert!(!is_unlocked(&vault_dir));
 
-        unlock(&vault_dir, "my-pass").unwrap();
+        let key = [7u8; 32];
+        unlock_with_key(&vault_dir, &key).unwrap();
         assert!(is_unlocked(&vault_dir));
-        assert_eq!(get_passphrase(&vault_dir).as_deref(), Some("my-pass"));
+        assert_eq!(get_key(&vault_dir), Some(key));
 
         lock(&vault_dir).unwrap();
         assert!(!is_unlocked(&vault_dir));
-        assert_eq!(get_passphrase(&vault_dir), None);
+        assert_eq!(get_key(&vault_dir), None);
+    }
+
+    #[test]
+    fn session_never_contains_a_passphrase() {
+        // The on-disk session must be a hex-encoded key, not the passphrase.
+        let dir = TempDir::new().unwrap();
+        let vault_dir = dir.path().join("v");
+        std::fs::create_dir_all(&vault_dir).unwrap();
+        unlock_with_key(&vault_dir, &[0xABu8; 32]).unwrap();
+        let raw = std::fs::read_to_string(session_path(&vault_dir)).unwrap();
+        assert_eq!(raw.trim(), "ab".repeat(32));
+        // A stale passphrase-style session is rejected as not-a-key.
+        std::fs::write(session_path(&vault_dir), "hunter2").unwrap();
+        assert_eq!(get_key(&vault_dir), None);
     }
 
     #[test]
@@ -104,8 +129,8 @@ mod tests {
         let b = svault.path().join("b");
         std::fs::create_dir_all(&a).unwrap();
         std::fs::create_dir_all(&b).unwrap();
-        unlock(&a, "pa").unwrap();
-        unlock(&b, "pb").unwrap();
+        unlock_with_key(&a, &[1u8; 32]).unwrap();
+        unlock_with_key(&b, &[2u8; 32]).unwrap();
 
         assert_eq!(lock_all(svault.path()).unwrap(), 2);
         assert!(!is_unlocked(&a));

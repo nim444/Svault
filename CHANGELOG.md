@@ -7,10 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.1] - Unreleased
+## [0.6.0] - 2026-05-29
+
+Security-hardening release. Acts on the consolidated 0.5.0 review register
+(`docs/security-review/findings/0.5.0.md`) and adds a logged concurrency stress
+simulation. Carry-forward status for every 0.5.0 finding is recorded in
+`docs/security-review/findings/0.6.0.md`.
 
 ### Added
 - **Security review process** — `docs/security-review/` documents a release-gated security workflow: every `0.x.0` release gets one or more independent, model-agnostic security reviews (prompt in `docs/security-review/PROMPT.md`) plus a tooling/bulletproofing pass. For 0.5.0, five independent reviews (Grok 4.3, GLM-5-1, Gemini 3.5 Flash, DeepSeek-V4-Pro, Claude Opus 4.8) are recorded under `docs/security-review/reviews/`, with all findings de-duplicated into a consolidated decision register at `docs/security-review/findings/0.5.0.md`. Maintainer dispositions for all 22 findings are recorded and signed off in that register.
+- **Configurable daemon connection ceiling** (finding #8) — `daemon.max_connections` in `.svault/config.yaml` (default 512) caps simultaneously-served connections so the thread-per-connection model can't be driven to spawn unbounded handler threads. Each connection also gets a 30 s read timeout so a stalled client can't pin a handler. A connection refused at the ceiling gets a `too many connections` error and the client falls back.
+- **Concurrency stress simulation** — an `#[ignore]`d benchmark (`daemon_stress_simulation`) drives the real daemon under sustained parallel reads plus a connection flood, classifying every outcome (correct / busy-refused / connect-error / wrong) and logging latency percentiles + throughput. Methodology and a recorded run live in `docs/security-review/stress/0.6.0.md`. Run: `cargo test --release daemon_stress_simulation -- --ignored --nocapture`.
+
+### Changed
+- **TUI footer survives narrow windows.** The key-hint footer used to clip from the right on small terminals, hiding the "help" and "quit" hints entirely. It now falls back to a compact hint that always keeps `h/? help` visible, and the help overlay opens with **`h`** as well as `?`.
+- **Import no longer errors when the name already exists.** Re-importing a bundle onto a machine that already has that vault now picks a free name by appending a suffix (`TUI-Vault` → `TUI-Vault-2`), or you can choose one with `svault import <file> --name <NEW>`. Since the vault name is part of the HMAC-signed `meta.yaml`, importing under a different name re-signs it and asks for the passphrase once to finish (a clean import under the original name still needs no passphrase). The TUI import flow does the same.
+- **Session caches the derived key, not the passphrase** (finding #4) — the no-daemon `.session` fallback now stores the vault's 32-byte derived key (hex, mode 0600 on Unix) instead of the raw passphrase, on every platform including the TUI. A stolen `.session` still opens that one vault, but no longer leaks the reusable passphrase that may protect other vaults or services. The daemon (keys in memory, nothing on disk) remains the preferred path. Pre-0.6 sessions that cached a passphrase are treated as locked and require a re-unlock.
+
+### Fixed
+- **Daemon survives a poisoned mutex** (finding #13) — the key-store lock is now taken with poison recovery, so a panicking connection handler can no longer take down the whole daemon (and every key it holds) on the next lock.
+- **Truncated `vault.enc` returns an error instead of panicking** (finding #20) — `save_secrets` length-checks the salt slice rather than `unwrap()`-ing it.
+- **Daemon connect resilience** — `daemon::send` retries the socket connect a few times with short backoff, so a momentary OS listener-backlog drop under connect-churn surfaces as a served request rather than a hard error.
+
+### Internal
+- New `DaemonConfig` in `config.rs`; the connection ceiling is threaded through `serve`. Stress-classification and poison-recovery covered by new tests. Suite now 82 (+ 1 ignored benchmark).
 
 ## [0.5.0] - 2026-05-29
 

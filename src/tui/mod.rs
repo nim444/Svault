@@ -14,6 +14,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::widgets::{ListState, TableState};
 use std::path::{Path, PathBuf};
 
+use crate::crypto::VaultKey;
 use crate::meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
 use crate::session;
 use crate::vault::{list_vault_dirs, Vault, SVAULT_DIR};
@@ -98,6 +99,9 @@ pub enum Pending {
     List,
     Secrets,
     Settings,
+    /// A renamed import: re-sign `meta.name` to the form's name once the
+    /// passphrase opens the freshly-imported vault.
+    FinishImport,
 }
 
 /// The focusable fields of the create form, in display order. Handlers match on
@@ -639,17 +643,38 @@ impl App {
                     self.screen = Screen::Import(form);
                     return Ok(());
                 }
-                match std::fs::read_to_string(path)
+                let base = std::path::Path::new(SVAULT_DIR);
+                let result = std::fs::read_to_string(path)
                     .map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))
                     .and_then(|raw| {
-                        crate::portable::import_bundle(&raw, std::path::Path::new(SVAULT_DIR))
-                    }) {
-                    Ok(name) => {
-                        let dir = std::path::Path::new(SVAULT_DIR).join(&name);
+                        let bundle = crate::portable::parse_bundle(&raw)?;
+                        let target = crate::portable::unique_vault_name(base, &bundle.name);
+                        crate::portable::import_bundle_as(&raw, base, &target)?;
+                        Ok((bundle.name, target))
+                    });
+                match result {
+                    Ok((orig, target)) => {
+                        let dir = base.join(&target);
                         crate::usage::human(&dir, "import", None);
-                        self.refresh_vaults();
-                        self.set_status(MsgKind::Ok, format!("Imported '{name}'"));
-                        self.screen = Screen::List;
+                        if target == orig {
+                            self.refresh_vaults();
+                            self.set_status(MsgKind::Ok, format!("Imported '{target}'"));
+                            self.screen = Screen::List;
+                        } else {
+                            // Name collided → re-sign meta.name once the
+                            // passphrase opens the freshly-imported vault.
+                            self.set_status(
+                                MsgKind::Info,
+                                format!("'{orig}' exists — importing as '{target}'; enter passphrase to finish"),
+                            );
+                            self.screen = Screen::Unlock(UnlockForm {
+                                vault_dir: dir,
+                                name: target,
+                                passphrase: String::new(),
+                                error: None,
+                                pending: Pending::FinishImport,
+                            });
+                        }
                     }
                     Err(e) => {
                         form.error = Some(format!("{e}"));
@@ -752,7 +777,7 @@ impl App {
             KeyCode::Char('r') => self.start_recover(),
             KeyCode::Char('v') => self.start_activity(),
             KeyCode::Char('d') => self.toggle_daemon(),
-            KeyCode::Char('?') => self.show_help = true,
+            KeyCode::Char('?') | KeyCode::Char('h') => self.show_help = true,
             KeyCode::Enter => self.open_secrets()?,
             _ => {}
         }
@@ -896,7 +921,7 @@ impl App {
 
     /// Open the vault with the cached passphrase and show its secret list.
     fn enter_secrets(&mut self, dir: &Path, name: &str) -> Result<()> {
-        let Some(pass) = session::get_passphrase(dir) else {
+        let Some(key) = session::get_key(dir) else {
             self.screen = Screen::Unlock(UnlockForm {
                 vault_dir: dir.to_path_buf(),
                 name: name.to_string(),
@@ -906,7 +931,7 @@ impl App {
             });
             return Ok(());
         };
-        match Vault::open(dir, &pass) {
+        match Vault::open_with_key(dir, VaultKey::from_bytes(key)) {
             Ok(vault) => {
                 let secrets = vault.list_secret_names().unwrap_or_default();
                 let mut list_state = ListState::default();
@@ -1084,7 +1109,7 @@ impl App {
     }
 
     fn submit_settings(&mut self, mut form: SettingsForm) -> Result<()> {
-        let Some(pass) = session::get_passphrase(&form.vault_dir) else {
+        let Some(key) = session::get_key(&form.vault_dir) else {
             self.set_status(
                 MsgKind::Error,
                 "Vault is locked — unlock before editing settings",
@@ -1092,7 +1117,7 @@ impl App {
             self.screen = Screen::List;
             return Ok(());
         };
-        let vault = match Vault::open(&form.vault_dir, &pass) {
+        let vault = match Vault::open_with_key(&form.vault_dir, VaultKey::from_bytes(key)) {
             Ok(v) => v,
             Err(e) => {
                 form.error = Some(format!("{e}"));
@@ -1136,6 +1161,13 @@ impl App {
     fn key_unlock(&mut self, mut form: UnlockForm, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Esc => {
+                // Cancelling a renamed import leaves a vault whose dir name and
+                // meta.name disagree — drop it so nothing half-imported lingers.
+                if matches!(form.pending, Pending::FinishImport) {
+                    let _ = std::fs::remove_dir_all(&form.vault_dir);
+                    self.refresh_vaults();
+                    self.set_status(MsgKind::Warn, "Import cancelled");
+                }
                 self.screen = Screen::List;
             }
             KeyCode::Backspace => {
@@ -1143,8 +1175,8 @@ impl App {
                 self.screen = Screen::Unlock(form);
             }
             KeyCode::Enter => match Vault::open(&form.vault_dir, &form.passphrase) {
-                Ok(_) => {
-                    session::unlock(&form.vault_dir, &form.passphrase)?;
+                Ok(vault) => {
+                    session::unlock_with_key(&form.vault_dir, vault.key().bytes())?;
                     crate::usage::human(&form.vault_dir, "unlock", None);
                     self.refresh_vaults();
                     self.set_status(MsgKind::Ok, format!("Vault '{}' unlocked", form.name));
@@ -1155,6 +1187,15 @@ impl App {
                             let meta = VaultMeta::load_unverified(&form.vault_dir)?;
                             self.screen =
                                 Screen::Settings(SettingsForm::from_meta(form.vault_dir, meta));
+                        }
+                        Pending::FinishImport => {
+                            // Re-sign meta.name so it matches the (suffixed) dir.
+                            let mut meta = vault.meta.clone();
+                            meta.name = form.name.clone();
+                            vault.save_meta(&meta)?;
+                            self.refresh_vaults();
+                            self.set_status(MsgKind::Ok, format!("Imported as '{}'", form.name));
+                            self.screen = Screen::List;
                         }
                     }
                 }
@@ -1240,7 +1281,7 @@ impl App {
                 self.screen = Screen::List;
                 return Ok(());
             }
-            KeyCode::Char('?') => self.show_help = true,
+            KeyCode::Char('?') | KeyCode::Char('h') => self.show_help = true,
             _ => {}
         }
         self.screen = Screen::Secrets(scr);
@@ -1251,11 +1292,13 @@ impl App {
         let Some(name) = scr.selected_name() else {
             return;
         };
-        let Some(pass) = session::get_passphrase(&scr.vault_dir) else {
+        let Some(key) = session::get_key(&scr.vault_dir) else {
             self.set_status(MsgKind::Error, "Vault is locked");
             return;
         };
-        match Vault::open(&scr.vault_dir, &pass).and_then(|v| v.get_secret(&name)) {
+        match Vault::open_with_key(&scr.vault_dir, VaultKey::from_bytes(key))
+            .and_then(|v| v.get_secret(&name))
+        {
             Ok(Some(value)) => {
                 crate::usage::human(&scr.vault_dir, "secret.reveal", Some(&name));
                 scr.reveal = Some(Reveal {
@@ -1270,11 +1313,11 @@ impl App {
     }
 
     fn delete_secret(&mut self, scr: &mut SecretScreen, name: &str) {
-        let Some(pass) = session::get_passphrase(&scr.vault_dir) else {
+        let Some(key) = session::get_key(&scr.vault_dir) else {
             self.set_status(MsgKind::Error, "Vault is locked");
             return;
         };
-        match Vault::open(&scr.vault_dir, &pass) {
+        match Vault::open_with_key(&scr.vault_dir, VaultKey::from_bytes(key)) {
             Ok(vault) => match vault.remove_secret(name) {
                 Ok(true) => {
                     scr.secrets = vault.list_secret_names().unwrap_or_default();
@@ -1344,12 +1387,12 @@ impl App {
             self.screen = Screen::SecretAdd(form);
             return Ok(());
         }
-        let Some(pass) = session::get_passphrase(&form.vault_dir) else {
+        let Some(key) = session::get_key(&form.vault_dir) else {
             self.set_status(MsgKind::Error, "Vault is locked");
             self.screen = Screen::List;
             return Ok(());
         };
-        match Vault::open(&form.vault_dir, &pass) {
+        match Vault::open_with_key(&form.vault_dir, VaultKey::from_bytes(key)) {
             Ok(vault) => match vault.add_secret(form.name.trim(), &form.value) {
                 Ok(_) => {
                     crate::usage::human(&form.vault_dir, "secret.add", Some(form.name.trim()));
@@ -1560,6 +1603,15 @@ mod tests {
         press(&mut app, KeyCode::Char('?'));
         assert!(app.show_help);
         press(&mut app, KeyCode::Char('x'));
+        assert!(!app.show_help);
+    }
+
+    #[test]
+    fn help_also_opens_with_h() {
+        let mut app = bare_app(Screen::List);
+        press(&mut app, KeyCode::Char('h'));
+        assert!(app.show_help);
+        press(&mut app, KeyCode::Esc);
         assert!(!app.show_help);
     }
 
