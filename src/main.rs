@@ -47,6 +47,9 @@ enum Commands {
     Create {
         #[arg(long)]
         name: Option<String>,
+        /// Skip the passphrase strength floor (for non-interactive / scripted use)
+        #[arg(long)]
+        force: bool,
     },
     /// View or change a vault's settings (description, agents, rate limit, auto-lock, login)
     Settings {
@@ -109,6 +112,9 @@ enum Commands {
     Recover {
         /// Vault name (positional). Omit to use the only vault or pick interactively.
         vault: Option<String>,
+        /// Skip the passphrase strength floor (for non-interactive / scripted use)
+        #[arg(long)]
+        force: bool,
     },
     /// Export a vault to a portable encrypted bundle
     Export {
@@ -143,7 +149,7 @@ fn main() -> Result<()> {
         return tui::run();
     };
     match command {
-        Commands::Create { name } => cmd_create(name),
+        Commands::Create { name, force } => cmd_create(name, force),
         Commands::Settings { vault } => cmd_settings(vault.as_deref()),
         Commands::Secret {
             action,
@@ -170,7 +176,7 @@ fn main() -> Result<()> {
             vault,
         } => cmd_get(&name, &scope, &reason, caller.as_deref(), vault.as_deref()),
         Commands::Policy { action, caller } => cmd_policy(&action, caller.as_deref()),
-        Commands::Recover { vault } => cmd_recover(vault.as_deref()),
+        Commands::Recover { vault, force } => cmd_recover(vault.as_deref(), force),
         Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
         Commands::Import { file, name } => cmd_import(&file, name.as_deref()),
         Commands::Daemon { action, fix } => cmd_daemon(&action, fix),
@@ -204,7 +210,7 @@ fn vault_leaf(dir: &Path) -> String {
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
-fn cmd_create(name_arg: Option<String>) -> Result<()> {
+fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
     println!(
         "{}",
         style("┌─ New Vault ─────────────────────────────┐").dim()
@@ -269,7 +275,18 @@ fn cmd_create(name_arg: Option<String>) -> Result<()> {
     let login_method = prompt_login_method(None)?;
 
     println!();
-    let passphrase = prompt_secret("  Passphrase")?;
+    // Hard entropy floor (finding #12): re-prompt until it clears, unless --force.
+    let passphrase = loop {
+        let p = prompt_secret("  Passphrase")?;
+        match passphrase::meets_floor(&p) {
+            Ok(()) => break p,
+            Err(e) if force => {
+                println!("{} {} (--force)", style("warning:").yellow(), e);
+                break p;
+            }
+            Err(e) => eprintln!("{} {}", style("error:").red(), e),
+        }
+    };
 
     if let Some(w) = passphrase::check(&passphrase) {
         println!("{} {}", style("warning:").yellow(), w.0);
@@ -1042,7 +1059,7 @@ fn unlocked_secret_names(vault_dir: &Path) -> Vec<String> {
 
 // ── Recovery, export, import ────────────────────────────────────────────────
 
-fn cmd_recover(vault_name: Option<&str>) -> Result<()> {
+fn cmd_recover(vault_name: Option<&str>, force: bool) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta = VaultMeta::load_unverified(&vault_dir)?;
 
@@ -1067,7 +1084,17 @@ fn cmd_recover(vault_name: Option<&str>) -> Result<()> {
         "{} Recovery code accepted — set a new passphrase.",
         style("ok:").green()
     );
-    let new_pass = prompt_secret("  New passphrase")?;
+    let new_pass = loop {
+        let p = prompt_secret("  New passphrase")?;
+        match passphrase::meets_floor(&p) {
+            Ok(()) => break p,
+            Err(e) if force => {
+                println!("{} {} (--force)", style("warning:").yellow(), e);
+                break p;
+            }
+            Err(e) => eprintln!("{} {}", style("error:").red(), e),
+        }
+    };
     if let Some(w) = passphrase::check(&new_pass) {
         println!("{} {}", style("warning:").yellow(), w.0);
     }
