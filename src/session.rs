@@ -50,9 +50,12 @@ pub fn lock(vault_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Returns true if the vault has an active session.
+/// Returns true if the vault has an active session holding a usable key. A
+/// `.session` that exists but doesn't decode to a 32-byte key (e.g. a stale
+/// pre-0.6 file that cached a passphrase) counts as locked, so status and the
+/// prompt paths agree.
 pub fn is_unlocked(vault_dir: &Path) -> bool {
-    session_path(vault_dir).exists()
+    get_key(vault_dir).is_some()
 }
 
 /// Read the cached derived key from the session file. Returns `None` if the

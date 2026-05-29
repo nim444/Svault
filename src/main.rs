@@ -54,12 +54,12 @@ enum Commands {
     },
     /// List all vaults in .svault/
     Vaults,
-    /// Unlock vault — caches passphrase for this session
+    /// Unlock vault — caches the derived key for this session
     Unlock {
         /// Vault name (positional). Omit to use the only vault or pick interactively.
         vault: Option<String>,
     },
-    /// Lock vault — clears cached passphrase
+    /// Lock vault — clears the cached key
     Lock {
         /// Lock all vaults
         #[arg(long)]
@@ -1077,7 +1077,7 @@ fn cmd_recover(vault_name: Option<&str>) -> Result<()> {
 
     recovery::recover_and_rekey(&vault_dir, &code, &new_pass)?;
     usage::human(&vault_dir, "recover", None);
-    // Drop any stale cached session (it holds the old passphrase).
+    // Drop any stale cached session (it holds the old, now-invalid key).
     session::lock(&vault_dir).ok();
 
     println!(
