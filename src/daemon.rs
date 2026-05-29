@@ -28,8 +28,11 @@ pub enum Request {
     Ping,
     /// List unlocked vaults with their remaining idle / hard-max timers.
     Status,
-    /// Validate the passphrase and cache the derived key in memory.
-    Unlock { vault: String, passphrase: String },
+    /// Cache a vault's derived key (hex-encoded, 32 bytes) in memory. The key is
+    /// derived client-side from the passphrase, so the passphrase itself never
+    /// crosses the socket (finding #3). The daemon validates the key opens the
+    /// vault before caching it.
+    Unlock { vault: String, key: String },
     /// Drop one vault's key.
     Lock { vault: String },
     /// Drop every cached key.
@@ -156,13 +159,26 @@ mod imp {
             Request::Ping => Response::Pong {
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
-            Request::Unlock { vault, passphrase } => {
+            Request::Unlock { vault, key } => {
+                // Decode the client-derived key; the passphrase never reaches here.
+                let key_bytes = match hex::decode(&key)
+                    .ok()
+                    .and_then(|b| <[u8; 32]>::try_from(b).ok())
+                {
+                    Some(k) => k,
+                    None => {
+                        return Response::Error {
+                            message: "invalid key encoding".to_string(),
+                        }
+                    }
+                };
                 let dir = vault_dir(base, &vault);
-                match Vault::open(&dir, &passphrase) {
-                    Ok(v) => {
+                // Validate the key actually opens this vault before caching it.
+                match Vault::open_with_key(&dir, VaultKey::from_bytes(key_bytes)) {
+                    Ok(_) => {
                         let now = Instant::now();
                         let held = Held {
-                            key: Zeroizing::new(*v.key().bytes()),
+                            key: Zeroizing::new(key_bytes),
                             unlocked_at: now,
                             last_used: now,
                         };
@@ -732,6 +748,13 @@ mod imp {
             v.add_secret("API_KEY", "s3cr3t").unwrap();
         }
 
+        /// Derive a vault's key the way the client now does (#3) and hex-encode
+        /// it, for building `Unlock { key }` requests in tests.
+        fn key_hex(base: &Path, name: &str, pass: &str) -> String {
+            let v = Vault::open(&vault_dir(base, name), pass).unwrap();
+            hex::encode(v.key().bytes())
+        }
+
         /// Bind a daemon on a temp base and wait until it answers.
         /// Default connection ceiling for tests that don't care about the cap.
         const TEST_MAX_CONNS: usize = 64;
@@ -778,26 +801,26 @@ mod imp {
                 Response::NotUnlocked
             ));
 
-            // Wrong passphrase → Error.
+            // Wrong key → Error (a bogus key doesn't open the vault).
             assert!(matches!(
                 send(
                     &base,
                     &Request::Unlock {
                         vault: "v".into(),
-                        passphrase: "wrong".into()
+                        key: hex::encode([0u8; 32])
                     }
                 )
                 .unwrap(),
                 Response::Error { .. }
             ));
 
-            // Correct passphrase → Unlocked, then Get returns the value.
+            // Correct (client-derived) key → Unlocked, then Get returns the value.
             assert!(matches!(
                 send(
                     &base,
                     &Request::Unlock {
                         vault: "v".into(),
-                        passphrase: "Str0ng!Pass#99".into()
+                        key: key_hex(&base, "v", "Str0ng!Pass#99")
                     }
                 )
                 .unwrap(),
@@ -917,7 +940,7 @@ mod imp {
                 &base,
                 &Request::Unlock {
                     vault: "v".into(),
-                    passphrase: "Str0ng!Pass#99".into(),
+                    key: key_hex(&base, "v", "Str0ng!Pass#99"),
                 },
             )
             .unwrap();
@@ -996,7 +1019,7 @@ mod imp {
                 &base,
                 &Request::Unlock {
                     vault: "v".into(),
-                    passphrase: "Str0ng!Pass#99".into(),
+                    key: key_hex(&base, "v", "Str0ng!Pass#99"),
                 },
             )
             .unwrap();
@@ -1231,7 +1254,7 @@ mod proto_tests {
             Request::Status,
             Request::Unlock {
                 vault: "v".into(),
-                passphrase: "p".into(),
+                key: "deadbeef".into(),
             },
             Request::Lock { vault: "v".into() },
             Request::LockAll,
