@@ -44,12 +44,14 @@
   - [x] Cached session passphrase reused everywhere — no re-prompt while unlocked; `l` from any screen locks and wipes the session
   - [x] Plain-ASCII status line (ok / warning / error / note), context key hints in the footer
 
-### [TODO] Step 2 — Policy engine
-- [ ] `svault.policy.yaml` — define callers, scopes, tiers per vault
-- [ ] `svault get <NAME> --scope <S> --reason "<R>"` — structured request
-- [ ] Policy checks: reason present → capability check → rate limit → burst detection
-- [ ] Sensitivity tiers: `low` (auto-approve) / `medium` (log) / `high` (human confirm)
-- [ ] `svault policy check <caller>` — show what a caller can access
+### [DONE] Step 2 — Policy engine
+- [x] `svault.policy.yaml` — committable root file defining callers (scopes + rate limit) and per-vault secret scope/tier; `svault policy init` scaffolds it
+- [x] `svault get <NAME> --scope <S> --reason "<R>" [--caller C]` — structured request; caller from `--caller`, else `$SVAULT_CALLER`, else `default`
+- [x] Policy checks: reason present → capability (scope) check → tier → rate limit → burst detection
+- [x] Sensitivity tiers: `low` (auto-approve) / `medium` (allow + flagged in audit) / `high` (denied for agents — humans use `secret get`)
+- [x] `svault policy check <caller>` — show scopes, accessible secrets, rate limit, recent activity
+- [x] Append-only audit log at `.svault/<vault>/audit.log` (gitignored); fallback to `meta.yaml` `allow_agent`/`rate_limit` when no policy file
+- [x] 15 new unit tests (audit + policy) — suite now 33, all passing
 
 ### [TODO] Step 3 — Daemon + multi-select auth unlock
 - [ ] **Multi-select auth at init** — `svault init` prompts user to choose/combine auth methods:
