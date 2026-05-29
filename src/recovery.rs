@@ -144,4 +144,34 @@ mod tests {
         let result = unlock_with_code(dir.path(), "0000-0000-0000-0000-0000");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn recover_and_rekey_resets_passphrase_and_keeps_code() {
+        use crate::meta::{AccessConfig, VaultMeta, VaultSettings};
+        let dir = TempDir::new().unwrap();
+        let vault_dir = dir.path().join("v");
+        let meta = VaultMeta::new(
+            "v".to_string(),
+            "d".to_string(),
+            AccessConfig::default(),
+            VaultSettings::default(),
+        );
+        let vault = Vault::init(&vault_dir, "Old!Pass#11", meta).unwrap();
+        vault.add_secret("K", "val").unwrap();
+        let code = generate_code();
+        write(&vault_dir, vault.key(), &code).unwrap();
+        drop(vault);
+
+        recover_and_rekey(&vault_dir, &code, "New!Pass#22").unwrap();
+
+        // Old passphrase no longer works; new one does and the secret survived.
+        assert!(Vault::open(&vault_dir, "Old!Pass#11").is_err());
+        let v = Vault::open(&vault_dir, "New!Pass#22").unwrap();
+        assert_eq!(v.get_secret("K").unwrap(), Some("val".to_string()));
+
+        // The same recovery code still unlocks after the re-key.
+        let recovered = unlock_with_code(&vault_dir, &code).unwrap();
+        let enc = std::fs::read(vault_dir.join("vault.enc")).unwrap();
+        assert!(crypto::decrypt(&recovered, &enc).is_ok());
+    }
 }

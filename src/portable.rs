@@ -101,6 +101,7 @@ pub fn import_bundle(raw: &str, svault_base: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     fn sample_files() -> BTreeMap<String, String> {
         let mut f = BTreeMap::new();
@@ -154,5 +155,48 @@ mod tests {
         };
         let json = serde_json::to_string(&bundle).unwrap();
         assert_eq!(parse_bundle(&json).unwrap().name, "v");
+    }
+
+    /// Build a minimal real vault on disk so build/import touch actual files.
+    fn make_vault(base: &Path, name: &str) {
+        use crate::meta::{AccessConfig, VaultMeta, VaultSettings};
+        use crate::vault::Vault;
+        let dir = base.join(name);
+        let meta = VaultMeta::new(
+            name.to_string(),
+            "d".to_string(),
+            AccessConfig::default(),
+            VaultSettings::default(),
+        );
+        let vault = Vault::init(&dir, "Str0ng!Pass#99", meta).unwrap();
+        crate::recovery::write(&dir, vault.key(), "AAAA-BBBB-CCCC").unwrap();
+    }
+
+    #[test]
+    fn build_then_import_recreates_an_openable_vault() {
+        use crate::vault::Vault;
+        let src = TempDir::new().unwrap();
+        make_vault(src.path(), "v");
+        let json = build_bundle(&src.path().join("v"), "v", "local").unwrap();
+
+        // Import into a fresh base dir and re-open with the original passphrase.
+        let dst = TempDir::new().unwrap();
+        let name = import_bundle(&json, dst.path()).unwrap();
+        assert_eq!(name, "v");
+        let dir = dst.path().join("v");
+        assert!(dir.join("recovery.enc").exists());
+        assert!(Vault::open(&dir, "Str0ng!Pass#99").is_ok());
+    }
+
+    #[test]
+    fn import_refuses_to_overwrite_an_existing_vault() {
+        let src = TempDir::new().unwrap();
+        make_vault(src.path(), "v");
+        let json = build_bundle(&src.path().join("v"), "v", "local").unwrap();
+
+        let dst = TempDir::new().unwrap();
+        import_bundle(&json, dst.path()).unwrap();
+        // Second import of the same name is rejected.
+        assert!(import_bundle(&json, dst.path()).is_err());
     }
 }
