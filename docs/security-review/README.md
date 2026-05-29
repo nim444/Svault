@@ -31,9 +31,16 @@ by a human maintainer** in the per-release findings register —
 2026-05-29). **0.6.0** acted on four of them (#4, #8, #13, #20) plus added connect
 resilience and a logged stress simulation — see the carry-forward register
 **[findings/0.6.0.md](findings/0.6.0.md)** and **[stress/0.6.0.md](stress/0.6.0.md)**.
+**0.7.0** was reviewed by three independent models, which unanimously re-confirmed
+the advisory-policy gap (#2/#5/#22) as the blocker for a 1.0.0 "enforced" claim and
+surfaced a handful of new items — consolidated with dispositions in
+**[findings/0.7.0.md](findings/0.7.0.md)**. 0.8.0 acts on them.
 
 | Version | Date | Reviewer | Overall posture | Review |
 |---|---|---|---|---|
+| 0.7.0 | 2026-05-30 | Claude Opus 4.8 (Anthropic) | Moderate — conditionally OK on Unix as at-rest store + audit/guardrails; policy is advisory (bypassable same-UID), so not an enforcement boundary; not for high-value prod or Windows fleets | [reviews/0.7.0-claude-opus-4.8.md](reviews/0.7.0-claude-opus-4.8.md) |
+| 0.7.0 | 2026-05-30 | GLM-5.1 (z-ai, via opencode) | Moderate — with caveats; strong crypto + daemon on Unix, but policy unenforced at the daemon (bypassable same-UID); weaker on Windows | [reviews/0.7.0-glm5.1.md](reviews/0.7.0-glm5.1.md) |
+| 0.7.0 | 2026-05-30 | opencode (Qwen3-Coder-Next) | Medium-High (Unix + daemon) -> High (Windows / regulated); daemon is a real improvement but policy is advisory and bypassable same-UID | [reviews/0.7.0-opencode.md](reviews/0.7.0-opencode.md) |
 | 0.5.0 | 2026-05-29 | Grok 4.3 (xAI) | Low–Medium (Unix + daemon) -> High (Windows / regulated) | [reviews/0.5.0-grok-4.3.md](reviews/0.5.0-grok-4.3.md) |
 | 0.5.0 | 2026-05-29 | GLM-5-1 (z-ai) | Moderate — conditionally OK on Unix + daemon; unsuitable for Windows / high-security | [reviews/0.5.0-glm-5.1.md](reviews/0.5.0-glm-5.1.md) |
 | 0.5.0 | 2026-05-29 | Gemini 3.5 Flash | Moderate — conditionally acceptable on Unix + daemon; unsuitable for Windows & shared CI | [reviews/0.5.0-gemini-3.5-flash.md](reviews/0.5.0-gemini-3.5-flash.md) |

@@ -575,6 +575,7 @@ mod imp {
     /// printing, so callers like the TUI (which can't write to stdout) can show
     /// it in their own status line.
     pub fn start_quiet() -> Result<String> {
+        use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::process::CommandExt;
         use std::process::{Command, Stdio};
 
@@ -599,6 +600,7 @@ mod imp {
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
+            .mode(0o600)
             .open(&log_p)?;
         let log_err = log.try_clone()?;
 

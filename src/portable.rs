@@ -128,7 +128,9 @@ pub fn import_bundle_as(raw: &str, svault_base: &Path, target_name: &str) -> Res
         ));
     }
 
-    std::fs::create_dir_all(&target)?;
+    // Owner-only (0700) like Vault::init, not the default-umask 0755 of create_dir_all,
+    // so a later .session in this dir is never reachable via a traversable parent.
+    crate::secfile::create_dir_owner_only(&target)?;
     std::fs::write(
         target.join(".gitignore"),
         ".session\naudit.log\nusage.log\n",
@@ -310,5 +312,23 @@ mod tests {
         import_bundle_as(&json, dst.path(), "v").unwrap();
         // Second import to the same name is rejected (callers suffix instead).
         assert!(import_bundle_as(&json, dst.path(), "v").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn import_creates_owner_only_vault_dir() {
+        use std::os::unix::fs::PermissionsExt;
+        let src = TempDir::new().unwrap();
+        make_vault(src.path(), "v");
+        let json = build_bundle(&src.path().join("v"), "v", "local").unwrap();
+
+        let dst = TempDir::new().unwrap();
+        import_bundle_as(&json, dst.path(), "v").unwrap();
+        let mode = std::fs::metadata(dst.path().join("v"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "imported vault dir must be owner-only");
     }
 }

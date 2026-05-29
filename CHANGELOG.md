@@ -11,10 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 The next cycle. Two threads:
 
-1. **Acts on the independent 0.7.0 security review** — reviews land in `docs/security-review/reviews/0.7.0-*.md`, consolidated with maintainer dispositions in `docs/security-review/findings/0.7.0.md`.
+1. **Acts on the independent 0.7.0 security review** — three independent model reviews (`docs/security-review/reviews/0.7.0-*.md`) consolidated with maintainer dispositions in `docs/security-review/findings/0.7.0.md`. All three re-confirmed the advisory-policy gap (#2/#5/#22) as the 1.0.0 blocker.
 2. **Policy engine as an enforced control** (#2/#5) — evaluate policy + write the audit record inside the daemon so the socket is the choke point, and sign / pin `svault.policy.yaml`. This is the last substantive gap before a 1.0.0 "stable CLI" label.
 
-_(Empty until the review reports arrive and the work begins.)_
+### Fixed
+- **Owner-only TUI export** (review N-3) — the TUI export wrote the bundle (which wraps the vault key) with the default umask, leaving it potentially world-readable; it now uses `secfile::write_owner_only` like the CLI path.
+- **Owner-only import directory** (review N-4) — importing a bundle created the vault directory with the default `0755`; it is now `0700` (`secfile::create_dir_owner_only`), matching `Vault::init`. Regression test added.
+- **`daemon.log` rotated file is `0600`** (review N-10) — the log is opened with mode `0600` so a rotated/recreated file is never group/other-readable (it already sat inside the `0700` `.svault/`).
+
+### Pending
+- Policy enforcement + caller authentication + signed policy + fail-closed parsing + zeroized daemon transport (review N-1, N-2, N-5, N-6) — the main 0.8.0 effort, not yet started.
 
 ## [0.7.0] - 2026-05-29
 
