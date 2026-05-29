@@ -3,7 +3,10 @@ use chrono::Utc;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use std::collections::BTreeMap;
 use std::path::Path;
+
+use crate::policy::SecretRule;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -104,6 +107,17 @@ impl Default for VaultSettings {
     }
 }
 
+/// Per-vault AI-judge overrides. A `None` field inherits the global judge
+/// config in `.svault/config.yaml`; `enabled = Some(false)` turns the judge off
+/// for this vault regardless of the global setting.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VaultJudgeConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultMeta {
     pub name: String,
@@ -120,6 +134,18 @@ pub struct VaultMeta {
     pub access: AccessConfig,
     #[serde(default)]
     pub settings: VaultSettings,
+    /// Per-secret classification (scope, tier, require_reason). Because it lives
+    /// in the HMAC-signed meta.yaml, a same-UID attacker can't downgrade a tier
+    /// or scope without the vault key (finding #5/#22). A `"*"` entry, if
+    /// present, is the default classification for any unlisted secret.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secrets: BTreeMap<String, SecretRule>,
+    /// Per-vault AI-judge overrides (inherit the global config when unset).
+    #[serde(default)]
+    pub judge: VaultJudgeConfig,
+    /// Default tier applied to a secret added without an explicit one.
+    #[serde(default)]
+    pub default_tier: crate::policy::Tier,
 }
 
 fn default_version() -> u32 {
@@ -141,7 +167,16 @@ impl VaultMeta {
             version: 1,
             access,
             settings,
+            secrets: BTreeMap::new(),
+            judge: VaultJudgeConfig::default(),
+            default_tier: crate::policy::Tier::default(),
         }
+    }
+
+    /// The classification for `secret`: an explicit entry, else the `"*"`
+    /// default, else `None` (the vault has no classification for it).
+    pub fn classify(&self, secret: &str) -> Option<&SecretRule> {
+        self.secrets.get(secret).or_else(|| self.secrets.get("*"))
     }
 
     /// Serialize, sign with HMAC, write to meta.yaml.

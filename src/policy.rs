@@ -1,14 +1,18 @@
-//! The policy engine — the gate behind `svault get`.
+//! The policy engine — the base of the gate behind `svault get`.
 //!
 //! A structured request (`secret`, `scope`, `reason`, `caller`) is run through
-//! a pipeline: reason required -> capability (scope) check -> sensitivity tier
-//! -> rate limit -> burst detection. The verdict is an [`Decision`], and the
-//! caller (main) records it to the audit log either way.
+//! the base pipeline here: reason required -> classification (from the signed
+//! `meta.yaml`) -> scope match -> caller capability -> rate limit / burst. The
+//! verdict is a [`Decision`] carrying the secret's tier; the **tier + AI-judge
+//! gate** is then applied by [`crate::gate`] so the daemon and the CLI fallback
+//! share one decision path. Enforcement lives in the daemon (the choke point).
 //!
-//! Policy lives in a committable `svault.policy.yaml` at the project root. When
-//! that file is absent we fall back to the per-vault `allow_agent` / `rate_limit`
-//! fields in `meta.yaml`, so Step 1 behavior is preserved and the policy file
-//! stays optional-but-recommended.
+//! Per-secret classification (scope/tier/`require_reason`) lives in the
+//! HMAC-signed `meta.yaml`. The committable `svault.policy.yaml` holds only the
+//! caller definitions; its discovery is anchored to the project root and a
+//! present-but-unparseable file [fails closed](PolicyLoad::Error). When neither
+//! a classification nor a policy file applies, caller authorization falls back to
+//! the vault's `allow_agent` / `rate_limit`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -62,12 +66,17 @@ fn default_rate_limit() -> String {
     "5/hour".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SecretRule {
     #[serde(default)]
     pub scope: String,
     #[serde(default)]
     pub tier: Tier,
+    /// When set, the AI judge is always consulted for this secret (even at
+    /// `low` tier) — i.e. the caller must justify the request and have it
+    /// scored. Off by default; the reason is still required for any agent get.
+    #[serde(default)]
+    pub require_reason: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -98,22 +107,21 @@ impl Policy {
             .or_else(|| self.callers.get("default"))
     }
 
-    /// The (vault, secret, scope, tier) tuples this caller may retrieve, for
-    /// `svault policy check`. High-tier secrets are excluded (agents can't get
-    /// them) and the `"*"` wildcard is skipped since it can't be enumerated.
-    pub fn accessible(&self, caller: &str) -> Vec<(String, String, String, Tier)> {
+    /// Secrets in `meta` this caller may retrieve, for `svault policy check`.
+    /// High-tier and the `"*"` wildcard are skipped. Classification now lives in
+    /// the signed `meta.yaml`, so this reads from there rather than the policy
+    /// file.
+    pub fn accessible(&self, caller: &str, meta: &VaultMeta) -> Vec<(String, String, Tier)> {
         let Some(rule) = self.caller(caller) else {
             return vec![];
         };
         let mut out = Vec::new();
-        for (vname, vp) in &self.vaults {
-            for (sname, sr) in &vp.secrets {
-                if sname == "*" {
-                    continue;
-                }
-                if sr.tier != Tier::High && rule.scopes.iter().any(|s| s == &sr.scope) {
-                    out.push((vname.clone(), sname.clone(), sr.scope.clone(), sr.tier));
-                }
+        for (sname, sr) in &meta.secrets {
+            if sname == "*" {
+                continue;
+            }
+            if sr.tier != Tier::High && rule.scopes.iter().any(|s| s == &sr.scope) {
+                out.push((sname.clone(), sr.scope.clone(), sr.tier));
             }
         }
         out.sort();
@@ -121,22 +129,50 @@ impl Policy {
     }
 }
 
-/// Find and parse `svault.policy.yaml`, searching the current directory and
-/// walking up to the filesystem root. Returns `None` when no file is found or
-/// it fails to parse (the engine then runs in fallback mode).
-pub fn load() -> Option<Policy> {
-    let path = find_policy_file()?;
-    let content = std::fs::read_to_string(path).ok()?;
-    serde_yaml::from_str(&content).ok()
+/// Outcome of trying to load `svault.policy.yaml`.
+pub enum PolicyLoad {
+    /// No policy file at or below the project root — run in fallback mode.
+    Absent,
+    /// Parsed successfully.
+    Loaded(Box<Policy>),
+    /// A policy file exists but couldn't be read/parsed. The gate **fails
+    /// closed** on this — a typo must not silently downgrade to allow-all (N-2).
+    Error(String),
 }
 
-/// Absolute path to the policy file if one exists at or above the CWD.
-pub fn find_policy_file() -> Option<PathBuf> {
-    let mut dir = std::env::current_dir().ok()?;
+/// Find and parse `svault.policy.yaml`. Searches from the CWD upward but **stops
+/// at the project root** (the first directory containing a `.svault/`), so an
+/// agent can't `cd` somewhere with a permissive ancestor policy (#5). A present
+/// but unparseable file is reported as [`PolicyLoad::Error`] (fail closed, N-2).
+pub fn load() -> PolicyLoad {
+    let Ok(cwd) = std::env::current_dir() else {
+        return PolicyLoad::Absent;
+    };
+    let Some(path) = find_policy_file(&cwd) else {
+        return PolicyLoad::Absent;
+    };
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => return PolicyLoad::Error(format!("cannot read {}: {e}", path.display())),
+    };
+    match serde_yaml::from_str::<Policy>(&content) {
+        Ok(p) => PolicyLoad::Loaded(Box::new(p)),
+        Err(e) => PolicyLoad::Error(format!("invalid {}: {e}", path.display())),
+    }
+}
+
+/// Path to `svault.policy.yaml` at or above `start`, never searching past the
+/// project root (the directory that holds `.svault/`).
+pub fn find_policy_file(start: &Path) -> Option<PathBuf> {
+    let mut dir = start.to_path_buf();
     loop {
         let candidate = dir.join(POLICY_FILE);
         if candidate.is_file() {
             return Some(candidate);
+        }
+        // Don't search above the project root.
+        if dir.join(crate::vault::SVAULT_DIR).is_dir() {
+            return None;
         }
         if !dir.pop() {
             return None;
@@ -188,17 +224,85 @@ impl Decision {
     }
 }
 
-/// Run the pipeline. `policy` is `None` in fallback mode; `meta` supplies the
-/// fallback allow/deny + rate limit and is otherwise unused.
+/// Run the base policy pipeline: reason -> classification (from the signed
+/// meta) -> scope match -> caller capability -> rate/burst. Returns `Allow(tier)`
+/// or `Deny`. The **tier + AI-judge gate is applied separately** by
+/// [`crate::gate`] so the same decision path serves the daemon and the CLI
+/// fallback. `policy` is `None` when there's no policy file (caller authorization
+/// then falls back to the vault's `allow_agent`).
 pub fn evaluate(policy: Option<&Policy>, meta: &VaultMeta, req: &Request) -> Decision {
-    // Reason is required in every mode.
+    // Reason is required for every agent request.
     if let Err(msg) = check_reason(req.reason) {
         return Decision::Deny(Tier::Low, msg);
     }
-    match policy {
-        Some(p) => evaluate_with_policy(p, req),
+    match meta.classify(req.secret) {
+        Some(rule) => evaluate_classified(policy, meta, req, rule),
+        // No per-secret classification: legacy fallback (allow_agent, tier low).
         None => evaluate_fallback(meta, req),
     }
+}
+
+fn evaluate_classified(
+    policy: Option<&Policy>,
+    meta: &VaultMeta,
+    req: &Request,
+    rule: &SecretRule,
+) -> Decision {
+    let tier = rule.tier;
+
+    // The declared scope must match the secret's classified scope.
+    if req.scope != rule.scope {
+        return Decision::Deny(
+            tier,
+            format!(
+                "scope '{}' does not match the secret's scope '{}'",
+                req.scope, rule.scope
+            ),
+        );
+    }
+
+    // Caller authorization + the rate limit to enforce. With a policy file the
+    // caller must hold the scope; without one we fall back to allow_agent.
+    let rate_limit = match policy {
+        Some(p) => {
+            let Some(caller) = p.caller(req.caller) else {
+                return Decision::Deny(tier, format!("unknown caller '{}'", req.caller));
+            };
+            if !caller.scopes.iter().any(|s| s == req.scope) {
+                return Decision::Deny(
+                    tier,
+                    format!(
+                        "caller '{}' is not granted scope '{}'",
+                        req.caller, req.scope
+                    ),
+                );
+            }
+            caller.rate_limit.clone()
+        }
+        None => {
+            let allowed = match &meta.access.allow_agent {
+                AllowAgent::Bool(b) => *b,
+                AllowAgent::List(agents) => agents.iter().any(|a| a == req.caller),
+            };
+            if !allowed {
+                return Decision::Deny(
+                    tier,
+                    format!(
+                        "agent '{}' is not permitted by this vault's allow_agent setting",
+                        req.caller
+                    ),
+                );
+            }
+            meta.access.rate_limit.clone()
+        }
+    };
+
+    if let Some(msg) = rate_and_burst(req, &rate_limit) {
+        return Decision::Deny(tier, msg);
+    }
+    // High tier is NOT auto-denied here anymore — the gate decides (judge-gated
+    // when the judge is on, human-only when it's off).
+    Decision::Allow(tier)
 }
 
 fn check_reason(reason: &str) -> Result<(), String> {
@@ -220,60 +324,6 @@ fn check_reason(reason: &str) -> Result<(), String> {
         );
     }
     Ok(())
-}
-
-fn evaluate_with_policy(p: &Policy, req: &Request) -> Decision {
-    let Some(caller) = p.caller(req.caller) else {
-        return Decision::Deny(Tier::Low, format!("unknown caller '{}'", req.caller));
-    };
-
-    // Classify the secret: explicit entry, then the vault's "*" wildcard.
-    let rule = p
-        .vaults
-        .get(req.vault)
-        .and_then(|v| v.secrets.get(req.secret).or_else(|| v.secrets.get("*")));
-    let Some(rule) = rule else {
-        return Decision::Deny(
-            Tier::Low,
-            format!("secret '{}' is not classified in the policy", req.secret),
-        );
-    };
-    let tier = rule.tier;
-
-    // Capability: the declared scope must match the secret's scope, and the
-    // caller must hold that scope.
-    if req.scope != rule.scope {
-        return Decision::Deny(
-            tier,
-            format!(
-                "scope '{}' does not match the secret's scope '{}'",
-                req.scope, rule.scope
-            ),
-        );
-    }
-    if !caller.scopes.iter().any(|s| s == req.scope) {
-        return Decision::Deny(
-            tier,
-            format!(
-                "caller '{}' is not granted scope '{}'",
-                req.caller, req.scope
-            ),
-        );
-    }
-
-    // Sensitivity tier.
-    if tier == Tier::High {
-        return Decision::Deny(
-            tier,
-            "high-sensitivity secret — a human must retrieve it via 'svault secret get'"
-                .to_string(),
-        );
-    }
-
-    if let Some(msg) = rate_and_burst(req, &caller.rate_limit) {
-        return Decision::Deny(tier, msg);
-    }
-    Decision::Allow(tier)
 }
 
 fn evaluate_fallback(meta: &VaultMeta, req: &Request) -> Decision {
@@ -335,6 +385,7 @@ mod tests {
         serde_yaml::from_str(yaml).expect("policy yaml")
     }
 
+    /// Callers only — classification now lives in the (signed) meta.
     fn sample() -> Policy {
         parse(
             r#"
@@ -346,14 +397,28 @@ callers:
   default:
     scopes: []
     rate_limit: 5/hour
-vaults:
-  proj:
-    secrets:
-      DB_URL: { scope: database, tier: low }
-      DB_PW: { scope: database, tier: high }
-      API_KEY: { scope: api, tier: medium }
 "#,
         )
+    }
+
+    fn rule(scope: &str, tier: Tier) -> SecretRule {
+        SecretRule {
+            scope: scope.to_string(),
+            tier,
+            require_reason: false,
+        }
+    }
+
+    /// A meta carrying the per-secret classification the tests gate on.
+    fn classified_meta() -> VaultMeta {
+        let mut m = meta_with(AllowAgent::Bool(true));
+        m.secrets
+            .insert("DB_URL".into(), rule("database", Tier::Low));
+        m.secrets
+            .insert("DB_PW".into(), rule("database", Tier::High));
+        m.secrets
+            .insert("API_KEY".into(), rule("api", Tier::Medium));
+        m
     }
 
     fn req<'a>(dir: &'a Path, secret: &'a str, scope: &'a str, caller: &'a str) -> Request<'a> {
@@ -388,10 +453,9 @@ vaults:
     #[test]
     fn allow_when_scope_matches_and_held() {
         let dir = TempDir::new().unwrap();
-        let p = sample();
         let d = evaluate(
-            Some(&p),
-            &dummy_meta(),
+            Some(&sample()),
+            &classified_meta(),
             &req(dir.path(), "DB_URL", "database", "claude"),
         );
         assert_eq!(d, Decision::Allow(Tier::Low));
@@ -400,36 +464,34 @@ vaults:
     #[test]
     fn medium_tier_is_allowed() {
         let dir = TempDir::new().unwrap();
-        let p = sample();
         let d = evaluate(
-            Some(&p),
-            &dummy_meta(),
+            Some(&sample()),
+            &classified_meta(),
             &req(dir.path(), "API_KEY", "api", "claude"),
         );
         assert_eq!(d, Decision::Allow(Tier::Medium));
     }
 
     #[test]
-    fn high_tier_is_denied() {
+    fn high_tier_passes_base_policy() {
+        // The base policy no longer auto-denies high — the gate does. evaluate
+        // returns Allow(High) so the tier+judge gate can decide.
         let dir = TempDir::new().unwrap();
-        let p = sample();
         let d = evaluate(
-            Some(&p),
-            &dummy_meta(),
+            Some(&sample()),
+            &classified_meta(),
             &req(dir.path(), "DB_PW", "database", "claude"),
         );
-        assert!(!d.is_allow());
-        assert_eq!(d.tier(), Tier::High);
+        assert_eq!(d, Decision::Allow(Tier::High));
     }
 
     #[test]
     fn scope_not_held_is_denied() {
         let dir = TempDir::new().unwrap();
-        let p = sample();
         // "default" caller holds no scopes.
         let d = evaluate(
-            Some(&p),
-            &dummy_meta(),
+            Some(&sample()),
+            &classified_meta(),
             &req(dir.path(), "DB_URL", "database", "default"),
         );
         assert!(!d.is_allow());
@@ -438,10 +500,9 @@ vaults:
     #[test]
     fn wrong_scope_for_secret_is_denied() {
         let dir = TempDir::new().unwrap();
-        let p = sample();
         let d = evaluate(
-            Some(&p),
-            &dummy_meta(),
+            Some(&sample()),
+            &classified_meta(),
             &req(dir.path(), "DB_URL", "api", "claude"),
         );
         assert!(!d.is_allow());
@@ -450,50 +511,47 @@ vaults:
     #[test]
     fn unknown_caller_without_default_is_denied() {
         let dir = TempDir::new().unwrap();
-        let p = parse(
-            r#"
-version: 1
-callers:
-  claude: { scopes: [api], rate_limit: 5/hour }
-vaults:
-  proj:
-    secrets:
-      API_KEY: { scope: api, tier: low }
-"#,
-        );
+        let p = parse("version: 1\ncallers:\n  claude: { scopes: [api], rate_limit: 5/hour }\n");
         let d = evaluate(
             Some(&p),
-            &dummy_meta(),
+            &classified_meta(),
             &req(dir.path(), "API_KEY", "api", "ghost"),
         );
         assert!(!d.is_allow());
     }
 
     #[test]
-    fn unclassified_secret_is_denied() {
+    fn unclassified_secret_falls_back_to_allow_agent() {
         let dir = TempDir::new().unwrap();
-        let p = sample();
-        let d = evaluate(
-            Some(&p),
-            &dummy_meta(),
-            &req(dir.path(), "MYSTERY", "database", "claude"),
-        );
-        assert!(!d.is_allow());
+        // No classification for "MYSTERY" → fallback. allow_agent=true → allow,
+        // allow_agent=false → deny.
+        let yes = classified_meta();
+        let no = meta_with(AllowAgent::Bool(false));
+        assert!(evaluate(
+            Some(&sample()),
+            &yes,
+            &req(dir.path(), "MYSTERY", "database", "claude")
+        )
+        .is_allow());
+        assert!(!evaluate(
+            Some(&sample()),
+            &no,
+            &req(dir.path(), "MYSTERY", "database", "claude")
+        )
+        .is_allow());
     }
 
     #[test]
     fn short_reason_is_denied() {
         let dir = TempDir::new().unwrap();
-        let p = sample();
         let mut r = req(dir.path(), "DB_URL", "database", "claude");
         r.reason = "fix";
-        assert!(!evaluate(Some(&p), &dummy_meta(), &r).is_allow());
+        assert!(!evaluate(Some(&sample()), &classified_meta(), &r).is_allow());
     }
 
     #[test]
     fn rate_limit_exceeded_is_denied() {
         let dir = TempDir::new().unwrap();
-        let p = sample(); // claude is 2/hour
         for _ in 0..2 {
             audit::record(
                 dir.path(),
@@ -502,8 +560,8 @@ vaults:
             .unwrap();
         }
         let d = evaluate(
-            Some(&p),
-            &dummy_meta(),
+            Some(&sample()), // claude is 2/hour
+            &classified_meta(),
             &req(dir.path(), "DB_URL", "database", "claude"),
         );
         assert!(!d.is_allow());
@@ -512,17 +570,9 @@ vaults:
     #[test]
     fn burst_is_denied() {
         let dir = TempDir::new().unwrap();
-        let p = parse(
-            r#"
-version: 1
-callers:
-  fast: { scopes: [api], rate_limit: 1000/hour }
-vaults:
-  proj:
-    secrets:
-      API_KEY: { scope: api, tier: low }
-"#,
-        );
+        let p = parse("version: 1\ncallers:\n  fast: { scopes: [api], rate_limit: 1000/hour }\n");
+        let mut m = meta_with(AllowAgent::Bool(true));
+        m.secrets.insert("API_KEY".into(), rule("api", Tier::Low));
         for _ in 0..BURST_MAX {
             audit::record(
                 dir.path(),
@@ -530,11 +580,7 @@ vaults:
             )
             .unwrap();
         }
-        let d = evaluate(
-            Some(&p),
-            &dummy_meta(),
-            &req(dir.path(), "API_KEY", "api", "fast"),
-        );
+        let d = evaluate(Some(&p), &m, &req(dir.path(), "API_KEY", "api", "fast"));
         assert!(!d.is_allow());
     }
 
@@ -549,10 +595,6 @@ vaults:
         assert!(!evaluate(None, &no, &req(dir.path(), "X", "any", "claude")).is_allow());
         assert!(evaluate(None, &listed, &req(dir.path(), "X", "any", "claude")).is_allow());
         assert!(!evaluate(None, &listed, &req(dir.path(), "X", "any", "stranger")).is_allow());
-    }
-
-    fn dummy_meta() -> VaultMeta {
-        meta_with(AllowAgent::Bool(true))
     }
 
     fn meta_with(allow: AllowAgent) -> VaultMeta {

@@ -1411,6 +1411,19 @@ impl App {
         match Vault::open_with_key(&form.vault_dir, VaultKey::from_bytes(key)) {
             Ok(vault) => match vault.add_secret(form.name.trim(), &form.value) {
                 Ok(_) => {
+                    // Classify with the vault's default tier so the policy gate
+                    // applies to TUI-added secrets too (scope `misc`). Adjust
+                    // scope/tier per-secret with `svault secret add` on the CLI.
+                    let mut meta = vault.meta.clone();
+                    meta.secrets.insert(
+                        form.name.trim().to_string(),
+                        crate::policy::SecretRule {
+                            scope: "misc".to_string(),
+                            tier: meta.default_tier,
+                            require_reason: false,
+                        },
+                    );
+                    let _ = vault.save_meta(&meta);
                     crate::usage::human(&form.vault_dir, "secret.add", Some(form.name.trim()));
                     self.set_status(MsgKind::Ok, format!("Secret '{}' added", form.name.trim()));
                     let (dir, name) = (form.vault_dir.clone(), form.vault_name.clone());

@@ -110,7 +110,7 @@ Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s`
 
 <br>
 
-`svault secret get` is the **human path** — passphrase, no questions asked. `svault get` is the **agent path**: a structured request that an AI must justify.
+`svault secret get` is the **human path** — passphrase, no questions asked. `svault get` is the **agent path**: a structured request that an AI must justify. As of 0.9.0 it is **enforced inside the daemon** (the component that holds the key), not advisory — there is no unguarded read path, and every decision is audited with the connecting process's peer UID.
 
 ```bash
 svault get DB_URL --scope database --reason "run nightly migration" --caller claude-code
@@ -123,16 +123,18 @@ flowchart TD
     RSN -->|no| DENY["Deny + audit"]
     RSN -->|yes| CAP{"Caller holds scope<br/>& matches secret?"}
     CAP -->|no| DENY
-    CAP -->|yes| TIER{"Sensitivity tier?"}
-    TIER -->|high| DENY
-    TIER -->|low / medium| RATE{"Within rate limit<br/>& no burst?"}
+    CAP -->|yes| RATE{"Within rate limit<br/>& no burst?"}
     RATE -->|no| DENY
-    RATE -->|yes| ALLOW["Return value + audit"]
+    RATE -->|yes| TIER{"Tier?"}
+    TIER -->|low| ALLOW["Return value + audit"]
+    TIER -->|medium / high| JUDGE{"AI judge"}
+    JUDGE -->|allow| ALLOW
+    JUDGE -->|deny| DENY
 ```
 
-Policy lives in a committable `svault.policy.yaml` (no secrets inside). `high`-tier secrets are never handed to an agent.
+**AI judge (0.9.0):** for medium/high-tier secrets, Svault asks a cheap, fast LLM via your OpenRouter account whether the stated *reason* plausibly justifies the request — the behavioural gate that makes Svault AI-aware. Per-secret classification (scope/tier) lives in the **signed `meta.yaml`** (set with `svault secret add --scope --tier`); the committable `svault.policy.yaml` holds only caller definitions. The judge is **off until you configure a key** (`$SVAULT_OPENROUTER_KEY`); try `svault judge test`.
 
-**Full pipeline, YAML schema, tiers → [docs/policy-engine.md](docs/policy-engine.md)**
+**Full pipeline, tiers, judge setup → [docs/policy-engine.md](docs/policy-engine.md)**
 
 </details>
 
@@ -237,7 +239,7 @@ flowchart TD
 cargo test
 ```
 
-84 tests (plus one `#[ignore]`d stress benchmark) covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, **truncated `vault.enc` errors instead of panicking**, tampered `meta.yaml` rejected, session unlock/lock/lock-all, **the session caching a derived key (never a passphrase)**, passphrase strength checks + **entropy floor**, **owner-only file (0600) / dir (0700) permissions**, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, full recover-and-rekey roundtrip (old passphrase rejected, secret preserved, code still valid), export-bundle checksum integrity, build→import recreating an openable vault, **import name-collision suffixing + rename re-signing meta**, storage-backend metadata roundtrip, the daemon (protocol JSON roundtrip, **client-derived-key unlock + bogus-key rejection**, auto-lock idle/hard-max/active decisions, a unix unlock→get→lock→shutdown integration test, a concurrent-reads stress test, **poisoned-mutex recovery**, and **connection-slot accounting**), usage-log source stamping (event tagged with the current surface; old logs parse as unknown), and TUI key dispatch (field navigation, the rate-limit space-toggle regression, paste handling, and **help opening with `h` or `?`**).
+95 tests (plus one `#[ignore]`d stress benchmark) covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, **truncated `vault.enc` errors instead of panicking**, tampered `meta.yaml` rejected, session unlock/lock/lock-all, **the session caching a derived key (never a passphrase)**, passphrase strength checks + **entropy floor**, **owner-only file (0600) / dir (0700) permissions**, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, full recover-and-rekey roundtrip (old passphrase rejected, secret preserved, code still valid), export-bundle checksum integrity, build→import recreating an openable vault, **import name-collision suffixing + rename re-signing meta**, storage-backend metadata roundtrip, the daemon (protocol JSON roundtrip, **client-derived-key unlock + bogus-key rejection**, auto-lock idle/hard-max/active decisions, a unix unlock→get→lock→shutdown integration test, a concurrent-reads stress test, **poisoned-mutex recovery**, and **connection-slot accounting**), usage-log source stamping (event tagged with the current surface; old logs parse as unknown), TUI key dispatch (field navigation, the rate-limit space-toggle regression, paste handling, and **help opening with `h` or `?`**), and the **0.9.0 enforced engine** — the AI judge's JSON parsing + tier-dependent fail modes (with a fake transport, no network) and the daemon's gated read path (policy allow/deny, **high-tier fail-closed when the judge is unavailable**, medium fail-open, peer-UID-stamped audit).
 
 A heavier concurrency / pressure simulation runs on demand (`cargo test --release daemon_stress_simulation -- --ignored --nocapture`); methodology and a recorded run are in [docs/security-review/stress/0.6.0.md](docs/security-review/stress/0.6.0.md).
 
