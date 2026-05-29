@@ -35,6 +35,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Screen::Unlock(form) => draw_unlock(frame, chunks[1], form),
         Screen::Secrets(scr) => draw_secrets(frame, chunks[1], scr),
         Screen::SecretAdd(form) => draw_secret_add(frame, chunks[1], form),
+        Screen::RecoveryCode(code) => draw_recovery_code(frame, chunks[1], code),
+        Screen::Import(form) => draw_import(frame, chunks[1], form),
+        Screen::Recover(form) => draw_recover(frame, chunks[1], form),
     }
 
     draw_footer(frame, chunks[2], &app.screen);
@@ -84,7 +87,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 fn draw_footer(frame: &mut Frame, area: Rect, screen: &Screen) {
     let hint = match screen {
         Screen::List => {
-            "↑/↓ move   enter open   c create   u unlock   l lock   s settings   q quit"
+            "↑/↓ move  enter open  c create  u unlock  l lock  s settings  e export  i import  r recover  q quit"
         }
         Screen::Create(_) => {
             "↑/↓ field   ←/→ change   space toggle   enter next/create   esc cancel"
@@ -103,6 +106,9 @@ fn draw_footer(frame: &mut Frame, area: Rect, screen: &Screen) {
             }
         }
         Screen::SecretAdd(_) => "↑/↓ field   enter next/save   esc cancel",
+        Screen::RecoveryCode(_) => "press 'y' to confirm you have saved the code",
+        Screen::Import(_) => "type path to bundle   enter import   esc cancel",
+        Screen::Recover(_) => "↑/↓ field   enter next/recover   esc cancel",
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -333,6 +339,111 @@ fn draw_secret_add(frame: &mut Frame, area: Rect, form: &SecretAddForm) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" Add secret · {} ", form.vault_name))
+        .border_style(Style::default().fg(DIM));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn draw_recovery_code(frame: &mut Frame, area: Rect, code: &str) {
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Recovery code",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("    {code}"),
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  This is the ONLY time this code is shown — it is not stored in plaintext.",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(Span::styled(
+            "  Save it in a password manager (or on paper, offline). It is the only way",
+            Style::default().fg(DIM),
+        )),
+        Line::from(Span::styled(
+            "  back in if you lose your passphrase — then run 'svault recover'.",
+            Style::default().fg(DIM),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Press 'y' to confirm you have saved it.",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+    ];
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Save your recovery code ")
+        .border_style(Style::default().fg(Color::Yellow));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn draw_import(frame: &mut Frame, area: Rect, form: &super::ImportForm) {
+    let fields = [("Bundle path", form.path.clone())];
+    let mut lines = field_lines(&fields, 0);
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Path to a .svault-export.json file created by 'svault export'.",
+        Style::default().fg(DIM),
+    )));
+    if let Some(err) = &form.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  error: {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Import vault ")
+        .border_style(Style::default().fg(DIM));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn draw_recover(frame: &mut Frame, area: Rect, form: &super::RecoverForm) {
+    let fields = [
+        ("Recovery code", mask(&form.code)),
+        ("New passphrase", mask(&form.new_pass)),
+        ("Confirm", mask(&form.confirm)),
+    ];
+    let mut lines = field_lines(&fields, form.focus);
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Resets a lost passphrase. The recovery code stays the same.",
+        Style::default().fg(DIM),
+    )));
+    if let Some(err) = &form.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  error: {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Recover · {} ", form.name))
         .border_style(Style::default().fg(DIM));
     frame.render_widget(
         Paragraph::new(lines)

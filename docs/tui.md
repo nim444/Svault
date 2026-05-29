@@ -20,7 +20,12 @@ The landing screen lists every vault with its `storage:name` prefix and live loc
 | `u` | Unlock the selected vault |
 | `l` | Lock the selected vault (wipes the cached session) |
 | `s` | Edit the selected vault's settings |
+| `e` | Export the selected vault to `<name>.svault-export.json` |
+| `i` | Import a vault from a bundle file (prompts for the path) |
+| `r` | Recover the selected vault — enter the code, set a new passphrase |
 | `q` | Quit |
+
+`e` / `i` / `r` mirror the `svault export` / `import` / `recover` commands — see [Recovery](recovery.md).
 
 ## Create form
 
@@ -38,6 +43,8 @@ The landing screen lists every vault with its `storage:name` prefix and live loc
 10. Passphrase + confirm
 
 `←` / `→` cycle select fields; typing edits text fields; `Tab` / arrows move between fields.
+
+After the vault is created, the **recovery code** is shown once on its own screen. It is not stored in plaintext and is never shown again — save it (password manager or offline paper), then press `y` to confirm and return to the vault list. See [Recovery](recovery.md).
 
 ## Secret browser
 

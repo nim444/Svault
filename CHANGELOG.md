@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Recovery code** — `svault create` now generates a one-time 160-bit recovery code and stores the vault key wrapped under it in `recovery.enc`. `svault recover` uses the code to reset a lost passphrase (re-keys the vault; the code stays valid). Part of Step 3.
 - **Export / import** — `svault export` writes a portable, checksummed JSON bundle of an encrypted vault (`meta.yaml` + `vault.enc` + `recovery.enc`); `svault import` verifies the checksum and restores it on another machine, refusing to overwrite an existing vault name.
+- **TUI support** — the recovery code is shown once on its own screen after create and requires an explicit `y` confirmation that it was saved; the vault list gains `e` export, `i` import, and `r` recover, mirroring the CLI.
+
+### Security
+- The recovery code is displayed once and never stored in plaintext; both the CLI and TUI now require an explicit acknowledgment that it was saved before continuing.
 
 ## [0.2.1] - 2026-05-29
 

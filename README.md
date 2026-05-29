@@ -58,6 +58,7 @@ flowchart LR
 cargo install svault-ai
 
 # 1. Create an encrypted vault (interactive: storage, name, agents, auto-lock, passphrase…)
+#    Prints a one-time recovery code — save it (see 'svault recover').
 svault create
 
 # 2. Add secrets
@@ -130,6 +131,25 @@ flowchart TD
 Policy lives in a committable `svault.policy.yaml` (no secrets inside). `high`-tier secrets are never handed to an agent.
 
 **Full pipeline, YAML schema, tiers → [docs/policy-engine.md](docs/policy-engine.md)**
+
+</details>
+
+<details>
+<summary><b>Recovery & portability</b></summary>
+
+<br>
+
+`svault create` prints a one-time **recovery code** — a 160-bit second key that resets a lost passphrase. It's shown once and never stored in plaintext; keep it in a password manager.
+
+```bash
+svault recover                       # enter the code, set a new passphrase
+svault export myvault --out vault.json   # portable, checksummed encrypted bundle
+svault import vault.json                 # restore on another machine
+```
+
+The bundle carries no machine-specific state and every byte is encrypted or signed — safe to move between machines (same major Svault version).
+
+**Recovery code + export/import → [docs/recovery.md](docs/recovery.md)**
 
 </details>
 
@@ -213,7 +233,7 @@ flowchart TD
 cargo test
 ```
 
-44 tests covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, tampered `meta.yaml` rejected, session unlock/lock/lock-all, passphrase strength checks, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, export-bundle checksum integrity, and storage-backend metadata roundtrip.
+45 tests covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, tampered `meta.yaml` rejected, session unlock/lock/lock-all, passphrase strength checks, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, export-bundle checksum integrity, and storage-backend metadata roundtrip.
 
 CI runs the suite on **Ubuntu, Fedora, macOS, and Windows** on every push and pull request.
 

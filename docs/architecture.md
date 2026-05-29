@@ -22,22 +22,27 @@ The `reason` field is required by the [policy engine](policy-engine.md). An AI t
     vault.enc     ← AES-256-GCM encrypted secrets        (safe to commit)
     meta.yaml     ← name, storage backend, description,
                     access rules                          (safe to commit, HMAC-signed)
+    recovery.enc  ← vault key wrapped under the recovery
+                    code                                  (safe to commit)
     .gitignore    ← auto-written at create; blocks .session + audit.log
     .session      ← passphrase cache while unlocked       (gitignored, mode 0600)
     audit.log     ← policy decisions for 'svault get'     (gitignored, mode 0600)
 ```
 
-- **`vault.enc`** and **`meta.yaml`** are safe to commit — useless without the passphrase.
+- **`vault.enc`**, **`meta.yaml`**, and **`recovery.enc`** are safe to commit — useless without the passphrase or recovery code. See [Recovery](recovery.md).
 - **`.session`** is always gitignored and created with mode `0600` (owner read/write only).
 
 ## Authentication options
 
-Choose any combination (Step 3+):
+Today a vault is unlocked by **passphrase**, with a **recovery code** as an equal-strength second key for a lost passphrase (see [Recovery](recovery.md)). The hardware and biometric methods below are **planned for a later step** — they are not wired yet:
 
-- **Passphrase** — always available, works everywhere.
-- **YubiKey** — hardware HMAC-SHA1 challenge-response.
-- **Google Authenticator** — time-based OTP (TOTP).
-- **Touch ID / Face ID** — macOS biometric unlock.
+- **Passphrase** — always available, works everywhere *(today)*.
+- **Recovery code** — 160-bit code generated at create; resets a lost passphrase *(today)*.
+- **YubiKey** — hardware HMAC-SHA1 challenge-response *(planned)*.
+- **Google Authenticator** — time-based OTP (TOTP) *(planned)*.
+- **Touch ID / Face ID** — macOS biometric unlock *(planned)*.
+
+Planned method trade-offs:
 
 | Method | UX | Security | Notes |
 |---|---|---|---|

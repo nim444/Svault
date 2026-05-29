@@ -11,6 +11,7 @@ use rand::RngCore;
 use std::path::Path;
 
 use crate::crypto::{self, VaultKey, SALT_SIZE};
+use crate::vault::Vault;
 
 const RECOVERY_FILE: &str = "recovery.enc";
 const CODE_BYTES: usize = 20; // 160 bits
@@ -70,6 +71,17 @@ pub fn unlock_with_code(vault_dir: &Path, code: &str) -> Result<VaultKey> {
         .try_into()
         .map_err(|_| anyhow!("recovery.enc holds an unexpected key length"))?;
     Ok(VaultKey::from_bytes(key_bytes))
+}
+
+/// Recover a vault with its code and re-key it under `new_passphrase`. Verifies
+/// the code opens the vault, re-encrypts under the new passphrase, and re-wraps
+/// `recovery.enc` so the same code stays valid. Shared by the CLI and the TUI.
+pub fn recover_and_rekey(vault_dir: &Path, code: &str, new_passphrase: &str) -> Result<()> {
+    let key = unlock_with_code(vault_dir, code)?;
+    let mut vault = Vault::open_with_key(vault_dir, key)?;
+    vault.rekey(new_passphrase)?;
+    write(vault_dir, vault.key(), code)?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -228,6 +228,33 @@ pub struct SecretAddForm {
     pub error: Option<String>,
 }
 
+pub struct ImportForm {
+    pub path: String,
+    pub error: Option<String>,
+}
+
+pub struct RecoverForm {
+    pub vault_dir: PathBuf,
+    pub name: String,
+    pub code: String,
+    pub new_pass: String,
+    pub confirm: String,
+    pub focus: usize, // 0 code · 1 new passphrase · 2 confirm
+    pub error: Option<String>,
+}
+
+impl RecoverForm {
+    const FIELDS: usize = 3;
+
+    fn field_mut(&mut self) -> &mut String {
+        match self.focus {
+            0 => &mut self.code,
+            1 => &mut self.new_pass,
+            _ => &mut self.confirm,
+        }
+    }
+}
+
 pub enum Screen {
     List,
     Create(CreateForm),
@@ -235,6 +262,13 @@ pub enum Screen {
     Unlock(UnlockForm),
     Secrets(SecretScreen),
     SecretAdd(SecretAddForm),
+    /// Shows the one-time recovery code after a vault is created. Dismissed only
+    /// by an explicit 'y' confirmation that the code has been saved.
+    RecoveryCode(String),
+    /// Import a vault from a bundle file (path entry).
+    Import(ImportForm),
+    /// Recover a vault: enter the code + a new passphrase.
+    Recover(RecoverForm),
 }
 
 // ── App ────────────────────────────────────────────────────────────────────────
@@ -342,8 +376,132 @@ impl App {
             Screen::Unlock(form) => self.key_unlock(form, key)?,
             Screen::Secrets(scr) => self.key_secrets(scr, key)?,
             Screen::SecretAdd(form) => self.key_secret_add(form, key)?,
+            Screen::RecoveryCode(code) => self.key_recovery_code(code, key),
+            Screen::Import(form) => self.key_import(form, key)?,
+            Screen::Recover(form) => self.key_recover(form, key),
         }
         Ok(())
+    }
+
+    /// The recovery-code screen requires an explicit confirmation ('y') that the
+    /// code was saved — any other key keeps it on screen, so it can't be
+    /// dismissed by accident before the user has written it down.
+    fn key_recovery_code(&mut self, code: String, key: KeyEvent) {
+        if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+            self.screen = Screen::List;
+        } else {
+            self.screen = Screen::RecoveryCode(code);
+        }
+    }
+
+    // ── Import screen ─────────────────────────────────────────────────────────
+
+    fn key_import(&mut self, mut form: ImportForm, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => self.screen = Screen::List,
+            KeyCode::Backspace => {
+                form.path.pop();
+                form.error = None;
+                self.screen = Screen::Import(form);
+            }
+            KeyCode::Char(c) => {
+                form.path.push(c);
+                form.error = None;
+                self.screen = Screen::Import(form);
+            }
+            KeyCode::Enter => {
+                let path = form.path.trim();
+                if path.is_empty() {
+                    form.error = Some("Enter a path to a .svault-export.json file".into());
+                    self.screen = Screen::Import(form);
+                    return Ok(());
+                }
+                match std::fs::read_to_string(path)
+                    .map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))
+                    .and_then(|raw| {
+                        crate::portable::import_bundle(&raw, std::path::Path::new(SVAULT_DIR))
+                    }) {
+                    Ok(name) => {
+                        self.refresh_vaults();
+                        self.set_status(MsgKind::Ok, format!("Imported '{name}'"));
+                        self.screen = Screen::List;
+                    }
+                    Err(e) => {
+                        form.error = Some(format!("{e}"));
+                        self.screen = Screen::Import(form);
+                    }
+                }
+            }
+            _ => self.screen = Screen::Import(form),
+        }
+        Ok(())
+    }
+
+    // ── Recover screen ──────────────────────────────────────────────────────────
+
+    fn key_recover(&mut self, mut form: RecoverForm, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.screen = Screen::List,
+            KeyCode::Tab | KeyCode::Down => {
+                form.focus = (form.focus + 1) % RecoverForm::FIELDS;
+                self.screen = Screen::Recover(form);
+            }
+            KeyCode::Up => {
+                form.focus = (form.focus + RecoverForm::FIELDS - 1) % RecoverForm::FIELDS;
+                self.screen = Screen::Recover(form);
+            }
+            KeyCode::Backspace => {
+                form.field_mut().pop();
+                form.error = None;
+                self.screen = Screen::Recover(form);
+            }
+            KeyCode::Char(c) => {
+                form.field_mut().push(c);
+                form.error = None;
+                self.screen = Screen::Recover(form);
+            }
+            KeyCode::Enter => {
+                // Advance through fields; submit from the last one.
+                if form.focus < RecoverForm::FIELDS - 1 {
+                    form.focus += 1;
+                    self.screen = Screen::Recover(form);
+                    return;
+                }
+                self.submit_recover(form);
+            }
+            _ => self.screen = Screen::Recover(form),
+        }
+    }
+
+    fn submit_recover(&mut self, mut form: RecoverForm) {
+        if form.new_pass != form.confirm {
+            form.error = Some("Passphrases do not match".into());
+            form.new_pass.clear();
+            form.confirm.clear();
+            form.focus = 1;
+            self.screen = Screen::Recover(form);
+            return;
+        }
+        match crate::recovery::recover_and_rekey(&form.vault_dir, &form.code, &form.new_pass) {
+            Ok(_) => {
+                session::lock(&form.vault_dir).ok();
+                self.refresh_vaults();
+                self.set_status(
+                    MsgKind::Ok,
+                    format!(
+                        "Passphrase reset for '{}'. Recovery code unchanged.",
+                        form.name
+                    ),
+                );
+                self.screen = Screen::List;
+            }
+            Err(e) => {
+                form.error = Some(format!("{e}"));
+                form.code.clear();
+                form.focus = 0;
+                self.screen = Screen::Recover(form);
+            }
+        }
     }
 
     // ── List screen ─────────────────────────────────────────────────────────
@@ -358,10 +516,67 @@ impl App {
             KeyCode::Char('u') => self.unlock_selected()?,
             KeyCode::Char('l') => self.lock_selected()?,
             KeyCode::Char('s') => self.open_settings()?,
+            KeyCode::Char('e') => self.export_selected(),
+            KeyCode::Char('i') => {
+                self.screen = Screen::Import(ImportForm {
+                    path: String::new(),
+                    error: None,
+                })
+            }
+            KeyCode::Char('r') => self.start_recover(),
             KeyCode::Enter => self.open_secrets()?,
             _ => {}
         }
         Ok(())
+    }
+
+    /// Export the selected vault to `<name>.svault-export.json` in the CWD.
+    fn export_selected(&mut self) {
+        let Some(v) = self.selected_vault() else {
+            return;
+        };
+        let meta = match VaultMeta::load_unverified(&v.dir) {
+            Ok(m) => m,
+            Err(e) => {
+                self.set_status(MsgKind::Error, format!("Cannot read vault: {e}"));
+                return;
+            }
+        };
+        match crate::portable::build_bundle(&v.dir, &meta.name, &meta.storage) {
+            Ok(json) => {
+                let out = format!("{}.svault-export.json", meta.name);
+                match std::fs::write(&out, json) {
+                    Ok(_) => {
+                        self.set_status(MsgKind::Ok, format!("Exported '{}' to {out}", v.name))
+                    }
+                    Err(e) => self.set_status(MsgKind::Error, format!("Export failed: {e}")),
+                }
+            }
+            Err(e) => self.set_status(MsgKind::Error, format!("Export failed: {e}")),
+        }
+    }
+
+    /// Open the recover form for the selected vault (must have a recovery file).
+    fn start_recover(&mut self) {
+        let Some(v) = self.selected_vault() else {
+            return;
+        };
+        if !crate::recovery::exists(&v.dir) {
+            self.set_status(
+                MsgKind::Error,
+                format!("Vault '{}' has no recovery file", v.name),
+            );
+            return;
+        }
+        self.screen = Screen::Recover(RecoverForm {
+            vault_dir: v.dir,
+            name: v.name,
+            code: String::new(),
+            new_pass: String::new(),
+            confirm: String::new(),
+            focus: 0,
+            error: None,
+        });
     }
 
     fn unlock_selected(&mut self) -> Result<()> {
@@ -563,7 +778,20 @@ impl App {
         meta.storage = storage_id(form.storage).to_string();
 
         match Vault::init(&vault_dir, &form.passphrase, meta) {
-            Ok(_) => {
+            Ok(vault) => {
+                // Generate and store the recovery code, then show it once.
+                let code = crate::recovery::generate_code();
+                if let Err(e) = crate::recovery::write(&vault_dir, vault.key(), &code) {
+                    self.refresh_vaults();
+                    self.set_status(
+                        MsgKind::Warn,
+                        format!(
+                            "Vault '{name}' created, but recovery code could not be saved: {e}"
+                        ),
+                    );
+                    self.screen = Screen::List;
+                    return Ok(());
+                }
                 self.refresh_vaults();
                 if storage_note {
                     self.set_status(
@@ -578,7 +806,7 @@ impl App {
                 } else {
                     self.set_status(MsgKind::Ok, format!("Vault '{name}' created"));
                 }
-                self.screen = Screen::List;
+                self.screen = Screen::RecoveryCode(code);
             }
             Err(e) => {
                 form.error = Some(format!("{e}"));
