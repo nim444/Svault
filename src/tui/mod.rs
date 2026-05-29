@@ -777,7 +777,7 @@ impl App {
             KeyCode::Char('r') => self.start_recover(),
             KeyCode::Char('v') => self.start_activity(),
             KeyCode::Char('d') => self.toggle_daemon(),
-            KeyCode::Char('?') => self.show_help = true,
+            KeyCode::Char('?') | KeyCode::Char('h') => self.show_help = true,
             KeyCode::Enter => self.open_secrets()?,
             _ => {}
         }
@@ -1281,7 +1281,7 @@ impl App {
                 self.screen = Screen::List;
                 return Ok(());
             }
-            KeyCode::Char('?') => self.show_help = true,
+            KeyCode::Char('?') | KeyCode::Char('h') => self.show_help = true,
             _ => {}
         }
         self.screen = Screen::Secrets(scr);
@@ -1603,6 +1603,15 @@ mod tests {
         press(&mut app, KeyCode::Char('?'));
         assert!(app.show_help);
         press(&mut app, KeyCode::Char('x'));
+        assert!(!app.show_help);
+    }
+
+    #[test]
+    fn help_also_opens_with_h() {
+        let mut app = bare_app(Screen::List);
+        press(&mut app, KeyCode::Char('h'));
+        assert!(app.show_help);
+        press(&mut app, KeyCode::Esc);
         assert!(!app.show_help);
     }
 
