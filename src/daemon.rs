@@ -144,7 +144,9 @@ mod imp {
     /// worst a poisoned lock leaves behind is a possibly half-updated `last_used`
     /// timestamp; it can never leak or corrupt a key, so recovering is safe.
     fn lock_store(store: &Store) -> std::sync::MutexGuard<'_, HashMap<String, Held>> {
-        store.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     // ── Request handling ──────────────────────────────────────────────────
@@ -418,8 +420,7 @@ mod imp {
 
     /// Send one request to a running daemon and read its reply.
     pub fn send(base: &Path, req: &Request) -> Result<Response> {
-        let mut stream =
-            connect_retry(&socket_path(base)).context("connect to svault daemon")?;
+        let mut stream = connect_retry(&socket_path(base)).context("connect to svault daemon")?;
         let mut line = serde_json::to_string(req)?;
         line.push('\n');
         stream.write_all(line.as_bytes())?;

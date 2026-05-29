@@ -142,7 +142,10 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     // which always keeps "h/? help" discoverable. Press h or ? for the full
     // keybinding overlay.
     let (full, compact): (&str, &str) = if app.confirm_quit {
-        ("enter  quit        esc / any key  stay", "enter quit  esc stay")
+        (
+            "enter  quit        esc / any key  stay",
+            "enter quit  esc stay",
+        )
     } else if app.show_help {
         ("any key / esc  close help", "any key  close")
     } else {
@@ -196,7 +199,11 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     };
     // Inner width = area minus the two vertical border columns.
     let avail = area.width.saturating_sub(2) as usize;
-    let hint = if full.chars().count() <= avail { full } else { compact };
+    let hint = if full.chars().count() <= avail {
+        full
+    } else {
+        compact
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border());

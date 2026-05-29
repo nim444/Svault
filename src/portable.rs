@@ -141,7 +141,6 @@ pub fn import_bundle_as(raw: &str, svault_base: &Path, target_name: &str) -> Res
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
