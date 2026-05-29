@@ -2,16 +2,35 @@
 
 For the detailed build plan (stack, per-step checklists, design notes), see [PLAN.md](../PLAN.md).
 
-| Phase | Status | What |
+Svault is built CLI-first. The major versions are deliberately sequenced so the
+command-line tool is fully hardened and stable **before** any GUI or AI-platform
+surface is added:
+
+| Milestone | Status | What |
 |---|---|---|
-| **Step 1** | Done | Local encrypted vault — AES-256-GCM + Argon2id |
-| **Step 1+** | Done | Interactive Ratatui TUI (run `svault` with no args) — vault table, forms, secret browser, help overlay, and an activity timeline (`v`) over the per-vault usage log |
-| **Step 2** | Done | Policy engine — `svault get` with caller identity, `reason`, scope capability checks, sensitivity tiers, rate limiting + burst detection, audit log |
-| **Step 3** | Done | Recovery (code + export/import) and the Unix daemon (keys in memory, auto-lock, `daemon doctor`). Extra auth methods (YubiKey, TOTP, Touch ID/Face ID) deferred |
-| **Step 4** | Planned | Desktop GUI (Tauri) for vault management + system tray |
-| **Step 5** | Planned | MCP integration — Claude Code, Cursor, Copilot, VS Code, Aider |
-| **Distribution** | In progress | Install channels — crates.io **done**; install script, Homebrew tap, cargo-binstall, Docker next; Scoop/WinGet/AUR/Nix later |
-| **Cloud** | Planned | Anomaly scoring via Claude Haiku — free tier + premium plans |
+| **0.1 – 0.6** | Shipped | CLI core — encrypted vault (AES-256-GCM + Argon2id), Ratatui TUI, policy engine (`svault get`), Unix daemon, recovery + export/import, and the 0.6.0 security-hardening pass |
+| **0.7.0 → 1.0.0** | In progress | **Security hardening** (acting on the review findings), a supply-chain/CI gate, and the install channels — the road to a stable CLI |
+| **1.0.0** | Planned | First **stable release**: a hardened, audited command-line tool |
+| **2.0.0** | Planned | Desktop **GUI** (Tauri) for vault management + system tray |
+| **3.0.0** | Planned | **Claude / AI-platform access** — MCP server + Pre/PostToolUse hooks (Claude Code, Cursor, Copilot, VS Code, Aider) |
+| **Cloud** (opt-in) | Planned | Anomaly scoring via Claude Haiku — free tier + premium plans |
+
+> Why this order: a secret manager has to be trustworthy as a CLI first. A GUI
+> and AI-platform integrations widen the attack surface, so they come only after
+> the core is hardened and the security-review process has had a full release
+> cycle behind it.
+
+## 0.7.0 → 1.0.0 — Hardening & stable CLI
+
+The focus until 1.0.0 is the security-review backlog, not new surfaces. Working
+order (from the [0.6.0 findings carry-forward](security-review/findings/0.6.0.md)):
+
+- **Supply chain** — add a `cargo audit` / `cargo-deny` CI gate (#9) and bump `ratatui` to clear the two transitive advisories (#10).
+- **Policy as an enforced control** — evaluate policy + audit inside the daemon so the socket is the choke point (#2); sign / pin `svault.policy.yaml` (#5).
+- **Socket secrecy** — derive the key client-side so the passphrase never crosses the daemon socket (#3).
+- **Finish #4** — Windows DPAPI/ACL (or refuse-to-cache) and route the TUI through the daemon so `.session` can be deprecated on Unix.
+- **Smaller** — zeroize secret/passphrase strings (#6), release-artifact checksums/signing (#11), a passphrase entropy floor (#12); then the peer-UID bond (#1), #14, #16, #17, #22.
+- **Distribution** — `install.sh`, Homebrew tap, cargo-binstall, Docker (see below).
 
 ## Step 3 — Daemon + recovery
 
@@ -26,13 +45,13 @@ For the detailed build plan (stack, per-step checklists, design notes), see [PLA
 
 **Deferred** to a later step: extra auth methods — YubiKey (HMAC-SHA1), Google Authenticator (TOTP), Touch ID / Face ID (macOS Keychain), and the multi-method `svault unlock --yubikey/--otp/--biometric` selection.
 
-## Step 4 — GUI client (Tauri)
+## 2.0.0 — GUI client (Tauri)
 
 - Vault dashboard, lock/unlock panel, auto-lock controls, session monitor.
 - Secret management (names only, never values), policy viewer, audit log viewer.
 - System tray icon + notifications; lightweight single binary, works offline.
 
-## Step 5 — Platform install + MCP
+## 3.0.0 — Claude / AI-platform access (MCP)
 
 - `svault mcp` — MCP server exposing `svault_get_secret(name, scope, reason)`.
 - `svault install` — auto-detect platform, write MCP config.
