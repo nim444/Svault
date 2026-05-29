@@ -9,11 +9,11 @@
 | Session file | Created atomically with mode `0600`, never at permissive permissions |
 | Vault file | Safe to commit to git — encrypted at rest |
 
-**The passphrase is the only key.** A strong passphrase combined with Argon2id makes brute force impractical on current hardware.
+**The passphrase is the root of trust** — or the recovery code, which is an equal-strength second key. A strong passphrase combined with Argon2id makes brute force impractical on current hardware; the recovery code is 160 bits of randomness.
 
 ## What's safe to commit
 
-`vault.enc` and `meta.yaml` are safe to commit to git — they are useless without the passphrase. The `.session`, `audit.log`, and any local lock state are always gitignored (a per-vault `.gitignore` is written at create time) and created with mode `0600` (owner read/write only).
+`vault.enc`, `meta.yaml`, and `recovery.enc` are safe to commit to git — they are useless without the passphrase or recovery code. (`recovery.enc` holds the vault key wrapped under the recovery code; see [Recovery](recovery.md).) The `.session`, `audit.log`, and any local lock state are always gitignored (a per-vault `.gitignore` is written at create time) and created with mode `0600` (owner read/write only).
 
 ## Threat model notes
 

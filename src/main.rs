@@ -4,6 +4,7 @@ mod crypto;
 mod meta;
 mod passphrase;
 mod policy;
+mod recovery;
 mod session;
 mod tui;
 mod vault;
@@ -90,6 +91,24 @@ enum Commands {
         /// Caller name (for `check`).
         caller: Option<String>,
     },
+    /// Recover a vault with its recovery code and set a new passphrase
+    Recover {
+        /// Vault name (positional). Omit to use the only vault or pick interactively.
+        vault: Option<String>,
+    },
+    /// Export a vault to a portable encrypted bundle
+    Export {
+        /// Vault name (positional). Omit to use the only vault or pick interactively.
+        vault: Option<String>,
+        /// Output file (default: <name>.svault-export.json)
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Import a vault from a bundle created by `svault export`
+    Import {
+        /// Path to the .svault-export.json bundle
+        file: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -126,6 +145,9 @@ fn main() -> Result<()> {
             vault,
         } => cmd_get(&name, &scope, &reason, caller.as_deref(), vault.as_deref()),
         Commands::Policy { action, caller } => cmd_policy(&action, caller.as_deref()),
+        Commands::Recover { vault } => cmd_recover(vault.as_deref()),
+        Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
+        Commands::Import { file } => cmd_import(&file),
     }
 }
 
@@ -233,7 +255,11 @@ fn cmd_create(name_arg: Option<String>) -> Result<()> {
         },
     );
     meta.storage = storage.to_string();
-    Vault::init(&vault_dir, &passphrase, meta)?;
+    let vault = Vault::init(&vault_dir, &passphrase, meta)?;
+
+    // Generate a recovery code and wrap the vault key under it. Shown once.
+    let recovery_code = recovery::generate_code();
+    recovery::write(&vault_dir, vault.key(), &recovery_code)?;
 
     println!();
     println!(
@@ -256,6 +282,22 @@ fn cmd_create(name_arg: Option<String>) -> Result<()> {
     println!(
         "{}",
         style(format!("  git add {}/", vault_dir.display())).dim()
+    );
+
+    println!();
+    println!(
+        "{}",
+        style("  RECOVERY CODE — store it now:").yellow().bold()
+    );
+    println!("  {}", style(&recovery_code).bold());
+    println!(
+        "{}",
+        style("  This is the only way back in if you lose your passphrase. It is not shown again.")
+            .dim()
+    );
+    println!(
+        "{}",
+        style("  Run 'svault recover' with this code to reset a lost passphrase.").dim()
     );
     Ok(())
 }
@@ -867,6 +909,203 @@ fn unlocked_secret_names(vault_dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+// ── Recovery, export, import ────────────────────────────────────────────────
+
+fn cmd_recover(vault_name: Option<&str>) -> Result<()> {
+    let vault_dir = resolve_vault_dir(vault_name)?;
+    let meta = VaultMeta::load_unverified(&vault_dir)?;
+
+    if !recovery::exists(&vault_dir) {
+        eprintln!(
+            "{} Vault '{}' has no recovery file — it predates recovery support.",
+            style("error:").red(),
+            meta.name
+        );
+        std::process::exit(1);
+    }
+
+    let code = Password::new()
+        .with_prompt(format!("  Recovery code for '{}'", meta.name))
+        .interact()?;
+
+    let key = recovery::unlock_with_code(&vault_dir, &code).unwrap_or_else(|e| {
+        eprintln!("{} {}", style("error:").red(), e);
+        std::process::exit(1);
+    });
+
+    // Confirm the recovered key really opens this vault before re-keying.
+    let mut vault = Vault::open_with_key(&vault_dir, key).map_err(|e| {
+        eprintln!("{} {}", style("error:").red(), e);
+        std::process::exit(1);
+        #[allow(unreachable_code)]
+        e
+    })?;
+
+    println!(
+        "{} Recovery code accepted — set a new passphrase.",
+        style("ok:").green()
+    );
+    let new_pass = Password::new().with_prompt("  New passphrase").interact()?;
+    if let Some(w) = passphrase::check(&new_pass) {
+        println!("{} {}", style("warning:").yellow(), w.0);
+    }
+    let confirm = Password::new()
+        .with_prompt("  Confirm passphrase")
+        .interact()?;
+    if new_pass != confirm {
+        eprintln!("{} Passphrases do not match", style("error:").red());
+        std::process::exit(1);
+    }
+
+    vault.rekey(&new_pass)?;
+    // Re-wrap the recovery file under the same code, now holding the new key.
+    recovery::write(&vault_dir, vault.key(), &code)?;
+    // Drop any stale cached session (it holds the old passphrase).
+    session::lock(&vault_dir).ok();
+
+    println!(
+        "{} Passphrase reset for '{}'. Recovery code unchanged.",
+        style("ok:").green().bold(),
+        meta.name
+    );
+    Ok(())
+}
+
+const EXPORT_VERSION: u32 = 1;
+const EXPORT_FILES: &[&str] = &["meta.yaml", "vault.enc", "recovery.enc"];
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ExportBundle {
+    svault_export: u32,
+    name: String,
+    storage: String,
+    sha256: String,
+    files: std::collections::BTreeMap<String, String>,
+}
+
+/// Hash the files map deterministically (sorted keys) for corruption detection.
+fn bundle_digest(files: &std::collections::BTreeMap<String, String>) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for (k, v) in files {
+        h.update(k.as_bytes());
+        h.update([0u8]);
+        h.update(v.as_bytes());
+        h.update([0u8]);
+    }
+    hex::encode(h.finalize())
+}
+
+fn cmd_export(vault_name: Option<&str>, out: Option<&str>) -> Result<()> {
+    let vault_dir = resolve_vault_dir(vault_name)?;
+    let meta = VaultMeta::load_unverified(&vault_dir)?;
+
+    let mut files = std::collections::BTreeMap::new();
+    for name in EXPORT_FILES {
+        let path = vault_dir.join(name);
+        if path.exists() {
+            files.insert(name.to_string(), hex::encode(std::fs::read(&path)?));
+        } else if *name != "recovery.enc" {
+            // meta.yaml and vault.enc are mandatory; recovery.enc is optional.
+            eprintln!(
+                "{} Vault '{}' is missing {} — cannot export.",
+                style("error:").red(),
+                meta.name,
+                name
+            );
+            std::process::exit(1);
+        }
+    }
+
+    let bundle = ExportBundle {
+        svault_export: EXPORT_VERSION,
+        name: meta.name.clone(),
+        storage: meta.storage.clone(),
+        sha256: bundle_digest(&files),
+        files,
+    };
+
+    let out_path = out
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("{}.svault-export.json", meta.name)));
+    std::fs::write(&out_path, serde_json::to_string_pretty(&bundle)?)?;
+
+    println!(
+        "{} Exported '{}' to {}",
+        style("ok:").green().bold(),
+        meta.name,
+        out_path.display()
+    );
+    println!(
+        "{}",
+        style("  The bundle is encrypted — import it with 'svault import'.").dim()
+    );
+    Ok(())
+}
+
+fn cmd_import(file: &str) -> Result<()> {
+    let raw = std::fs::read_to_string(file).unwrap_or_else(|e| {
+        eprintln!("{} cannot read {}: {}", style("error:").red(), file, e);
+        std::process::exit(1);
+    });
+    let bundle: ExportBundle = serde_json::from_str(&raw).unwrap_or_else(|_| {
+        eprintln!(
+            "{} {} is not a valid svault export",
+            style("error:").red(),
+            file
+        );
+        std::process::exit(1);
+    });
+
+    if bundle.svault_export != EXPORT_VERSION {
+        eprintln!(
+            "{} unsupported export version {}",
+            style("error:").red(),
+            bundle.svault_export
+        );
+        std::process::exit(1);
+    }
+    if bundle_digest(&bundle.files) != bundle.sha256 {
+        eprintln!(
+            "{} checksum mismatch — the bundle is corrupted",
+            style("error:").red()
+        );
+        std::process::exit(1);
+    }
+
+    let target = PathBuf::from(SVAULT_DIR).join(&bundle.name);
+    if target.exists() {
+        eprintln!(
+            "{} a vault named '{}' already exists — names must be unique",
+            style("error:").red(),
+            bundle.name
+        );
+        std::process::exit(1);
+    }
+
+    std::fs::create_dir_all(&target)?;
+    std::fs::write(target.join(".gitignore"), ".session\naudit.log\n")?;
+    for (name, hex_content) in &bundle.files {
+        let bytes = hex::decode(hex_content)
+            .map_err(|_| anyhow::anyhow!("bundle file '{name}' is not valid hex"))?;
+        std::fs::write(target.join(name), bytes)?;
+    }
+
+    println!(
+        "{} Imported '{}' ({}:{}) into {}/",
+        style("ok:").green().bold(),
+        bundle.name,
+        bundle.storage,
+        bundle.name,
+        target.display()
+    );
+    println!(
+        "{}",
+        style("  Unlock it with its original passphrase (or 'svault recover').").dim()
+    );
+    Ok(())
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Resolve which vault a command targets.
@@ -1026,4 +1265,48 @@ fn prompt_login_method(current: Option<LoginMethod>) -> Result<LoginMethod> {
         );
     }
     Ok(LoginMethod::Passphrase)
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn sample_files() -> BTreeMap<String, String> {
+        let mut f = BTreeMap::new();
+        f.insert("meta.yaml".into(), hex::encode(b"name: v"));
+        f.insert("vault.enc".into(), hex::encode([1u8, 2, 3, 4]));
+        f
+    }
+
+    #[test]
+    fn digest_is_deterministic() {
+        let f = sample_files();
+        assert_eq!(bundle_digest(&f), bundle_digest(&f.clone()));
+    }
+
+    #[test]
+    fn digest_changes_when_a_file_changes() {
+        let f = sample_files();
+        let before = bundle_digest(&f);
+        let mut tampered = f.clone();
+        tampered.insert("vault.enc".into(), hex::encode([9u8, 9, 9, 9]));
+        assert_ne!(before, bundle_digest(&tampered));
+    }
+
+    #[test]
+    fn bundle_roundtrips_through_json_and_verifies() {
+        let files = sample_files();
+        let bundle = ExportBundle {
+            svault_export: EXPORT_VERSION,
+            name: "v".into(),
+            storage: "local".into(),
+            sha256: bundle_digest(&files),
+            files,
+        };
+        let json = serde_json::to_string(&bundle).unwrap();
+        let back: ExportBundle = serde_json::from_str(&json).unwrap();
+        // The checksum still matches the (untouched) files map.
+        assert_eq!(bundle_digest(&back.files), back.sha256);
+    }
 }

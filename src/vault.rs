@@ -70,6 +70,41 @@ impl Vault {
         })
     }
 
+    /// Open an existing vault directly from its derived key, skipping Argon2.
+    /// Used by the recovery path (which unwraps the stored key) and the daemon
+    /// (which holds the key in memory). Verifies the key by decrypting vault.enc.
+    pub fn open_with_key(vault_dir: &Path, key: VaultKey) -> Result<Self> {
+        let encrypted = std::fs::read(vault_dir.join("vault.enc"))?;
+        crypto::decrypt(&key, &encrypted)?;
+        let meta = VaultMeta::load_verified(vault_dir, key.bytes())?;
+        Ok(Self {
+            vault_dir: vault_dir.to_path_buf(),
+            meta,
+            key,
+        })
+    }
+
+    /// The vault's derived key — needed to re-wrap the recovery file after a re-key.
+    pub fn key(&self) -> &VaultKey {
+        &self.key
+    }
+
+    /// Re-encrypt the vault under a new passphrase: fresh salt + key, re-write
+    /// vault.enc, re-sign meta.yaml. The caller re-wraps recovery.enc afterwards.
+    pub fn rekey(&mut self, new_passphrase: &str) -> Result<()> {
+        let secrets = self.load_secrets()?;
+        let mut salt = [0u8; SALT_SIZE];
+        rand::thread_rng().fill_bytes(&mut salt);
+        let new_key = VaultKey::derive(new_passphrase, &salt)?;
+
+        let json = SecretStore(serde_json::to_string(&secrets)?);
+        let data = crypto::encrypt(&new_key, &salt, json.0.as_bytes())?;
+        std::fs::write(self.vault_dir.join("vault.enc"), data)?;
+        self.meta.save(&self.vault_dir, new_key.bytes())?;
+        self.key = new_key;
+        Ok(())
+    }
+
     /// Re-sign and persist updated metadata (settings, description, access).
     /// Requires the vault to be open so the HMAC can be recomputed with the key.
     pub fn save_meta(&self, meta: &VaultMeta) -> Result<()> {
@@ -233,6 +268,45 @@ mod tests {
         assert_eq!(
             v2.get_secret("REDIS_URL").unwrap(),
             Some("redis://localhost:6379".to_string())
+        );
+    }
+
+    #[test]
+    fn open_with_key_matches_passphrase_open() {
+        let dir = TempDir::new().unwrap();
+        let vault_dir = dir.path().join("test");
+        let v = tmp_vault(&dir, "test", "Str0ng!Pass#99");
+        v.add_secret("API_KEY", "value").unwrap();
+        let key_bytes = *v.key().bytes();
+
+        let reopened =
+            Vault::open_with_key(&vault_dir, crypto::VaultKey::from_bytes(key_bytes)).unwrap();
+        assert_eq!(reopened.meta.name, "test");
+        assert_eq!(
+            reopened.get_secret("API_KEY").unwrap(),
+            Some("value".to_string())
+        );
+    }
+
+    #[test]
+    fn rekey_preserves_secrets_and_changes_passphrase() {
+        let dir = TempDir::new().unwrap();
+        let vault_dir = dir.path().join("test");
+
+        {
+            let mut v = tmp_vault(&dir, "test", "Old!Pass#11");
+            v.add_secret("DB_URL", "postgres://x").unwrap();
+            v.rekey("New!Pass#22").unwrap();
+        }
+
+        // Old passphrase no longer opens the vault.
+        assert!(Vault::open(&vault_dir, "Old!Pass#11").is_err());
+
+        // New passphrase opens it and the secret survived the re-encryption.
+        let v = Vault::open(&vault_dir, "New!Pass#22").unwrap();
+        assert_eq!(
+            v.get_secret("DB_URL").unwrap(),
+            Some("postgres://x".to_string())
         );
     }
 

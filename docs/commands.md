@@ -30,6 +30,16 @@ svault policy init                 # scaffold svault.policy.yaml from existing v
 svault policy check <caller>       # what a caller can access + recent activity
 ```
 
+## Recovery & portability
+
+See [Recovery](recovery.md) for how the recovery key and bundle work.
+
+```bash
+svault recover [VAULT]                   # use the recovery code to reset a lost passphrase
+svault export  [VAULT] [--out FILE]      # write a portable encrypted bundle (default: <name>.svault-export.json)
+svault import  <FILE>                    # restore a vault from a bundle
+```
+
 ## Platform integration (planned)
 
 ```bash
@@ -38,6 +48,6 @@ svault install [--platform claude|cursor|...]   # wire into an AI platform (Step
 
 ## Vault selection
 
-- `VAULT` is **positional** for `create`, `settings`, `unlock`, and `lock`.
+- `VAULT` is **positional** for `create`, `settings`, `unlock`, `lock`, `recover`, and `export`.
 - `secret` and `get` take it via `-v` / `--vault`.
 - Omit it to use the only vault, or you'll be prompted to pick when several exist.

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Recovery code** — `svault create` now generates a one-time 160-bit recovery code and stores the vault key wrapped under it in `recovery.enc`. `svault recover` uses the code to reset a lost passphrase (re-keys the vault; the code stays valid). Part of Step 3.
+- **Export / import** — `svault export` writes a portable, checksummed JSON bundle of an encrypted vault (`meta.yaml` + `vault.enc` + `recovery.enc`); `svault import` verifies the checksum and restores it on another machine, refusing to overwrite an existing vault name.
+
 ## [0.2.1] - 2026-05-29
 
 ### Added

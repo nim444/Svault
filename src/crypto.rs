@@ -31,6 +31,13 @@ impl VaultKey {
         Ok(VaultKey(key))
     }
 
+    /// Build a key from raw bytes — used by the recovery path (which unwraps the
+    /// stored vault key) and the daemon (which holds the derived key in memory),
+    /// neither of which re-derives from a passphrase.
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        VaultKey(bytes)
+    }
+
     pub fn bytes(&self) -> &[u8; 32] {
         &self.0
     }
@@ -120,6 +127,20 @@ mod tests {
             result.is_err(),
             "tampered ciphertext should fail authentication"
         );
+    }
+
+    #[test]
+    fn from_bytes_roundtrips_as_a_key() {
+        let mut salt = [0u8; SALT_SIZE];
+        rand::thread_rng().fill_bytes(&mut salt);
+        let derived = VaultKey::derive("passphrase-from-bytes-1!", &salt).unwrap();
+
+        // Reconstructing a key from the same raw bytes decrypts the same data.
+        let reconstructed = VaultKey::from_bytes(*derived.bytes());
+        let ciphertext = encrypt(&derived, &salt, b"round trip").unwrap();
+        let decrypted = decrypt(&reconstructed, &ciphertext).unwrap();
+
+        assert_eq!(decrypted, b"round trip");
     }
 
     #[test]

@@ -63,8 +63,19 @@
 - [x] Append-only audit log at `.svault/<vault>/audit.log` (gitignored); fallback to `meta.yaml` `allow_agent`/`rate_limit` when no policy file
 - [x] 15 new unit tests (audit + policy) — suite now 33, all passing
 
-### [TODO] Step 3 — Daemon + multi-select auth unlock
-- [ ] **Multi-select auth at init** — `svault init` prompts user to choose/combine auth methods:
+### [IN PROGRESS] Step 3 — Daemon + recovery
+
+> Rescoped: the extra auth methods (YubiKey, TOTP, Touch ID/Face ID) are **deferred** to a later step. Step 3 now delivers recovery (shipped) and the daemon (next).
+
+#### [DONE] Recovery — code + export/import
+- [x] Recovery code generated at `svault create` (160-bit), vault key wrapped under it in `recovery.enc` (committable/portable, like `vault.enc`)
+- [x] `svault recover [VAULT]` — unlock with the code and reset a lost passphrase (re-keys `vault.enc`, re-signs `meta.yaml`, re-wraps `recovery.enc`; code stays stable)
+- [x] `svault export [VAULT] [--out FILE]` / `svault import <FILE>` — portable, checksummed (`sha256`) encrypted bundle; import refuses to overwrite an existing name
+- [x] `VaultKey::from_bytes` + `Vault::open_with_key` (Argon2-free open path, reused by recovery and the upcoming daemon)
+- [x] 10 new tests (key-from-bytes, open-with-key, re-key, recovery write/unlock + wrong code, export checksum) — suite now 44
+
+#### [DONE/DEFERRED] original Step 3 checklist
+- [ ] **Multi-select auth at init** — *(deferred)* `svault init` prompts user to choose/combine auth methods:
   - [ ] Passphrase (always available, works everywhere)
   - [ ] YubiKey (HMAC-SHA1 challenge-response, hardware-backed)
   - [ ] Google Authenticator (Time-based OTP, TOTP, phone-based)
