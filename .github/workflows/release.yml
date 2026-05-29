@@ -3,6 +3,11 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach binaries for (e.g. v0.2.1)"
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,29 +29,47 @@ jobs:
             target: aarch64-apple-darwin
           - os: macos-latest
             target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - name: Build release binary
         run: cargo build --release --locked --target ${{ matrix.target }}
-      - name: Package tarball
+      - name: Package tarball (unix)
+        if: runner.os != 'Windows'
+        shell: bash
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
           TARGET: ${{ matrix.target }}
         run: |
           archive="svault-${TAG}-${TARGET}.tar.gz"
           tar -czf "$archive" -C "target/${TARGET}/release" svault
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - name: Package zip (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $archive = "svault-$env:TAG-$env:TARGET.zip"
+          Compress-Archive -Path "target/$env:TARGET/release/svault.exe" -DestinationPath $archive
+          "ARCHIVE=$archive" >> $env:GITHUB_ENV
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: ${{ env.ARCHIVE }}
 
   publish:
     name: publish to crates.io
     needs: binaries
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
