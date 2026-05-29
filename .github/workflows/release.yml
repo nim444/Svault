@@ -103,4 +103,14 @@ jobs:
             echo "CARGO_REGISTRY_TOKEN not set — skipping crates.io publish."
             exit 0
           fi
+          # Idempotent: if this version is already on crates.io (e.g. published
+          # manually), skip instead of failing the release run.
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H 'User-Agent: svault-release (https://github.com/Soluzy/Svault)' \
+            "https://crates.io/api/v1/crates/svault-ai/$version")
+          if [ "$status" = "200" ]; then
+            echo "svault-ai $version is already on crates.io — skipping publish."
+            exit 0
+          fi
           cargo publish --locked
