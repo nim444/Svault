@@ -238,7 +238,10 @@ mod imp {
                 let dir = vault_dir(base, &vault);
                 match Vault::open_with_key(&dir, VaultKey::from_bytes(key_bytes)) {
                     Ok(v) => match v.get_secret(&secret) {
-                        Ok(Some(value)) => Response::Secret { value },
+                        // Zeroizing<String> → the transport copy; the original wipes on drop.
+                        Ok(Some(value)) => Response::Secret {
+                            value: value.to_string(),
+                        },
                         Ok(None) => Response::NotFound,
                         Err(e) => Response::Error {
                             message: e.to_string(),

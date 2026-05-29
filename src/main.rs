@@ -682,7 +682,7 @@ fn cmd_secret(action: &str, name: Option<&str>, vault_name: Option<&str>) -> Res
             match vault.get_secret(secret_name)? {
                 Some(value) => {
                     usage::human(&vault_dir, "secret.get", Some(secret_name));
-                    println!("{value}");
+                    println!("{}", *value);
                 }
                 None => {
                     eprintln!(
@@ -877,7 +877,7 @@ fn cmd_get(
                         style("granted:").green().bold(),
                         name
                     );
-                    println!("{value}");
+                    println!("{}", *value);
                     Ok(())
                 }
                 None => {

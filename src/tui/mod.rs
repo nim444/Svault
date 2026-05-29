@@ -289,7 +289,8 @@ pub struct UnlockForm {
 
 pub struct Reveal {
     pub name: String,
-    pub value: String,
+    /// Wrapped so a revealed secret is wiped from memory when the modal closes (#6).
+    pub value: zeroize::Zeroizing<String>,
     pub masked: bool,
 }
 

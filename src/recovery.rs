@@ -168,7 +168,10 @@ mod tests {
         // Old passphrase no longer works; new one does and the secret survived.
         assert!(Vault::open(&vault_dir, "Old!Pass#11").is_err());
         let v = Vault::open(&vault_dir, "New!Pass#22").unwrap();
-        assert_eq!(v.get_secret("K").unwrap(), Some("val".to_string()));
+        assert_eq!(
+            v.get_secret("K").unwrap().map(|z| z.to_string()),
+            Some("val".to_string())
+        );
 
         // The same recovery code still unlocks after the re-key.
         let recovered = unlock_with_code(&vault_dir, &code).unwrap();
