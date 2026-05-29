@@ -530,7 +530,8 @@ impl App {
         Ok(())
     }
 
-    /// Export the selected vault to `<name>.svault-export.json` in the CWD.
+    /// Export the selected vault to a timestamped bundle in the CWD, so repeated
+    /// exports never clobber an earlier one: `<name>-<YYYYMMDD-HHMMSS>.svault-export.json`.
     fn export_selected(&mut self) {
         let Some(v) = self.selected_vault() else {
             return;
@@ -544,7 +545,8 @@ impl App {
         };
         match crate::portable::build_bundle(&v.dir, &meta.name, &meta.storage) {
             Ok(json) => {
-                let out = format!("{}.svault-export.json", meta.name);
+                let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+                let out = format!("{}-{}.svault-export.json", meta.name, ts);
                 match std::fs::write(&out, json) {
                     Ok(_) => {
                         self.set_status(MsgKind::Ok, format!("Exported '{}' to {out}", v.name))

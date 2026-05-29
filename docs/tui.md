@@ -20,7 +20,7 @@ The landing screen lists every vault with its `storage:name` prefix and live loc
 | `u` | Unlock the selected vault |
 | `l` | Lock the selected vault (wipes the cached session) |
 | `s` | Edit the selected vault's settings |
-| `e` | Export the selected vault to `<name>.svault-export.json` |
+| `e` | Export the selected vault to a timestamped `<name>-<YYYYMMDD-HHMMSS>.svault-export.json` (repeated exports never overwrite) |
 | `i` | Import a vault from a bundle file (prompts for the path) |
 | `r` | Recover the selected vault — enter the code, set a new passphrase |
 | `q` | Quit |
