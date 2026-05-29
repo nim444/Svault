@@ -1,7 +1,9 @@
+mod audit;
 mod config;
 mod crypto;
 mod meta;
 mod passphrase;
+mod policy;
 mod session;
 mod tui;
 mod vault;
@@ -68,15 +70,25 @@ enum Commands {
         #[arg(long)]
         project: bool,
     },
-    /// Request a secret through the policy engine (Step 2)
+    /// Request a secret through the policy engine — the agent path.
     Get {
         name: String,
         #[arg(long)]
         scope: String,
         #[arg(long)]
         reason: String,
+        /// Identify the caller. Falls back to $SVAULT_CALLER, then "default".
+        #[arg(long)]
+        caller: Option<String>,
         #[arg(long, short = 'v')]
         vault: Option<String>,
+    },
+    /// Inspect the policy engine: `policy check <caller>` or `policy init`.
+    Policy {
+        /// Action: check | init
+        action: String,
+        /// Caller name (for `check`).
+        caller: Option<String>,
     },
 }
 
@@ -110,17 +122,10 @@ fn main() -> Result<()> {
             name,
             scope,
             reason,
-            ..
-        } => {
-            println!("{} Requesting: {}", style(">").cyan(), style(&name).bold());
-            println!("  scope:  {scope}");
-            println!("  reason: {reason}");
-            println!(
-                "{} Policy engine coming in Step 2",
-                style("pending:").yellow()
-            );
-            Ok(())
-        }
+            caller,
+            vault,
+        } => cmd_get(&name, &scope, &reason, caller.as_deref(), vault.as_deref()),
+        Commands::Policy { action, caller } => cmd_policy(&action, caller.as_deref()),
     }
 }
 
@@ -593,6 +598,258 @@ fn cmd_vaults() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The agent path: a structured, policy-gated secret request.
+/// On allow, the secret value is printed to stdout (so agents can capture it)
+/// and all status goes to stderr. Every request is recorded to the audit log.
+fn cmd_get(
+    name: &str,
+    scope: &str,
+    reason: &str,
+    caller_arg: Option<&str>,
+    vault_name: Option<&str>,
+) -> Result<()> {
+    let vault_dir = resolve_vault_dir(vault_name)?;
+    let meta = VaultMeta::load_unverified(&vault_dir)?;
+
+    let caller = caller_arg
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("SVAULT_CALLER").ok())
+        .unwrap_or_else(|| "default".to_string());
+
+    let loaded = policy::load();
+    let req = policy::Request {
+        vault: &meta.name,
+        vault_dir: &vault_dir,
+        secret: name,
+        scope,
+        reason,
+        caller: &caller,
+    };
+    let decision = policy::evaluate(loaded.as_ref(), &meta, &req);
+
+    // Audit the decision either way — never log the secret value.
+    let (decision_str, rule) = match &decision {
+        policy::Decision::Allow(_) => ("allow", "ok".to_string()),
+        policy::Decision::Deny(_, why) => ("deny", why.clone()),
+    };
+    audit::record(
+        &vault_dir,
+        &audit::Entry::now(
+            &caller,
+            name,
+            scope,
+            &decision.tier().to_string(),
+            decision_str,
+            &rule,
+            reason,
+        ),
+    )?;
+
+    match decision {
+        policy::Decision::Deny(_, why) => {
+            eprintln!("{} {}", style("denied:").red().bold(), why);
+            eprintln!(
+                "{}",
+                style(format!("  caller={caller} secret={name} scope={scope}")).dim()
+            );
+            std::process::exit(1);
+        }
+        policy::Decision::Allow(tier) => {
+            let passphrase = obtain_passphrase(&vault_dir, &meta.name)?;
+            let vault = Vault::open(&vault_dir, &passphrase).map_err(|e| {
+                eprintln!("{} {}", style("error:").red(), e);
+                std::process::exit(1);
+                #[allow(unreachable_code)]
+                e
+            })?;
+            match vault.get_secret(name)? {
+                Some(value) => {
+                    eprintln!(
+                        "{} {} (caller={caller}, scope={scope}, tier={tier})",
+                        style("granted:").green().bold(),
+                        name
+                    );
+                    println!("{value}");
+                    Ok(())
+                }
+                None => {
+                    eprintln!("{} Secret '{}' not found", style("error:").red(), name);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+}
+
+/// `svault policy check <caller>` and `svault policy init`.
+fn cmd_policy(action: &str, caller: Option<&str>) -> Result<()> {
+    match action {
+        "check" => {
+            let Some(caller) = caller else {
+                eprintln!(
+                    "{} Usage: svault policy check <caller>",
+                    style("error:").red()
+                );
+                std::process::exit(1);
+            };
+            let Some(policy) = policy::load() else {
+                println!(
+                    "{}",
+                    style("No svault.policy.yaml found — running in fallback mode (meta.yaml allow_agent / rate_limit).").dim()
+                );
+                println!("{}", style("Run 'svault policy init' to create one.").dim());
+                return Ok(());
+            };
+            cmd_policy_check(&policy, caller)
+        }
+        "init" => cmd_policy_init(),
+        _ => {
+            eprintln!(
+                "{} Unknown action '{}'. Use: check | init",
+                style("error:").red(),
+                action
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_policy_check(policy: &policy::Policy, caller: &str) -> Result<()> {
+    let Some(rule) = policy.caller(caller) else {
+        eprintln!(
+            "{} Caller '{}' is not defined and there is no 'default' caller",
+            style("error:").red(),
+            caller
+        );
+        std::process::exit(1);
+    };
+
+    println!(
+        "{}",
+        style(format!("┌─ Policy · {caller} ──────────────────────────┐")).dim()
+    );
+    println!(
+        "  {:<14} {}",
+        style("Scopes").dim(),
+        if rule.scopes.is_empty() {
+            "(none)".to_string()
+        } else {
+            rule.scopes.join(", ")
+        }
+    );
+    println!("  {:<14} {}", style("Rate limit").dim(), rule.rate_limit);
+    println!();
+
+    let accessible = policy.accessible(caller);
+    if accessible.is_empty() {
+        println!(
+            "{}",
+            style("This caller cannot retrieve any classified secret.").dim()
+        );
+    } else {
+        println!(
+            "{:<18} {:<22} {:<12} {}",
+            style("VAULT").bold(),
+            style("SECRET").bold(),
+            style("SCOPE").bold(),
+            style("TIER").bold()
+        );
+        println!("{}", style("─".repeat(60)).dim());
+        for (vault, secret, scope, tier) in &accessible {
+            println!(
+                "{:<18} {:<22} {:<12} {}",
+                style(vault).cyan(),
+                secret,
+                scope,
+                tier
+            );
+        }
+    }
+
+    // Audit summary across all vaults.
+    let mut total = 0usize;
+    let mut denied = 0usize;
+    for dir in list_vault_dirs() {
+        for e in audit::all(&dir).unwrap_or_default() {
+            if e.caller == caller {
+                total += 1;
+                if e.decision == "deny" {
+                    denied += 1;
+                }
+            }
+        }
+    }
+    println!();
+    println!(
+        "{} {} request(s) logged, {} denied",
+        style("audit:").dim(),
+        total,
+        denied
+    );
+    Ok(())
+}
+
+/// Scaffold a `svault.policy.yaml` from the vaults that exist today.
+fn cmd_policy_init() -> Result<()> {
+    let path = Path::new(policy::POLICY_FILE);
+    if path.exists() {
+        eprintln!(
+            "{} {} already exists",
+            style("error:").red(),
+            policy::POLICY_FILE
+        );
+        std::process::exit(1);
+    }
+
+    let mut out = String::from(
+        "version: 1\n\n# Callers that may request secrets via 'svault get'.\n\
+         callers:\n  claude-code:\n    scopes: [misc]\n    rate_limit: 20/hour\n\
+         \x20\x20default:\n    scopes: []\n    rate_limit: 5/hour\n\n\
+         # Per-vault secret classification. tier: low | medium | high.\nvaults:\n",
+    );
+
+    let dirs = list_vault_dirs();
+    if dirs.is_empty() {
+        out.push_str("  # No vaults yet — add entries after 'svault create'.\n");
+    }
+    for dir in &dirs {
+        let Ok(meta) = VaultMeta::load_unverified(dir) else {
+            continue;
+        };
+        out.push_str(&format!("  {}:\n    secrets:\n", meta.name));
+        for n in unlocked_secret_names(dir) {
+            out.push_str(&format!("      {n}: {{ scope: misc, tier: low }}\n"));
+        }
+        out.push_str("      \"*\": { scope: misc, tier: low }\n");
+    }
+
+    std::fs::write(path, out)?;
+    println!(
+        "{} Wrote {}",
+        style("ok:").green().bold(),
+        policy::POLICY_FILE
+    );
+    println!(
+        "{}",
+        style("  Edit scopes and tiers, then commit it — it holds no secrets.").dim()
+    );
+    Ok(())
+}
+
+/// Best-effort secret-name listing for `policy init`: only when the vault is
+/// already unlocked (cached session), otherwise empty so we just emit "*".
+fn unlocked_secret_names(vault_dir: &Path) -> Vec<String> {
+    if !session::is_unlocked(vault_dir) {
+        return vec![];
+    }
+    let Some(pass) = session::get_passphrase(vault_dir) else {
+        return vec![];
+    };
+    Vault::open(vault_dir, &pass)
+        .and_then(|v| v.list_secret_names())
+        .unwrap_or_default()
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

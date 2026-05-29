@@ -125,7 +125,50 @@ AI Agent / User
 - **Google Authenticator** — Time-based OTP (TOTP) 
 - **Touch ID / Face ID** — macOS biometric unlock
 
-The `reason` field becomes required in Step 2. An AI that cannot explain why it needs a secret is refused immediately.
+The `reason` field is required by the policy engine (below). An AI that cannot explain why it needs a secret is refused immediately.
+
+---
+
+## Policy engine (Step 2)
+
+`svault secret get` is the **human path** — passphrase, no questions asked. `svault get` is the **agent path**: a structured request that an AI must justify, run through a pipeline before any secret is handed over.
+
+```
+svault get DB_URL --scope database --reason "run nightly migration" --caller claude-code
+        │
+        ├─ identify caller   (--caller, else $SVAULT_CALLER, else "default")
+        ├─ reason required    (rejects empty / too-short / placeholder reasons)
+        ├─ capability check   (caller holds the scope AND it matches the secret)
+        ├─ sensitivity tier   (low=allow, medium=allow+log, high=deny)
+        ├─ rate limit + burst (per-caller, from the audit log)
+        └─ audit log          (every allow/deny appended, never the value)
+```
+
+On **allow**, the secret value is printed to stdout (status goes to stderr, so agents capture only the value). On **deny**, it exits non-zero and logs why. `high`-tier secrets are never handed to an agent — a human retrieves those with `secret get`.
+
+Policy lives in a committable **`svault.policy.yaml`** at the project root (it holds no secrets):
+
+```yaml
+version: 1
+callers:
+  claude-code:
+    scopes: [database, api]
+    rate_limit: 20/hour
+  default:                 # applies to any unlisted caller
+    scopes: []
+    rate_limit: 5/hour
+vaults:
+  my-project:
+    secrets:
+      DB_URL:      { scope: database, tier: low }
+      DB_PASSWORD: { scope: database, tier: high }
+      API_KEY:     { scope: api,      tier: medium }
+      "*":         { scope: misc,     tier: medium }   # default for unlisted secrets
+```
+
+Run `svault policy init` to scaffold one, and `svault policy check <caller>` to see what a caller can access plus its recent activity. Each request is recorded to `.svault/<vault>/audit.log` (gitignored).
+
+**No policy file?** `svault get` falls back to the vault's `meta.yaml` `allow_agent` / `rate_limit` settings (a reason is still required), so the policy file is optional but recommended.
 
 ---
 
@@ -136,8 +179,9 @@ The `reason` field becomes required in Step 2. An AI that cannot explain why it 
   my-project/
     vault.enc     ← AES-256-GCM encrypted secrets  (safe to commit)
     meta.yaml     ← name, description, access rules (safe to commit, HMAC-signed)
-    .gitignore    ← auto-written at create, blocks .session from being committed
+    .gitignore    ← auto-written at create, blocks .session + audit.log from being committed
     .session      ← passphrase cache while unlocked (gitignored, mode 0600)
+    audit.log     ← policy decisions for 'svault get' (gitignored, mode 0600)
 ```
 
 **vault.enc** and **meta.yaml** are safe to commit. They are useless without the passphrase.  
@@ -163,7 +207,11 @@ svault secret remove <NAME> [-v VAULT]   # delete a secret
 
 svault vaults                      # list all vaults with metadata
 
-svault get <NAME> --scope <S> --reason "<R>" [-v VAULT]   # structured request (Step 2)
+# Policy engine — the agent path (Step 2)
+svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # policy-gated request
+svault policy check <caller>       # what a caller can access + recent activity
+svault policy init                 # scaffold svault.policy.yaml from existing vaults
+
 svault install [--platform claude|cursor|...]             # wire into AI platform (Step 4)
 
 # VAULT is positional for create/settings/unlock/lock; secret & get use -v/--vault.
@@ -193,7 +241,7 @@ svault install [--platform claude|cursor|...]             # wire into AI platfor
 |---|---|---|
 | **Step 1** | DONE | Local encrypted vault with AES-256-GCM + Argon2id |
 | **Step 1+** | DONE | Interactive Ratatui TUI (run `svault` with no args) — forms, browsers, lock-aware secret management |
-| **Step 2** | TODO | Policy engine — `reason` field, capability checks, rate limiting |
+| **Step 2** | DONE | Policy engine — `svault get` with caller identity, `reason`, scope capability checks, sensitivity tiers, rate limiting + burst detection, audit log |
 | **Step 3** | TODO | Daemon + multi-select auth (Passphrase, YubiKey, TOTP, Touch ID/Face ID) |
 | **Step 4** | TODO | Desktop GUI (Tauri) for vault management + system tray |
 | **Step 5** | TODO | MCP integration — Claude Code, Cursor, Copilot, VS Code, Aider |
@@ -207,7 +255,7 @@ svault install [--platform claude|cursor|...]             # wire into AI platfor
 cargo test
 ```
 
-18 tests covering: roundtrip encryption, wrong key rejection, bit-flip authentication failure, different salts produce different keys, vault create/open, wrong passphrase, add/get/list/remove, persistence across reopen, tampered vault.enc rejected, tampered meta.yaml rejected, session unlock/lock/lock-all, and passphrase strength checks.
+33 tests covering: roundtrip encryption, wrong key rejection, bit-flip authentication failure, different salts produce different keys, vault create/open, wrong passphrase, add/get/list/remove, persistence across reopen, tampered vault.enc rejected, tampered meta.yaml rejected, session unlock/lock/lock-all, passphrase strength checks, audit log record/read, rate-limit parsing, and the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode).
 
 CI runs the suite on Ubuntu, Fedora, macOS, and Windows on every push and pull request.
 
