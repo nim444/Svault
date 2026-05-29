@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.0] - Unreleased
+## [0.8.0] - Unreleased
+
+The next cycle. Two threads:
+
+1. **Acts on the independent 0.7.0 security review** — reviews land in `docs/security-review/reviews/0.7.0-*.md`, consolidated with maintainer dispositions in `docs/security-review/findings/0.7.0.md`.
+2. **Policy engine as an enforced control** (#2/#5) — evaluate policy + write the audit record inside the daemon so the socket is the choke point, and sign / pin `svault.policy.yaml`. This is the last substantive gap before a 1.0.0 "stable CLI" label.
+
+_(Empty until the review reports arrive and the work begins.)_
+
+## [0.7.0] - 2026-05-29
 
 Continued security hardening on the road to a stable 1.0.0 CLI (GUI is planned
 for 2.0.0, Claude/AI-platform access for 3.0.0). Acts on the 0.6.0 review
