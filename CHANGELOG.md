@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-29
+
 ### Added
 - **Storage backends** — pick where a vault lives at create time: `local` (default, the only one wired today) plus `cloud`, `self-hosted`, and `s3` placeholders for upcoming remote sync. Selectable in both `svault create` and the TUI create form.
 - `storage:name` prefix shown everywhere a vault is listed (`svault vaults`, `svault status`, the TUI) so vault identity is unambiguous per backend.
