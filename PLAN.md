@@ -118,7 +118,7 @@
 - [x] **#13 — daemon survives a poisoned mutex** — key-store lock taken with poison recovery so a panicking handler can't down the daemon.
 - [x] **#20 — truncated `vault.enc` errors instead of panicking** — checked length guard on the salt slice.
 - [x] **Connect resilience** — `daemon::send` retries the socket connect with short backoff (absorbs OS listener-backlog drops under burst).
-- [x] Suite now 78 (+1 ignored stress benchmark); clippy clean.
+- [x] Suite now 82 (+1 ignored stress benchmark); clippy clean.
 
 ### [TODO] Step 4 — GUI client (Tauri)
 - [ ] `svault-gui` — cross-platform desktop app (macOS, Linux, Windows)

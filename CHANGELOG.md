@@ -30,7 +30,7 @@ simulation. Carry-forward status for every 0.5.0 finding is recorded in
 - **Daemon connect resilience** — `daemon::send` retries the socket connect a few times with short backoff, so a momentary OS listener-backlog drop under connect-churn surfaces as a served request rather than a hard error.
 
 ### Internal
-- New `DaemonConfig` in `config.rs`; the connection ceiling is threaded through `serve`. Stress-classification and poison-recovery covered by new tests. Suite now 78 (+ 1 ignored benchmark).
+- New `DaemonConfig` in `config.rs`; the connection ceiling is threaded through `serve`. Stress-classification and poison-recovery covered by new tests. Suite now 82 (+ 1 ignored benchmark).
 
 ## [0.5.0] - 2026-05-29
 
