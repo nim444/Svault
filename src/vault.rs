@@ -28,9 +28,12 @@ impl Vault {
         }
         std::fs::create_dir_all(vault_dir)?;
 
-        // Write a local .gitignore so the session file and audit log can never be
+        // Write a local .gitignore so the session file and the logs can never be
         // accidentally committed even if the repo-level .gitignore is missing or wrong.
-        std::fs::write(vault_dir.join(".gitignore"), ".session\naudit.log\n")?;
+        std::fs::write(
+            vault_dir.join(".gitignore"),
+            ".session\naudit.log\nusage.log\n",
+        )?;
 
         let mut salt = [0u8; SALT_SIZE];
         rand::thread_rng().fill_bytes(&mut salt);

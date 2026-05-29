@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-29
+
+### Added
+- **Usage log + activity view** — every vault now keeps a per-vault `usage.log` (JSON lines, owner-only, gitignored) recording human and agent activity (unlock, lock, secret add/get/reveal/remove, create, export, import, recover, settings, and agent `get.allow`/`get.deny`). It never stores secret values. Press `v` on a vault in the TUI for a read-only timeline (WHEN / ACTOR / ACTION / TARGET, agents highlighted). This is groundwork for later usage analysis.
+- **CREATED column** in the TUI vault table, from each vault's `created_at`.
+- **TUI help overlay** — press `?` on the vault list or in the secret browser for an on-screen keybinding cheat sheet.
+- **Quit confirmation** — `q` / `Esc` on the vault list (or `q` in the secret browser) now asks before exiting: `enter` quits, any other key stays.
+- **Paste support** — bracketed paste works in every TUI text field (passphrases, recovery codes, bundle paths); newlines are stripped so a multi-line paste can't break the layout.
+- **Block cursor** — the focused text field shows a solid cursor block (even when empty) so it's obvious where typed/pasted text lands.
+
+### Changed
+- **Vault list is now a real table** with STORAGE / VAULT / STATUS / DESCRIPTION columns and a clean selection highlight, replacing the single packed line whose per-cell reverse-video highlight looked garbled.
+- **TUI status line** — transient `ok` / `warning` / `error` / `note` messages moved out of the title bar into a dedicated line below the body.
+- **Readable empty states** — the "No vaults yet" / "No secrets yet" placeholders are now a high-contrast heading plus a readable hint instead of hard-to-read dark gray.
+- **Clearer field label** — the create/recover forms label the second passphrase field "Confirm passphrase" (was just "Confirm").
+- **Honest pickers** — the create and settings forms no longer offer non-functional Storage (cloud / self-hosted / S3) and Login (yubikey / google) choices that were silently coerced to `local` / `passphrase`. Storage and login are shown as a static note instead; the roadmap items live in the docs.
+- **Recovery code is shown as typed** (not masked) on the TUI recover form, so a mistype while copying it from paper or a password manager is visible.
+- Centralized TUI colors into a single theme module for a consistent look.
+
+### Fixed
+- Pressing `space` while editing the **Rate limit** field in the TUI create form no longer secretly toggles auto-lock (an off-by-one in the focus handling). Form focus now uses named field enums so the draw order and key logic can't drift apart.
+- **TUI export** now reports the full absolute path of the written bundle instead of a bare filename, so the file is easy to find.
+
+### Internal
+- Added unit tests for TUI key dispatch and field logic (no terminal required), covering the bug fix and navigation/paste/help behavior.
+
 ## [0.3.0] - 2026-05-29
 
 ### Added

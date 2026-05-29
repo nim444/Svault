@@ -1,6 +1,6 @@
 [package]
 name = "svault-ai"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Soluzy <nima@soluzy.ro>"]
 description = "AI-aware secret access layer — enforces structured requests and detects suspicious patterns"

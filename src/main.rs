@@ -8,6 +8,7 @@ mod portable;
 mod recovery;
 mod session;
 mod tui;
+mod usage;
 mod vault;
 
 use anyhow::Result;
@@ -261,6 +262,7 @@ fn cmd_create(name_arg: Option<String>) -> Result<()> {
     // Generate a recovery code and wrap the vault key under it. Shown once.
     let recovery_code = recovery::generate_code();
     recovery::write(&vault_dir, vault.key(), &recovery_code)?;
+    usage::human(&vault_dir, "vault.create", None);
 
     println!();
     println!(
@@ -407,6 +409,7 @@ fn cmd_settings(vault_name: Option<&str>) -> Result<()> {
     meta.settings.login_method = prompt_login_method(Some(meta.settings.login_method))?;
 
     vault.save_meta(&meta)?;
+    usage::human(&vault_dir, "settings.update", None);
 
     println!();
     println!(
@@ -443,6 +446,7 @@ fn cmd_unlock(vault_name: Option<&str>) -> Result<()> {
     })?;
 
     session::unlock(&vault_dir, &passphrase)?;
+    usage::human(&vault_dir, "unlock", None);
 
     println!(
         "{} Vault '{}' unlocked",
@@ -471,6 +475,7 @@ fn cmd_lock(lock_all: bool, vault_name: Option<&str>) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta = VaultMeta::load_unverified(&vault_dir)?;
     session::lock(&vault_dir)?;
+    usage::human(&vault_dir, "lock", None);
     println!(
         "{} Vault '{}' locked",
         style("ok:").yellow().bold(),
@@ -559,6 +564,7 @@ fn cmd_secret(action: &str, name: Option<&str>, vault_name: Option<&str>) -> Res
                 .with_prompt(format!("  Value for '{secret_name}'"))
                 .interact()?;
             vault.add_secret(&secret_name, &value)?;
+            usage::human(&vault_dir, "secret.add", Some(&secret_name));
             println!(
                 "{} Secret '{}' added",
                 style("ok:").green().bold(),
@@ -574,7 +580,10 @@ fn cmd_secret(action: &str, name: Option<&str>, vault_name: Option<&str>) -> Res
                 std::process::exit(1);
             };
             match vault.get_secret(secret_name)? {
-                Some(value) => println!("{value}"),
+                Some(value) => {
+                    usage::human(&vault_dir, "secret.get", Some(secret_name));
+                    println!("{value}");
+                }
                 None => {
                     eprintln!(
                         "{} Secret '{}' not found",
@@ -612,6 +621,7 @@ fn cmd_secret(action: &str, name: Option<&str>, vault_name: Option<&str>) -> Res
                 .interact()?
             {
                 if vault.remove_secret(&secret_name)? {
+                    usage::human(&vault_dir, "secret.remove", Some(&secret_name));
                     println!("{} Secret '{}' removed", style("ok:").yellow(), secret_name);
                 } else {
                     eprintln!(
@@ -720,6 +730,13 @@ fn cmd_get(
             reason,
         ),
     )?;
+    // Also record it on the unified usage timeline as an agent action.
+    usage::agent(
+        &vault_dir,
+        &caller,
+        &format!("get.{decision_str}"),
+        Some(name),
+    );
 
     match decision {
         policy::Decision::Deny(_, why) => {
@@ -968,6 +985,7 @@ fn cmd_recover(vault_name: Option<&str>) -> Result<()> {
     }
 
     recovery::recover_and_rekey(&vault_dir, &code, &new_pass)?;
+    usage::human(&vault_dir, "recover", None);
     // Drop any stale cached session (it holds the old passphrase).
     session::lock(&vault_dir).ok();
 
@@ -996,6 +1014,7 @@ fn cmd_export(vault_name: Option<&str>, out: Option<&str>) -> Result<()> {
     // Keep the bundle out of git so it can't be pushed by mistake.
     let out_dir = out_path.parent().filter(|p| !p.as_os_str().is_empty());
     portable::ensure_export_gitignored(out_dir.unwrap_or_else(|| Path::new(".")));
+    usage::human(&vault_dir, "export", None);
 
     println!(
         "{} Exported '{}' to {}",
@@ -1020,6 +1039,7 @@ fn cmd_import(file: &str) -> Result<()> {
         eprintln!("{} {}", style("error:").red(), e);
         std::process::exit(1);
     });
+    usage::human(&Path::new(SVAULT_DIR).join(&name), "import", None);
 
     println!(
         "{} Imported '{}' into {}/{}/",

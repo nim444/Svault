@@ -110,7 +110,10 @@ pub fn import_bundle(raw: &str, svault_base: &Path) -> Result<String> {
     }
 
     std::fs::create_dir_all(&target)?;
-    std::fs::write(target.join(".gitignore"), ".session\naudit.log\n")?;
+    std::fs::write(
+        target.join(".gitignore"),
+        ".session\naudit.log\nusage.log\n",
+    )?;
     for (name, hex_content) in &bundle.files {
         let bytes = hex::decode(hex_content)
             .map_err(|_| anyhow!("bundle file '{name}' is not valid hex"))?;

@@ -24,13 +24,15 @@ The `reason` field is required by the [policy engine](policy-engine.md). An AI t
                     access rules                          (safe to commit, HMAC-signed)
     recovery.enc  ← vault key wrapped under the recovery
                     code                                  (safe to commit)
-    .gitignore    ← auto-written at create; blocks .session + audit.log
+    .gitignore    ← auto-written at create; blocks .session + logs
     .session      ← passphrase cache while unlocked       (gitignored, mode 0600)
     audit.log     ← policy decisions for 'svault get'     (gitignored, mode 0600)
+    usage.log     ← activity timeline, human + agent       (gitignored, mode 0600)
 ```
 
 - **`vault.enc`**, **`meta.yaml`**, and **`recovery.enc`** are safe to commit — useless without the passphrase or recovery code. See [Recovery](recovery.md).
-- **`.session`** is always gitignored and created with mode `0600` (owner read/write only).
+- **`.session`**, **`audit.log`**, and **`usage.log`** are always gitignored and created with mode `0600` (owner read/write only). The per-vault `.gitignore` is self-healing — recording the first usage event adds any missing log lines, so vaults created before usage logging are covered too.
+- **`usage.log`** is the activity stream behind the TUI `v` view: who did what, when (human vs agent), never any secret value. See [Interactive mode](tui.md#activity-timeline).
 
 ## Authentication options
 

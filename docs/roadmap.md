@@ -5,7 +5,7 @@ For the detailed build plan (stack, per-step checklists, design notes), see [PLA
 | Phase | Status | What |
 |---|---|---|
 | **Step 1** | Done | Local encrypted vault — AES-256-GCM + Argon2id |
-| **Step 1+** | Done | Interactive Ratatui TUI (run `svault` with no args) — forms, browsers, lock-aware secret management |
+| **Step 1+** | Done | Interactive Ratatui TUI (run `svault` with no args) — vault table, forms, secret browser, help overlay, and an activity timeline (`v`) over the per-vault usage log |
 | **Step 2** | Done | Policy engine — `svault get` with caller identity, `reason`, scope capability checks, sensitivity tiers, rate limiting + burst detection, audit log |
 | **Step 3** | In progress | Recovery (code + export/import) **done**; daemon next. Extra auth methods (YubiKey, TOTP, Touch ID/Face ID) deferred |
 | **Step 4** | Planned | Desktop GUI (Tauri) for vault management + system tray |
@@ -39,6 +39,7 @@ For the detailed build plan (stack, per-step checklists, design notes), see [PLA
 
 ## Cloud tier (optional)
 
+- The per-vault **usage log** (human + agent activity, no secret values) is the local data foundation this builds on.
 - `svault.soluzy.net/api/score` — Claude Haiku scores justification for anomaly detection.
 - Personal plan — scored requests/month; Team plan — shared audit dashboard + Slack alerts.
 

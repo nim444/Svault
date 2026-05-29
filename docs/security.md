@@ -13,12 +13,12 @@
 
 ## What's safe to commit
 
-`vault.enc`, `meta.yaml`, and `recovery.enc` are safe to commit to git — they are useless without the passphrase or recovery code. (`recovery.enc` holds the vault key wrapped under the recovery code; see [Recovery](recovery.md).) The `.session`, `audit.log`, and any local lock state are always gitignored (a per-vault `.gitignore` is written at create time) and created with mode `0600` (owner read/write only).
+`vault.enc`, `meta.yaml`, and `recovery.enc` are safe to commit to git — they are useless without the passphrase or recovery code. (`recovery.enc` holds the vault key wrapped under the recovery code; see [Recovery](recovery.md).) The `.session`, `audit.log`, `usage.log`, and any local lock state are always gitignored (a per-vault `.gitignore` is written at create time and self-heals to add the log lines on first use) and created with mode `0600` (owner read/write only).
 
 ## Threat model notes
 
 - Svault protects secrets **at rest** and gates **agent access**. It does not defend against a compromised machine that already has your unlocked session.
 - HMAC signing detects tampering with `meta.yaml`, but anyone with the passphrase can decrypt the vault — treat the passphrase as the root of trust.
-- The audit log records *decisions and reasons*, never secret values.
+- The audit log records policy *decisions and reasons*, and the usage log records *actions* (by human or agent) — neither ever stores secret values.
 
 See [Architecture](architecture.md) for how these pieces fit together on disk.
