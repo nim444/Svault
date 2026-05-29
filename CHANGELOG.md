@@ -16,14 +16,17 @@ carry-forward (`docs/security-review/findings/0.6.0.md`).
 ### Added
 - **Supply-chain CI gate** (#9) — a `cargo audit` job in `lint.yml` fails CI on any RustSec advisory (vulnerability, unsound, or unmaintained) across the dependency tree.
 - **Passphrase entropy floor** (#12) — `create` and `recover` now require a passphrase to clear a ~50-bit entropy estimate (`passphrase::entropy_bits`), re-prompting until it does; a `--force` flag overrides for non-interactive use. The TUI create/recover forms enforce the same floor.
-- **Release-artifact checksums** (#11) — each release archive ships a matching `<archive>.sha256` attached to the GitHub Release for download verification.
+- **Release-artifact integrity + provenance** (#11) — each release archive ships a matching `<archive>.sha256`, plus a signed SLSA build-provenance attestation (`actions/attest-build-provenance`, verifiable with `gh attestation verify`).
+- **Daemon peer-UID bond** (#1) — the daemon checks `getpeereid` on each connection and refuses any peer whose UID isn't our own, on top of the `0600` socket.
 
 ### Changed
 - **`ratatui` 0.29 → 0.30** (#10, crossterm 0.28 → 0.29) — pulls a fixed `lru` and drops the unmaintained `paste` crate, so `cargo audit` is now clean. No source changes were needed.
 - **Daemon key handling — passphrase never crosses the socket** (#3) — `Unlock` now carries the hex-encoded 32-byte derived key. The client derives + validates the key locally (a wrong passphrase fails before any socket traffic); the daemon re-validates it with `open_with_key` before caching.
+- **Owner-only at-rest files** (#14, #16) — `recovery.enc`, export bundles, and the `.session` key are written owner-only (mode `0600` on Unix, an `icacls` owner-only ACL on Windows — the latter also closes the Windows half of #4). `.svault/` and vault dirs are created `0700`, and the daemon socket is bound under a `0077` umask so it's born `0600` (no TOCTOU window).
 
 ### Security
-- **Zeroized passphrase / secret-value prompts** (#6) — the CLI passphrase, recovery-code, and secret-value prompts return `Zeroizing<String>`, so those heap copies are wiped on drop (the bulk decrypted secret store was already zeroized via `SecretStore`).
+- **Zeroized secrets in memory** (#6) — passphrase / recovery-code / secret-value prompts and `get_secret`'s return are `Zeroizing<String>`, and the TUI reveal modal holds the secret in `Zeroizing`, so these heap copies are wiped on drop (the bulk decrypted store was already zeroized via `SecretStore`).
+- **Graceful daemon shutdown** (#17) — `SIGTERM`/`SIGINT` now trigger an orderly shutdown that zeroizes keys and cleans up the socket/pid files (instead of an abrupt terminate); `daemon.log` rotates past ~5 MB.
 
 ## [0.6.0] - 2026-05-29
 

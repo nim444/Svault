@@ -19,8 +19,10 @@
 
 Two ways to stay unlocked, both owner-only:
 
-- **File session** (default, all platforms) — `svault unlock` caches the vault's **derived key** (32 bytes, hex) in `.svault/<vault>/.session` (mode `0600`) — never the passphrase. A stolen `.session` opens that one vault, but doesn't reveal the passphrase (which may protect other vaults or services). On `lock` the file is overwritten with zeros and deleted.
-- **Daemon** (Unix, opt-in) — when `svault daemon start` is running, `unlock` hands the derived key to the daemon, which keeps it **in memory only**; no `.session` file is written. Keys are zeroized on lock, on idle / hard-max auto-lock, and on shutdown. See [Daemon](daemon.md). The daemon never exposes write operations or the passphrase over its socket — only scoped reads.
+- **File session** (default, all platforms) — `svault unlock` caches the vault's **derived key** (32 bytes, hex) in `.svault/<vault>/.session` — never the passphrase. A stolen `.session` opens that one vault, but doesn't reveal the passphrase (which may protect other vaults or services). The file is owner-only (mode `0600` on Unix; an `icacls` owner-only ACL on Windows). On `lock` it's overwritten with zeros and deleted.
+- **Daemon** (Unix, opt-in) — when `svault daemon start` is running, the client derives the key locally and hands **only the key** (never the passphrase) to the daemon, which keeps it **in memory only**; no `.session` file is written. Keys are zeroized on lock, on idle / hard-max auto-lock, on `SIGTERM`/`SIGINT`, and on shutdown. The socket is `0600` (bound under a tight umask so there's no world-readable window) and the daemon refuses any connecting peer whose UID isn't your own (`getpeereid`). It exposes no write operations — only scoped reads. See [Daemon](daemon.md).
+
+`.svault/` and each vault directory are created `0700`, so other local users can't traverse in. `recovery.enc` and export bundles are written owner-only too (they wrap a key-equivalent).
 
 ## Threat model notes
 
