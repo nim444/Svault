@@ -51,6 +51,8 @@ svault import <FILE>
 
 `export` bundles `meta.yaml`, `vault.enc`, and (if present) `recovery.enc` into a single JSON file with a `sha256` integrity checksum. Every byte in the bundle is already encrypted or signed, so the file is safe at rest.
 
+A bundle is still a **full backup** (it carries the wrapped recovery key), so it shouldn't be committed to a repo. On export, Svault automatically adds `*.svault-export.json` to a `.gitignore` in the output directory (appending to an existing one, never overwriting) so you can't push a bundle by mistake.
+
 `import` verifies the checksum, then recreates `.svault/<name>/`. It **refuses** to overwrite an existing vault of the same name (names are unique). The restored vault opens with its original passphrase — or with `svault recover` if the bundle carried a `recovery.enc`.
 
 A corrupted bundle (any altered file) fails the checksum check and is rejected before anything is written.

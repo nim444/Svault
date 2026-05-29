@@ -993,6 +993,10 @@ fn cmd_export(vault_name: Option<&str>, out: Option<&str>) -> Result<()> {
         .unwrap_or_else(|| PathBuf::from(format!("{}.svault-export.json", meta.name)));
     std::fs::write(&out_path, json)?;
 
+    // Keep the bundle out of git so it can't be pushed by mistake.
+    let out_dir = out_path.parent().filter(|p| !p.as_os_str().is_empty());
+    portable::ensure_export_gitignored(out_dir.unwrap_or_else(|| Path::new(".")));
+
     println!(
         "{} Exported '{}' to {}",
         style("ok:").green().bold(),

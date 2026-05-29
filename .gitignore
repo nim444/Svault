@@ -7,5 +7,10 @@ target/
 # This includes vault.enc, meta.yaml, session files, etc.
 .svault/
 
+# Svault export bundles — full encrypted backups (incl. the wrapped recovery
+# key). Keep them out of git so they're never pushed by mistake.
+*.svault-export.json
+*.svault-export
+
 # OS
 .DS_Store

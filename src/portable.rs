@@ -60,6 +60,27 @@ pub fn build_bundle(vault_dir: &Path, name: &str, storage: &str) -> Result<Strin
     Ok(serde_json::to_string_pretty(&bundle)?)
 }
 
+/// Best-effort: make sure the directory holding an export has a `.gitignore`
+/// line for export bundles, so a user can't push one by mistake. Appends to an
+/// existing `.gitignore` (or creates one) only if the pattern isn't already
+/// present. Never fails the export — ignore errors.
+pub fn ensure_export_gitignored(dir: &Path) {
+    const PATTERN: &str = "*.svault-export.json";
+    let gi = dir.join(".gitignore");
+    let existing = std::fs::read_to_string(&gi).unwrap_or_default();
+    if existing.lines().any(|l| l.trim() == PATTERN) {
+        return;
+    }
+    let mut content = existing;
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str("# Svault export bundles — encrypted backups; keep out of git\n");
+    content.push_str(PATTERN);
+    content.push('\n');
+    let _ = std::fs::write(&gi, content);
+}
+
 /// Parse and validate a bundle from JSON: version + checksum.
 pub fn parse_bundle(raw: &str) -> Result<ExportBundle> {
     let bundle: ExportBundle =
@@ -186,6 +207,29 @@ mod tests {
         let dir = dst.path().join("v");
         assert!(dir.join("recovery.enc").exists());
         assert!(Vault::open(&dir, "Str0ng!Pass#99").is_ok());
+    }
+
+    #[test]
+    fn ensure_gitignored_creates_appends_and_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let gi = dir.path().join(".gitignore");
+
+        // Creates the file when absent.
+        ensure_export_gitignored(dir.path());
+        let after_create = std::fs::read_to_string(&gi).unwrap();
+        assert!(after_create.contains("*.svault-export.json"));
+
+        // Idempotent — no duplicate line on a second call.
+        ensure_export_gitignored(dir.path());
+        let after_twice = std::fs::read_to_string(&gi).unwrap();
+        assert_eq!(after_create, after_twice);
+
+        // Appends to an existing .gitignore without clobbering its contents.
+        std::fs::write(&gi, "node_modules/\n").unwrap();
+        ensure_export_gitignored(dir.path());
+        let appended = std::fs::read_to_string(&gi).unwrap();
+        assert!(appended.contains("node_modules/"));
+        assert!(appended.contains("*.svault-export.json"));
     }
 
     #[test]

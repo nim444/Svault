@@ -549,6 +549,8 @@ impl App {
                 let out = format!("{}-{}.svault-export.json", meta.name, ts);
                 match std::fs::write(&out, json) {
                     Ok(_) => {
+                        // Keep the bundle out of git so it can't be pushed by mistake.
+                        crate::portable::ensure_export_gitignored(Path::new("."));
                         self.set_status(MsgKind::Ok, format!("Exported '{}' to {out}", v.name))
                     }
                     Err(e) => self.set_status(MsgKind::Error, format!("Export failed: {e}")),
