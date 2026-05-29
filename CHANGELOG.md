@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - Unreleased
+
+Continued security hardening on the road to a stable 1.0.0 CLI (GUI is planned
+for 2.0.0, Claude/AI-platform access for 3.0.0). Acts on the 0.6.0 review
+carry-forward (`docs/security-review/findings/0.6.0.md`).
+
+### Added
+- **Supply-chain CI gate** (#9) — a `cargo audit` job in `lint.yml` fails CI on any RustSec advisory (vulnerability, unsound, or unmaintained) across the dependency tree.
+- **Passphrase entropy floor** (#12) — `create` and `recover` now require a passphrase to clear a ~50-bit entropy estimate (`passphrase::entropy_bits`), re-prompting until it does; a `--force` flag overrides for non-interactive use. The TUI create/recover forms enforce the same floor.
+- **Release-artifact checksums** (#11) — each release archive ships a matching `<archive>.sha256` attached to the GitHub Release for download verification.
+
+### Changed
+- **`ratatui` 0.29 → 0.30** (#10, crossterm 0.28 → 0.29) — pulls a fixed `lru` and drops the unmaintained `paste` crate, so `cargo audit` is now clean. No source changes were needed.
+- **Daemon key handling — passphrase never crosses the socket** (#3) — `Unlock` now carries the hex-encoded 32-byte derived key. The client derives + validates the key locally (a wrong passphrase fails before any socket traffic); the daemon re-validates it with `open_with_key` before caching.
+
+### Security
+- **Zeroized passphrase / secret-value prompts** (#6) — the CLI passphrase, recovery-code, and secret-value prompts return `Zeroizing<String>`, so those heap copies are wiped on drop (the bulk decrypted secret store was already zeroized via `SecretStore`).
+
 ## [0.6.0] - 2026-05-29
 
 Security-hardening release. Acts on the consolidated 0.5.0 review register
