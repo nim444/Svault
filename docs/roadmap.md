@@ -9,7 +9,9 @@ surface is added:
 | Milestone | Status | What |
 |---|---|---|
 | **0.1 – 0.6** | Shipped | CLI core — encrypted vault (AES-256-GCM + Argon2id), Ratatui TUI, policy engine (`svault get`), Unix daemon, recovery + export/import, and the 0.6.0 security-hardening pass |
-| **0.7.0 → 1.0.0** | In progress | **Security hardening** (acting on the review findings), a supply-chain/CI gate, and the install channels — the road to a stable CLI |
+| **0.7.0** | Shipped | Security-hardening pass — `cargo audit` CI gate, client-side key derivation, daemon peer-UID bond, owner-only files/dirs, entropy floor, zeroized secrets, SLSA provenance |
+| **0.8.0** | In progress | Security-review-response release — acts on the three independent 0.7.0 reviews (owner-only TUI export, daemon transport zeroization, `sigaction`, etc.); **policy enforcement deferred to its own release** |
+| **→ 1.0.0** | Planned | **Policy as an enforced control** (the last substantive gap) + install channels, then the first **stable, audited** release |
 | **1.0.0** | Planned | First **stable release**: a hardened, audited command-line tool |
 | **2.0.0** | Planned | Desktop **GUI** (Tauri) for vault management + system tray |
 | **3.0.0** | Planned | **Claude / AI-platform access** — MCP server + Pre/PostToolUse hooks (Claude Code, Cursor, Copilot, VS Code, Aider) |
@@ -22,14 +24,22 @@ surface is added:
 
 ## 0.7.0 → 1.0.0 — Hardening & stable CLI
 
-The focus until 1.0.0 is the security-review backlog, not new surfaces. Working
-order (from the [0.6.0 findings carry-forward](security-review/findings/0.6.0.md)):
+The focus until 1.0.0 is the security-review backlog, not new surfaces.
 
-- **Supply chain** — add a `cargo audit` / `cargo-deny` CI gate (#9) and bump `ratatui` to clear the two transitive advisories (#10).
-- **Policy as an enforced control** — evaluate policy + audit inside the daemon so the socket is the choke point (#2); sign / pin `svault.policy.yaml` (#5).
-- **Socket secrecy** — derive the key client-side so the passphrase never crosses the daemon socket (#3).
-- **Finish #4** — Windows DPAPI/ACL (or refuse-to-cache) and route the TUI through the daemon so `.session` can be deprecated on Unix.
-- **Smaller** — zeroize secret/passphrase strings (#6), release-artifact checksums/signing (#11), a passphrase entropy floor (#12); then the peer-UID bond (#1), #14, #16, #17, #22.
+**Done in 0.7.0** (see [0.7.0 findings](security-review/findings/0.7.0.md)): the
+`cargo audit` CI gate + `ratatui` 0.30 (#9/#10), client-side key derivation so the
+passphrase never crosses the socket (#3), the daemon peer-UID bond (#1), owner-only
+files/dirs + atomic socket (#14/#16), graceful shutdown (#17), zeroized secrets
+(#6), release checksums + SLSA provenance (#11), and the passphrase entropy floor
+(#12).
+
+**Done in 0.8.0** (review-response): owner-only TUI export (N-3) and import dir
+(N-4), `0600` rotated `daemon.log` (N-10), daemon transport zeroization (N-6), and
+`sigaction` shutdown signals (N-9).
+
+**Remaining before 1.0.0:**
+- **Policy as an enforced control (the gate)** — evaluate policy + write audit inside the daemon so the socket is the choke point (#2, N-5), authenticate the caller (N-1), sign/pin `svault.policy.yaml` and anchor its discovery (#5), fail closed on an unparseable policy (N-2), and verify `meta.yaml` on the fallback path (#22). All three 0.7.0 reviews flagged this as the blocker for a "stable / enforced" label. Scheduled for its own release after 0.8.0.
+- **Accepted/backlog, not blockers** — Windows atomic owner-only DACL (N-7), tamper-evident audit sink (#15/N-8), tunable Argon2id (N-12).
 - **Distribution** — `install.sh`, Homebrew tap, cargo-binstall, Docker (see below).
 
 ## Step 3 — Daemon + recovery
