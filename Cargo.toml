@@ -1,6 +1,6 @@
 [package]
 name = "svault-ai"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["Soluzy <nima@soluzy.ro>"]
 description = "AI-aware secret access layer — enforces structured requests and detects suspicious patterns"
@@ -47,6 +47,10 @@ serde_yaml = "0.9"
 # Error handling
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
+
+# Unix daemon — setsid (detach) + kill (liveness / stop). Unix only.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

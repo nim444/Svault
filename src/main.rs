@@ -1,6 +1,8 @@
 mod audit;
+mod client;
 mod config;
 mod crypto;
+mod daemon;
 mod meta;
 mod passphrase;
 mod policy;
@@ -111,6 +113,14 @@ enum Commands {
         /// Path to the .svault-export.json bundle
         file: String,
     },
+    /// Background unlock daemon (Unix): run | start | stop | status | doctor
+    Daemon {
+        /// Action: run | start | stop | status | doctor
+        action: String,
+        /// For `doctor`: clean up stale socket / pid files.
+        #[arg(long)]
+        fix: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -150,7 +160,33 @@ fn main() -> Result<()> {
         Commands::Recover { vault } => cmd_recover(vault.as_deref()),
         Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
         Commands::Import { file } => cmd_import(&file),
+        Commands::Daemon { action, fix } => cmd_daemon(&action, fix),
     }
+}
+
+fn cmd_daemon(action: &str, fix: bool) -> Result<()> {
+    match action {
+        "run" => daemon::run(),
+        "start" => daemon::start(),
+        "stop" => daemon::stop(),
+        "status" => daemon::status(),
+        "doctor" => daemon::doctor(fix),
+        _ => {
+            eprintln!(
+                "{} Unknown action '{}'. Use: run | start | stop | status | doctor",
+                style("error:").red(),
+                action
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+/// The directory leaf name (== vault name) the daemon keys vaults by.
+fn vault_leaf(dir: &Path) -> String {
+    dir.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -423,8 +459,10 @@ fn cmd_settings(vault_name: Option<&str>) -> Result<()> {
 fn cmd_unlock(vault_name: Option<&str>) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta = VaultMeta::load_unverified(&vault_dir)?;
+    let leaf = vault_leaf(&vault_dir);
 
-    if session::is_unlocked(&vault_dir) {
+    let daemon_has = client::unlocked_vaults().iter().any(|n| n == &leaf);
+    if daemon_has || session::is_unlocked(&vault_dir) {
         println!(
             "{} Vault '{}' is already unlocked",
             style("ok:").green(),
@@ -437,7 +475,29 @@ fn cmd_unlock(vault_name: Option<&str>) -> Result<()> {
         .with_prompt(format!("  Passphrase for '{}'", meta.name))
         .interact()?;
 
-    // Validate passphrase before caching
+    // Prefer the daemon: it validates the passphrase and holds the derived key
+    // in memory — no .session file is written.
+    if let Some(res) = client::unlock(&leaf, &passphrase) {
+        res.map_err(|e| {
+            eprintln!("{} {}", style("error:").red(), e);
+            std::process::exit(1);
+            #[allow(unreachable_code)]
+            e
+        })?;
+        usage::human(&vault_dir, "unlock", None);
+        println!(
+            "{} Vault '{}' unlocked",
+            style("ok:").green().bold(),
+            meta.name
+        );
+        println!(
+            "{}",
+            style("  Key held by the daemon (in memory, no file written). Run 'svault lock' to clear it.").dim()
+        );
+        return Ok(());
+    }
+
+    // No daemon — fall back to the file session.
     Vault::open(&vault_dir, &passphrase).map_err(|e| {
         eprintln!("{} {}", style("error:").red(), e);
         std::process::exit(1);
@@ -463,7 +523,10 @@ fn cmd_unlock(vault_name: Option<&str>) -> Result<()> {
 
 fn cmd_lock(lock_all: bool, vault_name: Option<&str>) -> Result<()> {
     if lock_all {
-        let count = session::lock_all(std::path::Path::new(SVAULT_DIR))?;
+        // Lock both the daemon's in-memory keys and any file sessions.
+        let daemon_count = client::lock_all().unwrap_or(0);
+        let file_count = session::lock_all(std::path::Path::new(SVAULT_DIR))?;
+        let count = daemon_count + file_count;
         if count == 0 {
             println!("{}", style("All vaults already locked.").dim());
         } else {
@@ -474,6 +537,9 @@ fn cmd_lock(lock_all: bool, vault_name: Option<&str>) -> Result<()> {
 
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta = VaultMeta::load_unverified(&vault_dir)?;
+    let leaf = vault_leaf(&vault_dir);
+    // Clear the key from the daemon (if up) and the file session (if present).
+    client::lock(&leaf);
     session::lock(&vault_dir)?;
     usage::human(&vault_dir, "lock", None);
     println!(
@@ -502,9 +568,13 @@ fn cmd_status() -> Result<()> {
     );
     println!("{}", style("─".repeat(60)).dim());
 
+    let daemon_unlocked = client::unlocked_vaults();
     for dir in &dirs {
         if let Ok(meta) = VaultMeta::load_unverified(dir) {
-            let status = if session::is_unlocked(dir) {
+            let in_daemon = daemon_unlocked.contains(&vault_leaf(dir));
+            let status = if in_daemon {
+                style("unlocked (daemon)").green().to_string()
+            } else if session::is_unlocked(dir) {
                 style("unlocked").green().to_string()
             } else {
                 style("locked").dim().to_string()
@@ -527,6 +597,32 @@ fn cmd_status() -> Result<()> {
 fn cmd_secret(action: &str, name: Option<&str>, vault_name: Option<&str>) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta_preview = VaultMeta::load_unverified(&vault_dir)?;
+    let leaf = vault_leaf(&vault_dir);
+
+    // Read path: when a daemon holds the key, serve `secret get` with no prompt.
+    if action == "get" {
+        if let Some(secret_name) = name {
+            if let Some(outcome) = client::get(&leaf, secret_name) {
+                match outcome {
+                    client::GetOutcome::Value(value) => {
+                        usage::human(&vault_dir, "secret.get", Some(secret_name));
+                        println!("{value}");
+                        return Ok(());
+                    }
+                    client::GetOutcome::NotFound => {
+                        eprintln!(
+                            "{} Secret '{}' not found",
+                            style("error:").red(),
+                            secret_name
+                        );
+                        std::process::exit(1);
+                    }
+                    // Daemon up but vault locked — fall through to the prompt path.
+                    client::GetOutcome::NotUnlocked => {}
+                }
+            }
+        }
+    }
 
     // Use cached passphrase if unlocked, otherwise prompt
     let passphrase = if session::is_unlocked(&vault_dir) {
@@ -748,6 +844,27 @@ fn cmd_get(
             std::process::exit(1);
         }
         policy::Decision::Allow(tier) => {
+            let leaf = vault_leaf(&vault_dir);
+            // Prefer the daemon — the key is already in memory, so no prompt.
+            if let Some(outcome) = client::get(&leaf, name) {
+                match outcome {
+                    client::GetOutcome::Value(value) => {
+                        eprintln!(
+                            "{} {} (caller={caller}, scope={scope}, tier={tier})",
+                            style("granted:").green().bold(),
+                            name
+                        );
+                        println!("{value}");
+                        return Ok(());
+                    }
+                    client::GetOutcome::NotFound => {
+                        eprintln!("{} Secret '{}' not found", style("error:").red(), name);
+                        std::process::exit(1);
+                    }
+                    // Daemon up but vault locked — fall through to the prompt path.
+                    client::GetOutcome::NotUnlocked => {}
+                }
+            }
             let passphrase = obtain_passphrase(&vault_dir, &meta.name)?;
             let vault = Vault::open(&vault_dir, &passphrase).map_err(|e| {
                 eprintln!("{} {}", style("error:").red(), e);

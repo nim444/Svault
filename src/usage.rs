@@ -7,16 +7,72 @@
 //! gated `svault get` path), so the data can later feed usage analysis.
 //!
 //! It never stores secret *values* — only the action, the secret's name where
-//! relevant, the actor kind, and an actor id (system user, or the agent caller).
+//! relevant, the actor kind, an actor id (system user, or the agent caller),
+//! and the **source** surface the action came through (CLI, TUI, and later GUI
+//! or MCP). Actor + source together describe e.g. a human at the CLI vs an agent
+//! via MCP.
 //! The file is gitignored (written by `Vault::init`) and owner-only (mode 0600).
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 pub const HUMAN: &str = "human";
 pub const AGENT: &str = "agent";
+
+/// The surface an action came through. Combined with the actor (human/agent)
+/// this yields the full picture: human+CLI, human+TUI, agent+CLI ("AI via CLI"),
+/// agent+MCP ("AI via MCP"), etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    Cli,
+    Tui,
+    Gui,
+    Mcp,
+}
+
+impl Source {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Source::Cli => "cli",
+            Source::Tui => "tui",
+            Source::Gui => "gui",
+            Source::Mcp => "mcp",
+        }
+    }
+
+    fn from_u8(v: u8) -> Source {
+        match v {
+            1 => Source::Tui,
+            2 => Source::Gui,
+            3 => Source::Mcp,
+            _ => Source::Cli,
+        }
+    }
+}
+
+/// Process-global source. A run is exactly one surface — a CLI invocation, the
+/// TUI, or (later) a GUI / MCP server — never a mix, so a set-once global is
+/// accurate. Defaults to CLI; the TUI sets it at startup.
+static SOURCE: AtomicU8 = AtomicU8::new(Source::Cli as u8);
+
+/// Set the surface for this process. Call once at the entry point.
+pub fn set_source(s: Source) {
+    SOURCE.store(s as u8, Ordering::Relaxed);
+}
+
+/// The current process source.
+pub fn source() -> Source {
+    Source::from_u8(SOURCE.load(Ordering::Relaxed))
+}
+
+/// Default for the `source` field when reading logs written before sources
+/// existed — render those as unknown (`-`) rather than guessing a surface.
+fn unknown_source() -> String {
+    String::new()
+}
 
 /// One usage event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +82,9 @@ pub struct Event {
     pub actor: String,
     /// System username for humans, the `--caller` value for agents.
     pub actor_id: String,
+    /// Surface the action came through: "cli" / "tui" / "gui" / "mcp".
+    #[serde(default = "unknown_source")]
+    pub source: String,
     /// A short action key, e.g. `unlock`, `secret.reveal`, `get.allow`.
     pub action: String,
     /// The thing acted on (usually a secret name), when relevant.
@@ -39,6 +98,7 @@ impl Event {
             ts: Utc::now().to_rfc3339(),
             actor: actor.to_string(),
             actor_id: actor_id.to_string(),
+            source: source().as_str().to_string(),
             action: action.to_string(),
             target: target.map(|t| t.to_string()),
         }
@@ -215,5 +275,22 @@ mod tests {
         let e = Event::human("lock", None);
         let json = serde_json::to_string(&e).unwrap();
         assert!(!json.contains("target"));
+    }
+
+    #[test]
+    fn events_are_stamped_with_the_current_source() {
+        set_source(Source::Tui);
+        assert_eq!(Event::human("unlock", None).source, "tui");
+        set_source(Source::Cli);
+        assert_eq!(Event::agent("claude", "get.allow", None).source, "cli");
+    }
+
+    #[test]
+    fn source_missing_from_old_logs_parses_as_unknown() {
+        // A log line written before sources existed (no `source` field).
+        let line =
+            r#"{"ts":"2026-01-01T00:00:00Z","actor":"human","actor_id":"nk","action":"unlock"}"#;
+        let e: Event = serde_json::from_str(line).unwrap();
+        assert_eq!(e.source, "");
     }
 }

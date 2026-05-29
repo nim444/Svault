@@ -40,6 +40,18 @@ svault export  [VAULT] [--out FILE]      # write a portable encrypted bundle (de
 svault import  <FILE>                    # restore a vault from a bundle
 ```
 
+## Daemon (Unix)
+
+See [Daemon](daemon.md) for the full design. Optional background process that holds keys in memory instead of in a `.session` file.
+
+```bash
+svault daemon start                # spawn detached; unlock/get/lock now route through it
+svault daemon status               # unlocked vaults + idle / hard-max countdowns
+svault daemon doctor [--fix]       # health check; --fix cleans stale socket / pid files
+svault daemon stop                 # lock everything and stop
+svault daemon run                  # foreground server (debugging)
+```
+
 ## Platform integration (planned)
 
 ```bash
@@ -156,4 +168,27 @@ $ svault settings billing-api
   # set Allow-agent to "list" and enter: claude, cursor
   # set Rate limit to 5/hour
   # saving re-signs meta.yaml
+```
+
+## 7. Keep keys in memory with the daemon (Unix)
+
+```bash
+$ svault daemon start
+svault daemon started (pid 44714)
+
+$ svault unlock billing-api
+  Passphrase for 'billing-api': ****
+ok: Vault 'billing-api' unlocked
+  Key held by the daemon (in memory, no file written). Run 'svault lock' to clear it.
+
+# Reads are now served from memory — no prompt, no .session file:
+$ svault secret get STRIPE_KEY -v billing-api
+sk_live_...
+
+$ svault daemon status
+VAULT                    IDLE LEFT      HARD LEFT
+billing-api              14m52s         7h59m
+
+$ svault daemon doctor          # confirm health; --fix cleans stale files
+$ svault daemon stop            # zeroizes keys and removes the socket
 ```

@@ -37,7 +37,7 @@ curl -fsSL https://svault.soluzy.net/install.sh | bash
 ## Requirements
 
 - **Rust** 1.74 or newer (only needed to build from source / `cargo install`).
-- No external services or daemons — everything runs locally.
+- No external services — everything runs locally. The optional [daemon](daemon.md) (Unix only) is a local background process that holds keys in memory; it's opt-in and never required.
 
 ## Supported platforms
 

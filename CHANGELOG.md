@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-29
+
+### Added
+- **Background daemon (Unix)** — `svault daemon start | stop | status | doctor | run`. An opt-in local process that holds unlocked vault keys **in memory** and serves secret reads over a `0600` Unix socket (`.svault/daemon.sock`), replacing the on-disk `.session` while it's running. Keys are zeroized on lock, on auto-lock, and on shutdown. See [docs/daemon.md](docs/daemon.md).
+  - **Auto-lock** — idle timeout (default 15 min, reset on each read) and a hard-max cap (default 8 h), both configurable in `.svault/config.yaml`. A background ticker evicts and zeroizes expired keys.
+  - **`daemon doctor`** — health check: daemon liveness + pid, socket presence and `0600` permissions, effective timeouts, and detection of stale socket / pid files left by a crash. `--fix` cleans them up; exits non-zero when unhealthy.
+  - **Daemon-aware commands** — when a daemon is running, `unlock` caches the key in it (no `.session` file written), and `get` / `secret get` are served from memory with no prompt; `status` shows `unlocked (daemon)`; `lock` / `lock --all` drop keys from both the daemon and any file session.
+  - **TUI integration** — the interactive UI shows a `daemon running` / `daemon off` indicator in the header, and `d` on the vault list starts / stops the daemon.
+  - **Concurrency** — one thread per connection; a `Get` holds the shared lock only long enough to copy the key and bump the last-used timestamp, decrypting outside the lock so parallel reads don't serialize.
+- **Source/surface tracking in the logs** — `usage.log` and `audit.log` now record a `source` field (`cli` / `tui` / `gui` / `mcp`) alongside the actor (human/agent). Together they distinguish a human at the CLI, a human in the TUI, an agent via the CLI, and (later) a GUI or MCP caller. The TUI activity view (`v`) gains a **VIA** column; events from before this change show `-`.
+
+### Changed
+- The daemon is **Unix-only**. On Windows, `svault daemon <...>` reports that it's Unix-only and all other commands fall back to the file session unchanged.
+- `secret add` / `secret list` / `secret remove` still prompt for the passphrase even when the daemon is up — the daemon deliberately holds only the key (not the passphrase) and exposes no write operations over the socket.
+
+### Internal
+- New `daemon` and `client` modules; `libc` added as a Unix-only dependency (`setsid` to detach, `kill` for liveness / stop).
+- 7 new tests (protocol JSON roundtrips, idle / hard-max / active auto-lock decisions, a unix unlock→get→lock→shutdown integration test, and a 16-thread concurrent-reads stress test) — suite now 72.
+
 ## [0.4.0] - 2026-05-29
 
 ### Added

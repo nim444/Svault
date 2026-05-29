@@ -12,7 +12,7 @@ Press `?` on the vault list or in the secret browser for an on-screen keybinding
 
 ## Home — vault list
 
-The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` / `unlocked`), and **DESCRIPTION** columns. The selected row is highlighted with a `>` marker and a subtle background.
+The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` / `unlocked`), and **DESCRIPTION** columns. The selected row is highlighted with a `>` marker and a subtle background. The header's right side shows the **daemon indicator** — `daemon running` (green) or `daemon off` (dim) — see [Daemon](daemon.md).
 
 | Key | Action |
 |---|---|
@@ -26,10 +26,11 @@ The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` 
 | `e` | Export the selected vault to a timestamped `<name>-<YYYYMMDD-HHMMSS>.svault-export.json` in the current directory (repeated exports never overwrite); the status line shows the full path to the file |
 | `i` | Import a vault from a bundle file (prompts for the path) |
 | `r` | Recover the selected vault — enter the code, set a new passphrase |
+| `d` | Start the daemon if it's off, stop it if it's running (Unix); the outcome shows in the status line (no-op note on Windows) |
 | `?` | Show the help overlay |
 | `q` / `Esc` | Quit (asks for confirmation: `enter` quits, any other key stays) |
 
-`e` / `i` / `r` mirror the `svault export` / `import` / `recover` commands — see [Recovery](recovery.md).
+`e` / `i` / `r` mirror the `svault export` / `import` / `recover` commands — see [Recovery](recovery.md). `d` mirrors `svault daemon start` / `stop` — see [Daemon](daemon.md).
 
 ## Create form
 
@@ -51,7 +52,7 @@ After the vault is created, the **recovery code** is shown once on its own scree
 
 ## Activity timeline
 
-`v` opens a read-only timeline of recent activity for the selected vault — no unlock needed, because the log holds no secret values. Each row shows **WHEN**, **ACTOR** (`human <user>` or `agent <caller>`, with agents in yellow), **ACTION** (e.g. `unlock`, `secret.reveal`, `get.allow`), and **TARGET** (the secret name, when relevant). `↑` / `↓` scroll; `esc` / `b` go back.
+`v` opens a read-only timeline of recent activity for the selected vault — no unlock needed, because the log holds no secret values. Each row shows **WHEN**, **ACTOR** (`human <user>` or `agent <caller>`, with agents in yellow), **VIA** (the surface the action came through — `cli`, `tui`, and later `gui` / `mcp`; `-` for events recorded before sources were tracked), **ACTION** (e.g. `unlock`, `secret.reveal`, `get.allow`), and **TARGET** (the secret name, when relevant). Actor + VIA together tell apart, say, a human at the CLI from an agent via MCP. `↑` / `↓` scroll; `esc` / `b` go back.
 
 This is backed by a per-vault `usage.log` (`.svault/<name>/usage.log`, JSON lines, owner-only, gitignored) that both the CLI and TUI append to. It records human actions and agent `svault get` requests so usage can be reviewed — or fed to later analysis. Secret **values** are never logged.
 

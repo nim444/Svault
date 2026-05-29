@@ -28,7 +28,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         ])
         .split(frame.area());
 
-    draw_header(frame, chunks[0]);
+    draw_header(frame, chunks[0], app.daemon_running);
 
     match &mut app.screen {
         Screen::List => draw_list(frame, chunks[1], &app.vaults, &mut app.list_state),
@@ -83,15 +83,31 @@ fn draw_quit(frame: &mut Frame, area: Rect) {
 
 // ── Header ─────────────────────────────────────────────────────────────────────
 
-fn draw_header(frame: &mut Frame, area: Rect) {
-    let spans = vec![
-        Span::styled(" Svault ", theme::title()),
-        Span::styled("— AI-aware secret manager", theme::label_dim()),
-    ];
+fn draw_header(frame: &mut Frame, area: Rect, daemon_running: bool) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::border());
-    frame.render_widget(Paragraph::new(Line::from(spans)).block(block), area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Left: title + subtitle.
+    let title = Line::from(vec![
+        Span::styled(" Svault ", theme::title()),
+        Span::styled("— AI-aware secret manager", theme::label_dim()),
+    ]);
+    frame.render_widget(Paragraph::new(title), inner);
+
+    // Right: daemon indicator (green when running, dim when off).
+    let (label, color) = if daemon_running {
+        ("daemon running ", theme::OK)
+    } else {
+        ("daemon off ", theme::MUTED)
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(label, Style::default().fg(color))))
+            .alignment(Alignment::Right),
+        inner,
+    );
 }
 
 // ── Status line ──────────────────────────────────────────────────────────────────
@@ -127,7 +143,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         match &app.screen {
             Screen::List => {
-                "↑/↓ move   enter open   c create   u unlock   l lock   s settings   v activity   e export   i import   r recover   ? help   q quit"
+                "↑/↓ move   enter open   c create   u unlock   l lock   s settings   v activity   e export   i import   r recover   d daemon   ? help   q quit"
             }
             Screen::Activity(_) => "↑/↓ scroll   esc / b back   q quit",
             Screen::Create(_) => {
@@ -188,6 +204,7 @@ fn draw_help(frame: &mut Frame, area: Rect, screen: &Screen) {
             ("v", "view the activity timeline (human + agent)"),
             ("e / i", "export / import an encrypted bundle"),
             ("r", "recover a vault with its recovery code"),
+            ("d", "start / stop the background daemon (Unix)"),
             ("q", "quit"),
         ],
     };
@@ -319,7 +336,7 @@ fn draw_activity(frame: &mut Frame, area: Rect, scr: &mut super::ActivityScreen)
         return;
     }
 
-    let header = Row::new(["WHEN", "ACTOR", "ACTION", "TARGET"]).style(theme::header());
+    let header = Row::new(["WHEN", "ACTOR", "VIA", "ACTION", "TARGET"]).style(theme::header());
     let rows: Vec<Row> = scr
         .events
         .iter()
@@ -339,10 +356,18 @@ fn draw_activity(frame: &mut Frame, area: Rect, scr: &mut super::ActivityScreen)
                 Style::default().fg(theme::ACCENT)
             };
             let actor = format!("{} {}", e.actor, e.actor_id);
+            // Surface the action came through (cli / tui / gui / mcp); older
+            // events recorded before sources existed show "-".
+            let via = if e.source.is_empty() {
+                "-".to_string()
+            } else {
+                e.source.clone()
+            };
             let target = e.target.clone().unwrap_or_else(|| "-".to_string());
             Row::new(vec![
                 Cell::from(when).style(Style::default().fg(theme::MUTED)),
                 Cell::from(actor).style(actor_style),
+                Cell::from(via).style(Style::default().fg(theme::MUTED)),
                 Cell::from(e.action.clone()).style(Style::default().fg(theme::TEXT)),
                 Cell::from(target).style(Style::default().fg(theme::MUTED)),
             ])
@@ -350,10 +375,11 @@ fn draw_activity(frame: &mut Frame, area: Rect, scr: &mut super::ActivityScreen)
         .collect();
 
     let widths = [
-        Constraint::Length(14),
-        Constraint::Length(18),
+        Constraint::Length(12),
         Constraint::Length(16),
-        Constraint::Min(10),
+        Constraint::Length(4),
+        Constraint::Length(14),
+        Constraint::Min(8),
     ];
     let table = Table::new(rows, widths)
         .header(header)

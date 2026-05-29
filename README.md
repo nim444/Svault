@@ -43,6 +43,7 @@ flowchart LR
 | [Command reference](docs/commands.md) | Every subcommand and flag |
 | [Policy engine](docs/policy-engine.md) | The agent path — `svault get`, scopes, tiers, audit |
 | [Recovery & portability](docs/recovery.md) | Recovery code for a lost passphrase, export/import bundles |
+| [Daemon](docs/daemon.md) | Optional Unix daemon — keys in memory, auto-lock, `daemon start/stop/status/doctor` |
 | [Storage backends](docs/storage-backends.md) | Local today; cloud / self-hosted / S3 placeholders |
 | [Security model](docs/security.md) | Crypto, memory safety, what's safe to commit |
 | [Architecture](docs/architecture.md) | How it works, on-disk layout, auth methods |
@@ -218,7 +219,7 @@ flowchart TD
 | **Step 1** | Done | Local encrypted vault — AES-256-GCM + Argon2id |
 | **Step 1+** | Done | Interactive Ratatui TUI — forms, browsers, lock-aware secrets |
 | **Step 2** | Done | Policy engine — caller identity, `reason`, scopes, tiers, rate limit, audit log |
-| **Step 3** | In progress | Recovery (code + export/import) shipped; daemon next. Extra auth methods (YubiKey, TOTP, Touch ID/Face ID) deferred |
+| **Step 3** | Done | Recovery (code + export/import) and the Unix daemon (keys in memory, auto-lock). Extra auth methods (YubiKey, TOTP, Touch ID/Face ID) deferred |
 | **Step 4** | Planned | Desktop GUI (Tauri) + system tray |
 | **Step 5** | Planned | MCP integration — Claude Code, Cursor, Copilot, VS Code, Aider |
 | **Cloud** | Planned | Anomaly scoring via Claude Haiku — free tier + premium plans |
@@ -233,7 +234,7 @@ flowchart TD
 cargo test
 ```
 
-64 tests covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, tampered `meta.yaml` rejected, session unlock/lock/lock-all, passphrase strength checks, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, full recover-and-rekey roundtrip (old passphrase rejected, secret preserved, code still valid), export-bundle checksum integrity, build→import recreating an openable vault + overwrite rejection, storage-backend metadata roundtrip, and TUI key dispatch (field navigation, the rate-limit space-toggle regression, paste handling, and the help overlay).
+74 tests covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, tampered `meta.yaml` rejected, session unlock/lock/lock-all, passphrase strength checks, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, full recover-and-rekey roundtrip (old passphrase rejected, secret preserved, code still valid), export-bundle checksum integrity, build→import recreating an openable vault + overwrite rejection, storage-backend metadata roundtrip, the daemon (protocol JSON roundtrip, auto-lock idle/hard-max/active decisions, a unix unlock→get→lock→shutdown integration test, and a concurrent-reads stress test), usage-log source stamping (event tagged with the current surface; old logs parse as unknown), and TUI key dispatch (field navigation, the rate-limit space-toggle regression, paste handling, and the help overlay).
 
 CI runs the suite on **Ubuntu, Fedora, macOS, and Windows** on every push and pull request.
 

@@ -20,6 +20,8 @@ use crate::vault::{list_vault_dirs, Vault, SVAULT_DIR};
 
 /// Enter the alternate screen, run the event loop, restore the terminal.
 pub fn run() -> Result<()> {
+    // Everything recorded from here on is a TUI action.
+    crate::usage::set_source(crate::usage::Source::Tui);
     let mut terminal = ratatui::init();
     // Bracketed paste lets us receive a whole pasted string (passphrases,
     // recovery codes, bundle paths) as one event instead of key-by-key.
@@ -377,6 +379,9 @@ pub struct App {
     pub show_help: bool,
     /// When set, a "quit?" confirmation popup is shown.
     pub confirm_quit: bool,
+    /// Whether a background daemon is currently running (Unix). Shown in the
+    /// header; refreshed on startup, after a vault refresh, and after toggling.
+    pub daemon_running: bool,
 }
 
 impl App {
@@ -386,6 +391,7 @@ impl App {
         if !vaults.is_empty() {
             list_state.select(Some(0));
         }
+        let daemon_running = crate::daemon::is_running(&crate::daemon::base_dir());
         Self {
             screen: Screen::List,
             vaults,
@@ -394,6 +400,7 @@ impl App {
             should_quit: false,
             show_help: false,
             confirm_quit: false,
+            daemon_running,
         }
     }
 
@@ -479,6 +486,27 @@ impl App {
                 .min(self.vaults.len() - 1);
             self.list_state.select(Some(i));
         }
+        self.refresh_daemon();
+    }
+
+    fn refresh_daemon(&mut self) {
+        self.daemon_running = crate::daemon::is_running(&crate::daemon::base_dir());
+    }
+
+    /// Start the daemon if it's stopped, stop it if it's running, then refresh
+    /// the indicator. Uses the quiet variants so nothing is printed over the TUI;
+    /// the outcome goes to the status line.
+    fn toggle_daemon(&mut self) {
+        let result = if self.daemon_running {
+            crate::daemon::stop_quiet()
+        } else {
+            crate::daemon::start_quiet()
+        };
+        match result {
+            Ok(msg) => self.set_status(MsgKind::Ok, msg),
+            Err(e) => self.set_status(MsgKind::Error, format!("{e}")),
+        }
+        self.refresh_daemon();
     }
 
     fn selected_vault(&self) -> Option<VaultRow> {
@@ -723,6 +751,7 @@ impl App {
             }
             KeyCode::Char('r') => self.start_recover(),
             KeyCode::Char('v') => self.start_activity(),
+            KeyCode::Char('d') => self.toggle_daemon(),
             KeyCode::Char('?') => self.show_help = true,
             KeyCode::Enter => self.open_secrets()?,
             _ => {}
@@ -1431,6 +1460,7 @@ mod tests {
             should_quit: false,
             show_help: false,
             confirm_quit: false,
+            daemon_running: false,
         }
     }
 

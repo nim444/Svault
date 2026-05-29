@@ -32,7 +32,7 @@ The `reason` field is required by the [policy engine](policy-engine.md). An AI t
 
 - **`vault.enc`**, **`meta.yaml`**, and **`recovery.enc`** are safe to commit — useless without the passphrase or recovery code. See [Recovery](recovery.md).
 - **`.session`**, **`audit.log`**, and **`usage.log`** are always gitignored and created with mode `0600` (owner read/write only). The per-vault `.gitignore` is self-healing — recording the first usage event adds any missing log lines, so vaults created before usage logging are covered too.
-- **`usage.log`** is the activity stream behind the TUI `v` view: who did what, when (human vs agent), never any secret value. See [Interactive mode](tui.md#activity-timeline).
+- **`usage.log`** is the activity stream behind the TUI `v` view: who did what, when, and through which surface (the `source`: `cli` / `tui` / `gui` / `mcp`) — human vs agent via the actor, never any secret value. Actor + source distinguish e.g. a human at the CLI from an agent via MCP. `audit.log` carries the same `source` field. See [Interactive mode](tui.md#activity-timeline).
 
 ## Authentication options
 
