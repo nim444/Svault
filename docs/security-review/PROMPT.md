@@ -60,7 +60,7 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 
 - Cryptographic design and implementation quality
 - Secret handling (memory safety, zeroization, logging, exposure windows)
-- **The policy engine for AI/agent access — is it actually enforced?** Trace whether `svault get`'s caller/scope/reason and tiers gate anything at the daemon, or are purely advisory/audit. Assess the unsigned policy file + upward search. This is the headline claim; weigh it honestly.
+- **The policy engine for AI/agent access — is the 0.9.0 enforcement sound?** Trace the `GetGated` daemon path (`daemon.rs` → `gate::authorize` → `policy::evaluate` + `judge::evaluate` → audit). Confirm there is **no unguarded path** to a classified secret, that classification in the signed `meta.yaml` can't be tampered without the key, that policy discovery is anchored + fails closed, and that the AI-judge fail modes (medium fail-open, high fail-closed) and key handling are correct. This is the headline claim; weigh it honestly.
 - **The Unix daemon (0.5.0+)**: architecture, socket model + `0600`/umask, peer-UID bond (#1), client-side key derivation (#3, passphrase off the socket), connection ceiling / read timeout, poison recovery, auto-lock, graceful shutdown (#17)
 - **Secrets at rest (0.7.0)**: owner-only `.session` (key, not passphrase), `recovery.enc`, export bundles; `0700` dirs; Windows ACL via `icacls` (#4/#14/#16). Assess residual risk (key-equivalent files) and robustness of the Windows path
 - Passphrase strength enforcement (entropy floor + `--force`, #12)
@@ -111,7 +111,7 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 
 ## Recommendations for Corporate Adoption
 
-[Prioritized, actionable, reflecting the current 0.7.0 state — and say whether policy enforcement (#2/#5) should block a 1.0.0 "stable" label]
+[Prioritized, actionable, reflecting the current 0.9.0 state — and say whether the enforced policy engine + AI judge are sound enough to support a 1.0.0 "stable" label, or what must change first]
 
 ## Overall Risk Assessment by Context
 
