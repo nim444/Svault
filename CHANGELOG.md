@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.8.0] - Unreleased
+## [0.8.0] - 2026-05-30
 
 A security-review-response + hardening release. Acts on the three independent
 0.7.0 model reviews (`docs/security-review/reviews/0.7.0-*.md`), consolidated with
