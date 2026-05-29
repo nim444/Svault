@@ -6,7 +6,12 @@ security review and bulletproofing pass before it ships.** Patch releases (`0.x.
 inherit the most recent minor review unless they change the security model.
 
 This folder is the record of that process: the prompt used to commission independent
-reviews, and the resulting review for each release.
+reviews, the resulting review for each release, and — most importantly — the
+**maintainer's human triage and sign-off** on every finding.
+
+The model reviews exist for breadth and independence; they are **inputs, not verdicts**.
+A human maintainer reads every finding, decides what to do about it, and signs the
+result. See the per-release findings register for that human review of record.
 
 ## Contents
 
@@ -18,8 +23,11 @@ reviews, and the resulting review for each release.
 
 ## Reviews
 
-Per release, the findings from every reviewer below are consolidated into one decision
-log: **[findings/0.5.0.md](findings/0.5.0.md)**.
+The reviewers below are **AI models**, run for breadth and cross-checking. Their findings
+are not the final word: they are consolidated and then **reviewed, triaged, and signed off
+by a human maintainer** in the per-release findings register —
+**[findings/0.5.0.md](findings/0.5.0.md)** (all 22 findings dispositioned by Nima Karimi,
+2026-05-29).
 
 | Version | Date | Reviewer | Overall posture | Review |
 |---|---|---|---|---|
@@ -48,9 +56,11 @@ Each `0.x.0` release is gated on the following before tagging:
    `findings/<version>.md`: one row per distinct finding, which models raised it, our
    status, and a written disposition/justification. This is what makes the decisions
    defensible and auditable.
-5. **Triage findings.** Every High/Critical finding is either fixed before release or
-   explicitly accepted in writing (with rationale) in the register and the
-   [roadmap](../roadmap.md).
+5. **Human triage & sign-off.** The maintainer reads every finding and records a
+   disposition for each in the register: status, justification, and notes — signed and
+   dated. Every High/Critical finding is either fixed before release or explicitly
+   accepted in writing (with rationale) here and in the [roadmap](../roadmap.md). This
+   step is non-negotiable: the AI reviews never decide anything on their own.
 6. **Carry forward.** Open items become tracked work; the next release's register
    re-states each prior finding as *fixed*, *improved*, or *unchanged*.
 
@@ -60,6 +70,18 @@ The author of a system is the worst judge of its weaknesses. Using a separate mo
 working only from the public source tree and the neutral prompt — keeps the assessment
 unbiased and reproducible: anyone can run the same prompt and compare results. Reviews
 are kept blunt and evidence-based, not marketing.
+
+## On human vs. AI review
+
+The reviews here are AI-generated, which buys **breadth and speed** — multiple independent
+passes over the whole codebase per release. What makes the result trustworthy is the
+**human triage**: a named maintainer reviews and signs off on every finding (see the
+findings register). AI for coverage, human for judgment.
+
+To be clear about the current limitation: these are AI reviews plus maintainer sign-off,
+**not** a third-party human security audit. An independent external human audit is a
+planned step as the project matures, and will be recorded here alongside the model reviews
+when it happens.
 
 ## Reporting a vulnerability
 
