@@ -52,7 +52,8 @@ pub fn write(vault_dir: &Path, vault_key: &VaultKey, code: &str) -> Result<()> {
     rand::thread_rng().fill_bytes(&mut salt);
     let kek = VaultKey::derive(&normalize(code), &salt)?;
     let blob = crypto::encrypt(&kek, &salt, vault_key.bytes())?;
-    std::fs::write(recovery_path(vault_dir), blob)?;
+    // recovery.enc wraps a key-equivalent — keep it owner-only (#14).
+    crate::secfile::write_owner_only(&recovery_path(vault_dir), &blob)?;
     Ok(())
 }
 

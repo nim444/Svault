@@ -8,6 +8,7 @@ mod passphrase;
 mod policy;
 mod portable;
 mod recovery;
+mod secfile;
 mod session;
 mod tui;
 mod usage;
@@ -1129,7 +1130,8 @@ fn cmd_export(vault_name: Option<&str>, out: Option<&str>) -> Result<()> {
     let out_path = out
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(format!("{}.svault-export.json", meta.name)));
-    std::fs::write(&out_path, json)?;
+    // A bundle is a full backup (carries the wrapped key) — write it owner-only (#14).
+    secfile::write_owner_only(&out_path, json.as_bytes())?;
 
     // Keep the bundle out of git so it can't be pushed by mistake.
     let out_dir = out_path.parent().filter(|p| !p.as_os_str().is_empty());

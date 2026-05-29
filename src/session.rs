@@ -18,23 +18,8 @@ fn session_path(vault_dir: &Path) -> PathBuf {
 pub fn unlock_with_key(vault_dir: &Path, key: &[u8; 32]) -> Result<()> {
     let path = session_path(vault_dir);
     let encoded = hex::encode(key);
-
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)?;
-        f.write_all(encoded.as_bytes())?;
-    }
-
-    #[cfg(not(unix))]
-    std::fs::write(&path, &encoded)?;
-
+    // Owner-only: mode 0600 on Unix, an icacls owner-only ACL on Windows (#4).
+    crate::secfile::write_owner_only(&path, encoded.as_bytes())?;
     Ok(())
 }
 

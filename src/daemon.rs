@@ -94,6 +94,7 @@ mod imp {
     use std::collections::HashMap;
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    use std::os::unix::io::AsRawFd;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -331,6 +332,44 @@ mod imp {
         });
     }
 
+    /// Set by the SIGTERM/SIGINT handler; polled by the signal watcher thread.
+    static SIGNAL_FLAG: AtomicBool = AtomicBool::new(false);
+
+    /// Async-signal-safe handler: just flips an atomic (no allocation/I/O).
+    extern "C" fn on_term_signal(_sig: libc::c_int) {
+        SIGNAL_FLAG.store(true, Ordering::SeqCst);
+    }
+
+    /// Turn SIGTERM/SIGINT into a *graceful* shutdown so keys are zeroized and
+    /// the socket/pid files are cleaned up, instead of an abrupt terminate (#17).
+    /// A watcher thread flips the accept loop's `shutdown` flag and wakes it by
+    /// connecting, reusing the same teardown as a `Shutdown` request.
+    fn install_signal_watcher(shutdown: Arc<AtomicBool>, sock: PathBuf) {
+        let handler = on_term_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        unsafe {
+            libc::signal(libc::SIGTERM, handler);
+            libc::signal(libc::SIGINT, handler);
+        }
+        std::thread::spawn(move || loop {
+            if SIGNAL_FLAG.load(Ordering::SeqCst) {
+                shutdown.store(true, Ordering::SeqCst);
+                let _ = UnixStream::connect(&sock); // unblock accept()
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        });
+    }
+
+    /// True when the connecting peer runs as our own effective UID.
+    /// Defense-in-depth over the 0600 socket: even if the socket perms were
+    /// somehow loosened, a different-UID process is refused (#1).
+    fn peer_is_self(stream: &UnixStream) -> bool {
+        let mut uid: libc::uid_t = 0;
+        let mut gid: libc::gid_t = 0;
+        let rc = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
+        rc == 0 && uid == unsafe { libc::geteuid() }
+    }
+
     /// The accept loop. Returns when a `Shutdown` request unblocks it.
     fn serve(
         listener: UnixListener,
@@ -343,6 +382,7 @@ mod imp {
         let shutdown = Arc::new(AtomicBool::new(false));
         let active = Arc::new(AtomicUsize::new(0));
         let sock = socket_path(&base);
+        install_signal_watcher(shutdown.clone(), sock.clone());
         for stream in listener.incoming() {
             if shutdown.load(Ordering::SeqCst) {
                 break;
@@ -351,6 +391,10 @@ mod imp {
                 Ok(s) => s,
                 Err(_) => continue,
             };
+            // Peer-UID bond: only serve connections from our own UID (#1).
+            if !peer_is_self(&s) {
+                continue; // drop — different UID
+            }
             // Connection ceiling: refuse new work when too many handlers are
             // already live, instead of spawning unbounded threads.
             if active.load(Ordering::SeqCst) >= max_conns {
@@ -459,7 +503,7 @@ mod imp {
     /// Foreground server loop (`svault daemon run`).
     pub fn run() -> Result<()> {
         let base = base_dir();
-        std::fs::create_dir_all(&base).context("create .svault directory")?;
+        crate::secfile::create_dir_owner_only(&base).context("create .svault directory")?;
         let sock = socket_path(&base);
         if sock.exists() {
             if ping(&base) {
@@ -472,8 +516,12 @@ mod imp {
         let (idle, max) = (cfg.lock.idle_timeout_secs, cfg.lock.max_unlocked_secs);
         let max_conns = cfg.daemon.max_connections;
 
-        let listener =
-            UnixListener::bind(&sock).with_context(|| format!("bind {}", sock.display()))?;
+        // Bind under a tight umask so the socket is born 0600 — no TOCTOU window
+        // between bind and chmod where it's group/world-accessible (#16).
+        let old_umask = unsafe { libc::umask(0o077) };
+        let bind_result = UnixListener::bind(&sock);
+        unsafe { libc::umask(old_umask) };
+        let listener = bind_result.with_context(|| format!("bind {}", sock.display()))?;
         std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o600))?;
         write_pid(&base)?;
 
@@ -496,7 +544,7 @@ mod imp {
         use std::process::{Command, Stdio};
 
         let base = base_dir();
-        std::fs::create_dir_all(&base)?;
+        crate::secfile::create_dir_owner_only(&base)?;
         if is_running(&base) {
             let pid = read_pid(&base)
                 .map(|p| p.to_string())
@@ -506,10 +554,17 @@ mod imp {
         let _ = std::fs::remove_file(socket_path(&base)); // clear any stale socket
 
         let exe = std::env::current_exe().context("locate svault binary")?;
+        // Cap daemon.log growth (#17): rotate to .log.1 once it passes ~5 MB.
+        let log_p = log_path(&base);
+        if let Ok(meta) = std::fs::metadata(&log_p) {
+            if meta.len() > 5 * 1024 * 1024 {
+                let _ = std::fs::rename(&log_p, log_p.with_extension("log.1"));
+            }
+        }
         let log = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(log_path(&base))?;
+            .open(&log_p)?;
         let log_err = log.try_clone()?;
 
         let mut cmd = Command::new(exe);

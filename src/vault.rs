@@ -26,7 +26,12 @@ impl Vault {
         if vault_dir.exists() {
             return Err(anyhow!("Vault already exists at {}", vault_dir.display()));
         }
-        std::fs::create_dir_all(vault_dir)?;
+        // Owner-only .svault/ and vault dir so other local users can't even
+        // traverse in to read the (encrypted) files or the session (#16).
+        if let Some(parent) = vault_dir.parent() {
+            crate::secfile::create_dir_owner_only(parent)?;
+        }
+        crate::secfile::create_dir_owner_only(vault_dir)?;
 
         // Write a local .gitignore so the session file and the logs can never be
         // accidentally committed even if the repo-level .gitignore is missing or wrong.
