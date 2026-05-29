@@ -46,6 +46,7 @@ flowchart LR
 | [Daemon](docs/daemon.md) | Optional Unix daemon — keys in memory, auto-lock, `daemon start/stop/status/doctor` |
 | [Storage backends](docs/storage-backends.md) | Local today; cloud / self-hosted / S3 placeholders |
 | [Security model](docs/security.md) | Crypto, memory safety, what's safe to commit |
+| [Security review & audit](docs/security-review/) | Independent review per release + the bulletproofing process |
 | [Architecture](docs/architecture.md) | How it works, on-disk layout, auth methods |
 | [Roadmap](docs/roadmap.md) | Where Svault is headed |
 | [Changelog](CHANGELOG.md) | What's shipped, version by version |
@@ -189,6 +190,8 @@ The chosen backend is recorded in `meta.yaml` and shown as a `storage:name` pref
 **The passphrase is the only key.**
 
 **Threat model + on-disk layout → [docs/security.md](docs/security.md)**
+
+Every `0.x.0` release goes through an **independent security review + bulletproofing pass** — see [docs/security-review/](docs/security-review/).
 
 </details>
 

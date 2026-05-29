@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - Unreleased
+
+### Added
+- **Security review process** — `docs/security-review/` documents a release-gated security workflow: every `0.x.0` release gets one or more independent, model-agnostic security reviews (prompt in `docs/security-review/PROMPT.md`) plus a tooling/bulletproofing pass. For 0.5.0, five independent reviews (Grok 4.3, GLM-5-1, Gemini 3.5 Flash, DeepSeek-V4-Pro, Claude Opus 4.8) are recorded under `docs/security-review/reviews/`, with all findings de-duplicated into a consolidated decision register at `docs/security-review/findings/0.5.0.md`. Maintainer dispositions for all 22 findings are recorded and signed off in that register.
+
 ## [0.5.0] - 2026-05-29
 
 ### Added
