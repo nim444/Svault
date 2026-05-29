@@ -94,7 +94,6 @@ mod imp {
     use std::collections::HashMap;
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-    use std::os::unix::io::AsRawFd;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -365,12 +364,45 @@ mod imp {
 
     /// True when the connecting peer runs as our own effective UID.
     /// Defense-in-depth over the 0600 socket: even if the socket perms were
-    /// somehow loosened, a different-UID process is refused (#1).
+    /// somehow loosened, a different-UID process is refused (#1). Portable
+    /// across the daemon's targets: `SO_PEERCRED` on Linux, `getpeereid` on
+    /// macOS/BSD (std's `peer_cred` is still unstable).
     fn peer_is_self(stream: &UnixStream) -> bool {
-        let mut uid: libc::uid_t = 0;
-        let mut gid: libc::gid_t = 0;
-        let rc = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
-        rc == 0 && uid == unsafe { libc::geteuid() }
+        use std::os::unix::io::AsRawFd;
+        let me = unsafe { libc::geteuid() };
+        let fd = stream.as_raw_fd();
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let peer_uid = {
+            let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+            let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+            let rc = unsafe {
+                libc::getsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_PEERCRED,
+                    (&mut cred as *mut libc::ucred).cast::<libc::c_void>(),
+                    &mut len,
+                )
+            };
+            if rc != 0 {
+                return false;
+            }
+            cred.uid
+        };
+
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let peer_uid = {
+            let mut uid: libc::uid_t = 0;
+            let mut gid: libc::gid_t = 0;
+            let rc = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+            if rc != 0 {
+                return false;
+            }
+            uid
+        };
+
+        peer_uid == me
     }
 
     /// The accept loop. Returns when a `Shutdown` request unblocks it.
