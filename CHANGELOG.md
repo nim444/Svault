@@ -13,8 +13,8 @@ A security-review-response + hardening release. Acts on the three independent
 0.7.0 model reviews (`docs/security-review/reviews/0.7.0-*.md`), consolidated with
 maintainer dispositions in `docs/security-review/findings/0.7.0.md`. All three
 re-confirmed the advisory-policy gap (#2/#5/#22) as the 1.0.0 blocker; that policy
-work is **deferred to a dedicated later release** (not dropped) so this stays a
-clean hardening release. Everything else the review surfaced is addressed here.
+work is **deferred to 0.9.0** (not dropped) so this stays a clean hardening
+release. Everything else the review surfaced is addressed here.
 
 ### Fixed
 - **Owner-only TUI export** (review N-3) — the TUI export wrote the bundle (which wraps the vault key) with the default umask, leaving it potentially world-readable; it now uses `secfile::write_owner_only` like the CLI path.
@@ -24,7 +24,7 @@ clean hardening release. Everything else the review surfaced is addressed here.
 - **`sigaction` for shutdown signals** (review N-9) — SIGTERM/SIGINT handlers are installed via `libc::sigaction` (zeroed mask, `SA_RESTART`) rather than the legacy `signal()`, for well-defined semantics across Unix variants.
 
 ### Deferred (gates 1.0.0)
-- Policy engine as an enforced control: evaluate policy + write the audit record inside the daemon `Get` path (#2/#5, review N-1/N-2/N-5/#22), authenticate the caller, sign/pin `svault.policy.yaml`, and fail closed on an unparseable policy. This is the last substantive gap before a 1.0.0 "stable CLI" label and is scheduled for a dedicated release.
+- Policy engine as an enforced control: evaluate policy + write the audit record inside the daemon `Get` path (#2/#5, review N-1/N-2/N-5/#22), authenticate the caller, sign/pin `svault.policy.yaml`, and fail closed on an unparseable policy. This is the last substantive gap before a 1.0.0 "stable CLI" label and is scheduled for 0.9.0.
 
 ## [0.7.0] - 2026-05-29
 

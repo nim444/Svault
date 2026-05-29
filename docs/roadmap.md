@@ -10,8 +10,9 @@ surface is added:
 |---|---|---|
 | **0.1 – 0.6** | Shipped | CLI core — encrypted vault (AES-256-GCM + Argon2id), Ratatui TUI, policy engine (`svault get`), Unix daemon, recovery + export/import, and the 0.6.0 security-hardening pass |
 | **0.7.0** | Shipped | Security-hardening pass — `cargo audit` CI gate, client-side key derivation, daemon peer-UID bond, owner-only files/dirs, entropy floor, zeroized secrets, SLSA provenance |
-| **0.8.0** | In progress | Security-review-response release — acts on the three independent 0.7.0 reviews (owner-only TUI export, daemon transport zeroization, `sigaction`, etc.); **policy enforcement deferred to its own release** |
-| **→ 1.0.0** | Planned | **Policy as an enforced control** (the last substantive gap) + install channels, then the first **stable, audited** release |
+| **0.8.0** | In progress | Security-review-response release — acts on the three independent 0.7.0 reviews (owner-only TUI export, daemon transport zeroization, `sigaction`, etc.); **policy enforcement deferred to 0.9.0** |
+| **0.9.0** | Planned | **Policy as an enforced control** (the last substantive gap) — daemon-side policy + audit, caller authentication, signed/pinned policy file |
+| **→ 1.0.0** | Planned | Install channels + final review, then the first **stable, audited** release |
 | **1.0.0** | Planned | First **stable release**: a hardened, audited command-line tool |
 | **2.0.0** | Planned | Desktop **GUI** (Tauri) for vault management + system tray |
 | **3.0.0** | Planned | **Claude / AI-platform access** — MCP server + Pre/PostToolUse hooks (Claude Code, Cursor, Copilot, VS Code, Aider) |
@@ -38,7 +39,7 @@ files/dirs + atomic socket (#14/#16), graceful shutdown (#17), zeroized secrets
 `sigaction` shutdown signals (N-9).
 
 **Remaining before 1.0.0:**
-- **Policy as an enforced control (the gate)** — evaluate policy + write audit inside the daemon so the socket is the choke point (#2, N-5), authenticate the caller (N-1), sign/pin `svault.policy.yaml` and anchor its discovery (#5), fail closed on an unparseable policy (N-2), and verify `meta.yaml` on the fallback path (#22). All three 0.7.0 reviews flagged this as the blocker for a "stable / enforced" label. Scheduled for its own release after 0.8.0.
+- **Policy as an enforced control (the gate)** — evaluate policy + write audit inside the daemon so the socket is the choke point (#2, N-5), authenticate the caller (N-1), sign/pin `svault.policy.yaml` and anchor its discovery (#5), fail closed on an unparseable policy (N-2), and verify `meta.yaml` on the fallback path (#22). All three 0.7.0 reviews flagged this as the blocker for a "stable / enforced" label. Scheduled for 0.9.0.
 - **Accepted/backlog, not blockers** — Windows atomic owner-only DACL (N-7), tamper-evident audit sink (#15/N-8), tunable Argon2id (N-12).
 - **Distribution** — `install.sh`, Homebrew tap, cargo-binstall, Docker (see below).
 
