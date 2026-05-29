@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  macos:
     uses: ./.github/workflows/test.yml
     with:
       os: macos-latest

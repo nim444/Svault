@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  fedora:
     # GitHub has no hosted Fedora runner — run inside a Fedora container
     # on the Ubuntu runner instead.
     uses: ./.github/workflows/test.yml

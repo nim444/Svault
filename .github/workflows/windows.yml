@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  windows:
     uses: ./.github/workflows/test.yml
     with:
       os: windows-latest
