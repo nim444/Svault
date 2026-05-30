@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.0] - Unreleased
+## [0.9.0] - 2026-05-30
 
 The **enforced policy engine** release — closes the advisory-policy gap that all
 three 0.7.0 reviews named as the 1.0.0 blocker (#2/#5/#22, review N-1/N-2/N-5) —
