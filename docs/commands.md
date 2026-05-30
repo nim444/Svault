@@ -14,16 +14,19 @@ svault vaults                      # list all vaults with metadata (storage:name
 ## Secrets
 
 ```bash
-svault secret add    <NAME> [-v VAULT] [--scope S] [--tier low|medium|high] [--require-reason]
+svault secret add    <NAME> [-v VAULT] [--scope S] [--tier low|medium|high] [--require-reason] [--description "..."]
 svault secret get    <NAME> [-v VAULT]   # retrieve a secret value (human path)
 svault secret list          [-v VAULT]   # list secret names (never values)
 svault secret remove <NAME> [-v VAULT]   # delete a secret
 ```
 
-`secret add` also **classifies** the secret (scope + sensitivity tier) into the
-signed `meta.yaml`; the flags drive non-interactive use, otherwise you're prompted
-(defaulting to the vault's `default_tier`). `--require-reason` makes the AI judge
-run for that secret even at low tier.
+`secret add` also **classifies** the secret (scope + sensitivity tier +
+`--description`) into the signed `meta.yaml`; the flags drive non-interactive use,
+otherwise you're prompted (defaulting to the vault's `default_tier`).
+`--require-reason` makes the AI judge run for that secret even at low tier, and
+`--description` records what the secret is for so the judge can check the stated
+reason against it. (Every secret/get/settings command takes `-v <vault>` since you
+can have several — local today, remote planned.)
 
 ## Policy engine — the agent path
 
@@ -45,7 +48,8 @@ Configure `[judge]` in `.svault/config.yaml`; the key comes from
 ```bash
 svault judge set-key      # prompt for the key, store it 0600 (or: echo $KEY | svault judge set-key)
 svault judge status       # show where the key resolves from + model config (never prints the key)
-svault judge test --reason "run the nightly migration" --scope database --tier high
+svault judge test --reason "run the nightly migration" --scope database --tier high \
+  --description "production Postgres connection string"   # --description is optional
 svault judge remove-key   # delete the stored key file
 ```
 
@@ -100,10 +104,13 @@ $ svault create
   # name defaults to the directory (billing-api); pick a strong passphrase.
   # On success svault prints a one-time RECOVERY CODE — save it now.
 
-$ svault secret add STRIPE_SECRET_KEY --scope payments --tier high
+$ svault secret add STRIPE_SECRET_KEY --scope payments --tier high \
+    --description "production Stripe charge key"
   # prompts for the value (hidden input); classifies it as high-sensitivity
+  # the description is context the AI judge weighs against each request's reason
 
-$ svault secret add DATABASE_URL --scope database --tier medium
+$ svault secret add DATABASE_URL --scope database --tier medium \
+    --description "production Postgres connection string"
 $ svault secret list
   STRIPE_SECRET_KEY
   DATABASE_URL

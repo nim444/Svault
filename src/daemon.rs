@@ -1082,6 +1082,7 @@ mod imp {
                     scope: scope.to_string(),
                     tier,
                     require_reason: false,
+                    description: String::new(),
                 },
             );
             v.save_meta(&m).unwrap();

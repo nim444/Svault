@@ -77,6 +77,12 @@ pub struct SecretRule {
     /// scored. Off by default; the reason is still required for any agent get.
     #[serde(default)]
     pub require_reason: bool,
+    /// Optional human note on what this secret is for (e.g. "production Stripe
+    /// charge key"). Travels in the signed `meta.yaml` and is handed to the AI
+    /// judge as context so it can tell whether a stated reason actually fits the
+    /// secret. Never a secret value.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -406,6 +412,7 @@ callers:
             scope: scope.to_string(),
             tier,
             require_reason: false,
+            description: String::new(),
         }
     }
 

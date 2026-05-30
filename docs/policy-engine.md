@@ -26,26 +26,39 @@ Every decision is audited and stamped with the connecting process's **peer UID**
 A full setup is four moves. Each is independent — do only what you need, and
 re-run any step later to change things.
 
-### 1. Classify your secrets (scope + tier)
+> **Targeting a vault.** You can have several vaults (local today, remote
+> planned), so every secret/get/settings command takes `-v <vault>` (`--vault`).
+> Omit it only when there's a single vault, or to be prompted to pick one. The
+> examples below add `-v billing` to be explicit.
+
+### 1. Classify your secrets (scope + tier + description)
 
 Classification lives in the signed `meta.yaml`. Set it when you add a secret, or
 re-run `secret add` on an existing name to **reclassify** it (the value is
-preserved if you leave it unchanged; the meta is re-signed):
+preserved if you leave it unchanged; the meta is re-signed). The optional
+`--description` records *what the secret is for* — the AI judge weighs it against
+the stated reason, so a request whose reason doesn't match the secret's purpose is
+denied:
 
 ```bash
-# Add and classify in one step
-svault secret add DB_PASSWORD --scope database --tier high
-svault secret add STRIPE_KEY  --scope payments --tier high --require-reason
-svault secret add ANALYTICS   --scope api      --tier low
+# Add and classify in one step (-v picks the vault)
+svault secret add DB_PASSWORD -v billing --scope database --tier high \
+  --description "production Postgres connection string"
+svault secret add STRIPE_KEY  -v billing --scope payments --tier high --require-reason \
+  --description "production Stripe charge key — only for billing/charge flows"
+svault secret add ANALYTICS   -v billing --scope api --tier low
 
 # Modify later — re-running with new flags updates the classification
-svault secret add ANALYTICS   --scope api      --tier medium
+svault secret add ANALYTICS   -v billing --scope api --tier medium \
+  --description "read-only analytics API token"
 ```
 
-Run `svault secret add NAME` with no flags to be prompted interactively (the tier
-defaults to the vault's `default_tier`). In the TUI, `a` in the secret browser
-opens the same form (scope / tier / require-reason). A `"*"` entry in the map is
-the default rule for any secret you didn't classify.
+Run `svault secret add NAME` with no flags to be prompted interactively for scope,
+tier, and description (the tier defaults to the vault's `default_tier`). In the
+TUI, `a` in the secret browser opens the same form (scope / description / tier /
+require-reason). A `"*"` entry in the map is the default rule for any secret you
+didn't classify. The vault's own description (set at `svault create` / in
+settings) is also given to the judge as overall context.
 
 ### 2. Define who may ask (callers)
 
@@ -69,7 +82,9 @@ and verify — no secret is touched:
 ```bash
 svault judge set-key        # paste the key (hidden), or: echo "$KEY" | svault judge set-key
 svault judge status         # confirm: key present + model/thresholds
-svault judge test --reason "run the nightly db migration" --scope database --tier high
+# Dry-run — pass --description to see how a secret's purpose sways the verdict:
+svault judge test --reason "run the nightly db migration" --scope database --tier high \
+  --description "production Postgres connection string"
 ```
 
 Enable it for the machine in `.svault/config.yaml` (`judge.enabled: true`) or per
@@ -80,11 +95,14 @@ set-key` again or `svault judge remove-key`.
 ### 4. Make a request as the agent
 
 ```bash
-svault get DB_PASSWORD --scope database --reason "run the nightly migration" --caller claude-code
+svault get DB_PASSWORD -v billing --scope database \
+  --reason "run the nightly migration" --caller claude-code
 ```
 
 Granted → the value prints to stdout (+ an audit row); denied → non-zero exit with
-the reason. Review history any time with `svault policy check <caller>`.
+the reason. The judge sees the vault's and secret's descriptions, so the reason
+has to fit what the secret is actually for. Review history any time with
+`svault policy check <caller>`.
 
 ## The request pipeline
 
@@ -132,12 +150,14 @@ a same-UID attacker can't downgrade a tier or scope without the passphrase
 (findings #5/#22). Set it when adding a secret:
 
 ```bash
-svault secret add DB_PASSWORD --scope database --tier high
+svault secret add DB_PASSWORD --scope database --tier high --description "prod Postgres DSN"
 svault secret add API_KEY      --scope api      --tier medium --require-reason
 ```
 
-Interactively, `svault secret add NAME` prompts for scope and tier (defaulting to
-the vault's `default_tier`, chosen at `svault create`). A `"*"` entry in the
+Each secret carries `scope`, `tier`, `require_reason`, and an optional
+`description` (what it's for — passed to the AI judge as context). Interactively,
+`svault secret add NAME` prompts for scope, tier (defaulting to the vault's
+`default_tier`, chosen at `svault create`), and description. A `"*"` entry in the
 classification map acts as the default for any unlisted secret.
 
 ## `svault.policy.yaml` — caller definitions

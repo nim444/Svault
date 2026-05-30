@@ -57,10 +57,8 @@ pub fn authorize(
     // when a global runtime exists.
     let vault_enabled = meta.judge.enabled.unwrap_or(true);
     let active = judge.is_some() && vault_enabled;
-    let require_reason = meta
-        .classify(req.secret)
-        .map(|r| r.require_reason)
-        .unwrap_or(false);
+    let rule = meta.classify(req.secret);
+    let require_reason = rule.map(|r| r.require_reason).unwrap_or(false);
 
     // Should we actually call the model? Low tier skips it unless require_reason.
     let consult = active && (tier != Tier::Low || require_reason);
@@ -85,6 +83,8 @@ pub fn authorize(
         secret: req.secret,
         tier,
         vault: req.vault,
+        vault_description: &meta.description,
+        secret_description: rule.map(|r| r.description.as_str()).unwrap_or(""),
         recent: &recent,
     };
     let verdict = judge::evaluate(rt, &model, &ctx);

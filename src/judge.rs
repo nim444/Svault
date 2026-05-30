@@ -46,6 +46,10 @@ pub struct JudgeContext<'a> {
     pub secret: &'a str,
     pub tier: Tier,
     pub vault: &'a str,
+    /// Optional human note on what the vault is for (its `meta.description`).
+    pub vault_description: &'a str,
+    /// Optional human note on what this secret is for (its `SecretRule`).
+    pub secret_description: &'a str,
     pub recent: &'a str,
 }
 
@@ -146,17 +150,36 @@ const SYSTEM_PROMPT: &str = "\
 You are the access-control judge for Svault, a secret manager that gates AI-agent \
 access to credentials. Given a structured request, decide whether the stated reason \
 plausibly and specifically justifies handing this secret to this caller right now, \
-considering the secret's sensitivity tier and the caller's recent activity. Deny vague, \
-generic, mismatched, or suspicious requests (e.g. a reason unrelated to the secret's \
-scope, or a burst of requests). Reply with ONLY a compact JSON object and nothing else: \
+considering the secret's sensitivity tier and the caller's recent activity. When a \
+vault or secret purpose is given, judge whether the stated reason fits what the secret \
+is actually for — a reason that doesn't match the secret's documented purpose is a deny. \
+Deny vague, generic, mismatched, or suspicious requests (e.g. a reason unrelated to the \
+secret's scope or purpose, or a burst of requests). Reply with ONLY a compact JSON object and nothing else: \
 {\"decision\":\"allow\"|\"deny\",\"score\":0-100,\"reason\":\"<short>\"}. \
 score is your confidence (0-100) that the request is legitimate.";
 
 fn user_prompt(ctx: &JudgeContext) -> String {
-    format!(
-        "Caller: {}\nSecret: {}\nScope: {}\nSensitivity tier: {}\nVault: {}\nStated reason: {}\nRecent activity: {}",
-        ctx.caller, ctx.secret, ctx.scope, ctx.tier, ctx.vault, ctx.reason, ctx.recent
-    )
+    let mut s = format!(
+        "Caller: {}\nSecret: {}\nScope: {}\nSensitivity tier: {}\nVault: {}",
+        ctx.caller, ctx.secret, ctx.scope, ctx.tier, ctx.vault
+    );
+    if !ctx.vault_description.trim().is_empty() {
+        s.push_str(&format!(
+            "\nVault purpose: {}",
+            ctx.vault_description.trim()
+        ));
+    }
+    if !ctx.secret_description.trim().is_empty() {
+        s.push_str(&format!(
+            "\nSecret purpose: {}",
+            ctx.secret_description.trim()
+        ));
+    }
+    s.push_str(&format!(
+        "\nStated reason: {}\nRecent activity: {}",
+        ctx.reason, ctx.recent
+    ));
+    s
 }
 
 /// Ask the judge about one request. `model` lets the caller pass a per-vault
@@ -232,6 +255,8 @@ mod tests {
             secret: "DB_URL",
             tier: Tier::Medium,
             vault: "proj",
+            vault_description: "",
+            secret_description: "",
             recent: "none",
         }
     }
@@ -286,5 +311,23 @@ mod tests {
             evaluate(&rt(Err("timeout".into())), "test", &ctx()),
             JudgeVerdict::Unavailable { .. }
         ));
+    }
+
+    #[test]
+    fn descriptions_are_included_when_present_and_omitted_when_blank() {
+        // Blank descriptions add no purpose lines.
+        let bare = user_prompt(&ctx());
+        assert!(!bare.contains("Vault purpose"));
+        assert!(!bare.contains("Secret purpose"));
+
+        // Populated descriptions reach the model as context.
+        let described = JudgeContext {
+            vault_description: "billing API service",
+            secret_description: "production Stripe charge key",
+            ..ctx()
+        };
+        let prompt = user_prompt(&described);
+        assert!(prompt.contains("Vault purpose: billing API service"));
+        assert!(prompt.contains("Secret purpose: production Stripe charge key"));
     }
 }

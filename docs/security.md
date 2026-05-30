@@ -31,8 +31,8 @@ that holds the key. It evaluates policy, consults the AI judge for sensitive
 secrets, writes the audit record (stamped with the connecting process's
 **peer UID**, which — unlike the self-asserted `--caller` — can't be forged), and
 only then returns a value. The CLI runs the identical gate locally when no daemon
-is up. Secret classification (scope/tier/`require_reason`) lives in the
-**HMAC-signed `meta.yaml`**, so a same-UID process can't downgrade a tier without
+is up. Secret classification (scope/tier/`require_reason`/`description`) lives in
+the **HMAC-signed `meta.yaml`**, so a same-UID process can't downgrade a tier without
 the passphrase (#5/#22). See [Policy engine](policy-engine.md).
 
 This raises the bar for cooperative/semi-trusted agents and produces a
@@ -67,7 +67,7 @@ until a key is available**, so upgrading never silently calls out. Verify with
 ## Threat model notes
 
 - Svault protects secrets **at rest** and gates **agent access**. It does not defend against a compromised machine that already has your unlocked session (file or daemon), nor against a **hostile same-UID process** (which can read the daemon's memory directly). The policy/judge gate is for cooperative and semi-trusted agents plus audit + anomaly detection — not a same-UID sandbox.
-- The judge sends the secret **name, scope, tier, caller, and reason** (never the value) to your configured OpenRouter model — factor that third-party call into your data-handling posture.
+- The judge sends the secret **name, scope, tier, caller, reason, and any vault/secret descriptions you set** (never the value) to your configured OpenRouter model — keep descriptions free of sensitive data, and factor that third-party call into your data-handling posture.
 - HMAC signing detects tampering with `meta.yaml`, but anyone with the passphrase can decrypt the vault — treat the passphrase as the root of trust.
 - The audit log records policy *decisions and reasons*, and the usage log records *actions* (by human or agent, and the surface they came through — CLI, TUI, GUI, MCP) — neither ever stores secret values.
 

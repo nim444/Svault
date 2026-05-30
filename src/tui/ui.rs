@@ -591,6 +591,7 @@ fn draw_secret_add(frame: &mut Frame, area: Rect, form: &SecretAddForm) {
         ("Name", form.name.clone()),
         ("Value", mask(&form.value)),
         ("Scope", form.scope.clone()),
+        ("Description", form.description.clone()),
         ("Tier", tier_label(form.tier).to_string()),
         ("Require reason", yes_no(form.require_reason).to_string()),
     ];

@@ -76,7 +76,7 @@ This is backed by a per-vault `usage.log` (`.svault/<name>/usage.log`, JSON line
 | `Esc` / `b` | Back to the vault list |
 | `?` | Show the help overlay |
 
-The **add-secret** form also classifies the secret: name, value, **scope**, **tier** (low/medium/high, defaulting to the vault's default tier), and a **require-reason** toggle. `space` / `←` `→` cycle the tier and toggle require-reason. This is the same classification you can set non-interactively with `svault secret add --scope --tier --require-reason`, and it's what the policy gate enforces.
+The **add-secret** form also classifies the secret: name, value, **scope**, **description** (optional — what it's for, used by the AI judge), **tier** (low/medium/high, defaulting to the vault's default tier), and a **require-reason** toggle. `space` / `←` `→` cycle the tier and toggle require-reason; the text fields (name/value/scope/description) accept typing and paste. This is the same classification you can set non-interactively with `svault secret add --scope --tier --require-reason --description`, and it's what the policy gate enforces.
 
 A locked vault routes through a passphrase prompt first, then resumes the action you asked for.
 

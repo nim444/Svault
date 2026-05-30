@@ -75,6 +75,9 @@ enum Commands {
         /// (add) Always run the AI judge for this secret, even at low tier.
         #[arg(long)]
         require_reason: bool,
+        /// (add) What this secret is for — given to the AI judge as context.
+        #[arg(long)]
+        description: Option<String>,
     },
     /// List all vaults in .svault/
     Vaults,
@@ -171,6 +174,9 @@ enum Commands {
         /// Treat the sample as this tier (affects thresholds): low | medium | high.
         #[arg(long, default_value = "medium")]
         tier: String,
+        /// (test) Sample secret purpose — context the judge weighs against the reason.
+        #[arg(long)]
+        description: Option<String>,
     },
 }
 
@@ -190,6 +196,7 @@ fn main() -> Result<()> {
             scope,
             tier,
             require_reason,
+            description,
         } => cmd_secret(
             &action,
             name.as_deref(),
@@ -197,6 +204,7 @@ fn main() -> Result<()> {
             scope.as_deref(),
             tier.as_deref(),
             require_reason,
+            description.as_deref(),
         ),
         Commands::Vaults => cmd_vaults(),
         Commands::Unlock { vault } => cmd_unlock(vault.as_deref()),
@@ -229,7 +237,16 @@ fn main() -> Result<()> {
             secret,
             caller,
             tier,
-        } => cmd_judge(&action, reason.as_deref(), &scope, &secret, &caller, &tier),
+            description,
+        } => cmd_judge(
+            &action,
+            reason.as_deref(),
+            &scope,
+            &secret,
+            &caller,
+            &tier,
+            description.as_deref(),
+        ),
     }
 }
 
@@ -682,6 +699,7 @@ fn cmd_secret(
     scope_arg: Option<&str>,
     tier_arg: Option<&str>,
     require_reason: bool,
+    description_arg: Option<&str>,
 ) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta_preview = VaultMeta::load_unverified(&vault_dir)?;
@@ -744,6 +762,15 @@ fn cmd_secret(
                 Some(t) => parse_tier(t),
                 None => prompt_tier(vault.meta.default_tier)?,
             };
+            // Optional purpose note the AI judge uses to assess whether a
+            // request's reason fits the secret. Blank is fine.
+            let description = match description_arg {
+                Some(d) => d.trim().to_string(),
+                None => Input::new()
+                    .with_prompt("  Description (what it's for — optional, used by the AI judge)")
+                    .allow_empty(true)
+                    .interact_text()?,
+            };
             let mut meta = vault.meta.clone();
             meta.secrets.insert(
                 secret_name.clone(),
@@ -751,6 +778,7 @@ fn cmd_secret(
                     scope,
                     tier,
                     require_reason,
+                    description,
                 },
             );
             vault.save_meta(&meta)?;
@@ -1570,9 +1598,10 @@ fn cmd_judge(
     secret: &str,
     caller: &str,
     tier: &str,
+    description: Option<&str>,
 ) -> Result<()> {
     match action {
-        "test" => cmd_judge_test(reason, scope, secret, caller, tier),
+        "test" => cmd_judge_test(reason, scope, secret, caller, tier, description),
         "set-key" | "set" => cmd_judge_set_key(),
         "status" | "key" | "key-status" => cmd_judge_status(),
         "remove-key" | "remove" | "unset" => cmd_judge_remove_key(),
@@ -1690,6 +1719,7 @@ fn cmd_judge_test(
     secret: &str,
     caller: &str,
     tier: &str,
+    description: Option<&str>,
 ) -> Result<()> {
     let reason = reason.unwrap_or("run the nightly database migration to apply pending changes");
     let cfg = config::SvaultConfig::load();
@@ -1722,6 +1752,8 @@ fn cmd_judge_test(
         scope,
         reason,
         secret,
+        vault_description: "",
+        secret_description: description.unwrap_or(""),
         tier: tier_enum,
         vault: "test",
         recent: "no prior requests in the last hour",

@@ -339,17 +339,18 @@ pub struct SecretAddForm {
     pub name: String,
     pub value: String,
     pub scope: String,
+    pub description: String,
     pub tier: usize, // 0 low · 1 medium · 2 high
     pub require_reason: bool,
-    pub focus: usize, // 0 name · 1 value · 2 scope · 3 tier · 4 require_reason
+    pub focus: usize, // 0 name · 1 value · 2 scope · 3 description · 4 tier · 5 require_reason
     pub error: Option<String>,
 }
 
 impl SecretAddForm {
-    const FIELDS: usize = 5;
-    /// Text-entry fields (name/value/scope) show a caret; tier/require_reason don't.
+    const FIELDS: usize = 6;
+    /// Text-entry fields (name/value/scope/description) show a caret; tier/require_reason don't.
     fn focus_is_text(&self) -> bool {
-        self.focus < 3
+        self.focus < 4
     }
 }
 
@@ -1328,6 +1329,7 @@ impl App {
                     name: String::new(),
                     value: String::new(),
                     scope: "misc".to_string(),
+                    description: String::new(),
                     tier: default_tier,
                     require_reason: false,
                     focus: 0,
@@ -1441,6 +1443,9 @@ impl App {
                 2 => {
                     form.scope.pop();
                 }
+                3 => {
+                    form.description.pop();
+                }
                 _ => {}
             },
             KeyCode::Char(c) => match form.focus {
@@ -1456,8 +1461,12 @@ impl App {
                     form.scope.push(c);
                     form.error = None;
                 }
-                3 if c == ' ' => form.tier = cycle(form.tier, 3, true),
-                4 if c == ' ' => form.require_reason = !form.require_reason,
+                3 => {
+                    form.description.push(c);
+                    form.error = None;
+                }
+                4 if c == ' ' => form.tier = cycle(form.tier, 3, true),
+                5 if c == ' ' => form.require_reason = !form.require_reason,
                 _ => {}
             },
             _ => {}
@@ -1494,6 +1503,7 @@ impl App {
                             scope,
                             tier: tier_at(form.tier),
                             require_reason: form.require_reason,
+                            description: form.description.trim().to_string(),
                         },
                     );
                     let _ = vault.save_meta(&meta);
@@ -1570,8 +1580,8 @@ fn settings_adjust(form: &mut SettingsForm, forward: bool) {
 
 fn secret_add_adjust(form: &mut SecretAddForm, forward: bool) {
     match form.focus {
-        3 => form.tier = cycle(form.tier, 3, forward),
-        4 => form.require_reason = !form.require_reason,
+        4 => form.tier = cycle(form.tier, 3, forward),
+        5 => form.require_reason = !form.require_reason,
         _ => {}
     }
 }
@@ -1721,9 +1731,10 @@ mod tests {
             name: String::new(),
             value: String::new(),
             scope: "misc".into(),
+            description: String::new(),
             tier: 0,
             require_reason: false,
-            focus: 3, // tier picker
+            focus: 4, // tier picker
             error: None,
         };
         let mut app = bare_app(Screen::SecretAdd(form));
