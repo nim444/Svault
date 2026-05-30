@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-05-31
+
+The **encrypt-the-policy-at-rest** release. Through 0.9.1 only secret *values*
+were encrypted; the entire policy surface lived in the plaintext (HMAC-signed)
+`meta.yaml` and the committable `svault.policy.yaml`. Signing stopped *tampering*
+but did nothing against *reading* — a same-UID agent could read each secret's
+tier, scope, purpose description, rate limit, and which callers hold which scopes,
+then craft a request designed to pass. This release closes that reconnaissance
+path: the whole policy now lives **AES-256-GCM encrypted inside `vault.enc`**, no
+easier to read than the secrets themselves.
+
+**Honest scope:** this defeats reading the files to plan a bypass. It is *not* a
+sandbox against a hostile same-UID process that reads the unlocked daemon's
+memory directly — that remains inherent to the documented same-UID trust model.
+
+### Changed
+- **Policy is encrypted at rest.** Per-secret classification (scope/tier/`require_reason`/description), the vault's `allow_agent` + `rate_limit`, the per-vault judge override, the default tier, and **caller rules** all moved out of the plaintext `meta.yaml` (and the former `svault.policy.yaml`) into a versioned, AES-256-GCM-encrypted payload inside `vault.enc` (`policy::VaultPolicyData`). The public `meta.yaml` now carries only non-sensitive metadata (name, description, storage, created-at, behavioural settings). Reading any file at rest reveals nothing an agent could use to plan a passing request.
+- **Caller rules are now per-vault and encrypted.** The committable project-level `svault.policy.yaml` is gone; `svault policy init` seeds caller rules into a vault's encrypted policy, and `svault policy check <caller>` unlocks the vault to read them. (Team policy-as-code sharing will return via an explicit export path.)
+- **Denials are generic to the caller.** Every denied `svault get` now returns a single opaque message (`denied: request not authorized for this secret`); the real reason — judge score + rationale, scope/caller mismatch, rate limit — is recorded only in the audit log, for the human. A caller can no longer learn what to change to make a denied request pass. (A future escalation hook can notify a channel on denials.)
+- Policy view/edit now requires an unlocked vault (you can't read or change policy on a locked vault) — `svault settings`, `svault secret add`, the TUI classification table, and `svault policy check`/`init` all open the vault first.
+- The vault list (`svault vaults`) no longer shows allow-agent / rate-limit columns (they're encrypted now) — use `svault policy check` to see who may access what.
+- TUI: the judge-management shortcut is labelled **`shift-J`** (it always required Shift; `j` is list-down).
+
+### Security
+- Closes the policy-reconnaissance path: classification, caller scopes, rate limits, and judge thresholds-of-effect are unreadable at rest.
+- Removes the score/rationale leak to the caller on a denial (no hill-climbing toward a passing request).
+
+### Notes
+- The on-disk vault payload format is bumped (v2). There is no migration — the project has no released users; create vaults fresh.
+
+## [0.9.1] - 2026-05-30
+
+Brings the **policy engine + AI judge to the TUI**. Everything 0.9.0 added on the
+command line — key management, the global judge switch, per-secret
+classification — is now drivable from the keyboard, and the change is reflected
+in the audit timeline.
+
+### Added
+- **TUI judge management** — press `J` on the vault list to open the AI-judge screen: toggle the judge on/off globally, edit the model / allow- and high-thresholds / timeout (saved to `.svault/config.yaml`), **set** the OpenRouter key (masked entry, stored `0600`), **remove** it (`Del`), and run a live **test** that dry-runs a sample request and shows the verdict + score inline. This is the TUI equivalent of the `svault judge` commands, plus the global enable switch that previously needed a hand-edited config.
+- **Per-secret classification in the secret browser** — the browser is now a table showing each secret's **TIER · SCOPE · REASON? · DESCRIPTION** (unclassified secrets read `unset`). Press `c` to **reclassify** a secret — edit its scope/tier/require-reason/description and re-sign `meta.yaml`; the secret value is never touched.
+- **`svault judge enable` / `disable`** — flip the global judge switch from the CLI too (CLI/TUI parity). The judge acts only when this is on **and** a key is configured; a per-vault `meta.judge.enabled = false` still opts a vault out.
+- **First-run guidance** — after creating a vault with the judge turned on, `svault create` now tells you exactly what's still needed for the judge to act (`svault judge set-key` and/or `svault judge enable`).
+
+### Changed
+- **Audit reflects judge/policy changes.** Reclassifying a secret records `secret.classify`, and global judge changes (`judge.config`, `judge.key.set`, `judge.key.remove`) are recorded to a value-free `.svault/usage.log`. The activity timeline (`v`) folds these global events in alongside a vault's own, sorted newest-first, so a policy/judge change made from the `J` screen is visible in the audit trail.
+- `SvaultConfig` can now be persisted (owner-only `.svault/config.yaml`) so the judge config is editable without hand-editing YAML.
+
 ## [0.9.0] - 2026-05-30
 
 The **enforced policy engine** release — closes the advisory-policy gap that all

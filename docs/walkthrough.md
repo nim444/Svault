@@ -46,20 +46,24 @@ svault secret add STRIPE_KEY -v billing-api --scope payments --tier high --requi
   --description "production Stripe charge key — only for billing/charge flows"
 ```
 
-Classification lives in the **HMAC-signed `meta.yaml`** — a same-UID process can't
-downgrade a tier or rewrite a purpose without the vault key. In the TUI, `a` in the
-secret browser opens the same form (name / value / scope / description / tier /
-require-reason).
+Classification lives **AES-256-GCM encrypted inside `vault.enc`** — a same-UID
+process can neither read a tier/scope/purpose at rest to plan a passing request nor
+downgrade it without the vault key. In the TUI, `a` in the secret browser opens the
+same form (name / value / scope / description / tier / require-reason).
 
 ## 4. Define who may ask (callers)
 
+Caller rules live encrypted in the vault too (no committable `svault.policy.yaml`).
+Seed defaults, then edit them in `svault settings`:
+
 ```bash
-svault policy init          # scaffold svault.policy.yaml (committable; no secrets)
-$EDITOR svault.policy.yaml
+svault policy init                # seed default callers into the vault's encrypted policy
+svault policy check claude-code   # what it can reach + recent activity (unlocks the vault)
 ```
 
+Conceptually a vault's caller rules look like:
+
 ```yaml
-version: 1
 callers:
   claude-code:
     scopes: [database, api]
@@ -70,10 +74,6 @@ callers:
   default:
     scopes: []
     rate_limit: 5/hour
-```
-
-```bash
-svault policy check claude-code   # what it can reach + recent activity
 ```
 
 ## 5. Turn on the AI judge
@@ -135,22 +135,24 @@ daemon**.
 
 ```bash
 svault daemon start
-svault unlock -v billing-api
+svault unlock billing-api
 
 # Granted — reason fits the secret's purpose
 svault get STRIPE_KEY -v billing-api --scope payments \
   --reason "charge a customer invoice for the monthly subscription" --caller billing-worker
-# → sk_live_...        (value to stdout; status + rationale to stderr)
+# → sk_live_...        (value to stdout; a one-line granted: status to stderr)
 
 # Denied — reason doesn't fit
 svault get STRIPE_KEY -v billing-api --scope payments \
   --reason "export the customer email list for marketing" --caller billing-worker
-# → error: judge denied (score 90) — reason does not match the secret's purpose
+# → denied: request not authorized for this secret
 #   (exits non-zero; no value printed)
 ```
 
 On allow, only the value goes to stdout, so an agent capturing stdout never sees the
-rationale. On deny it exits non-zero.
+rationale. On deny the caller gets a single **generic** message — the real reason
+(judge score 90 + rationale, scope/caller mismatch, rate limit) is recorded only in
+the audit log, so the agent can't hill-climb a denied request into a passing one.
 
 ## 8. Tiers and fail modes
 

@@ -4,7 +4,8 @@
 |---|---|
 | Encryption | AES-256-GCM |
 | Key derivation | Argon2id (64 MB memory, 3 iterations) — GPU-resistant |
-| Metadata integrity | HMAC-SHA256 — tampering with `meta.yaml` is detected |
+| Metadata integrity | HMAC-SHA256 — tampering with the public `meta.yaml` is detected |
+| Policy at rest | The full policy surface (classification, caller rules, access, judge overrides) is AES-256-GCM **encrypted inside `vault.enc`** — unreadable at rest, so an agent can't read it to plan a bypass |
 | Memory safety | `VaultKey`, returned secret values, prompts, and the daemon's reply buffer are `Zeroizing`/`ZeroizeOnDrop` — wiped after use. (The transient decrypted secret map built while reading a vault is freed but not individually wiped — a best-effort residue in the cooperative/at-rest model.) |
 | Session file | Created atomically with mode `0600`, never at permissive permissions |
 | Vault file | Safe to commit to git — encrypted at rest |
@@ -24,16 +25,27 @@ Two ways to stay unlocked, both owner-only:
 
 `.svault/` and each vault directory are created `0700`, so other local users can't traverse in. `recovery.enc` and export bundles are written owner-only too (they wrap a key-equivalent).
 
-## Policy enforcement (0.9.0)
+## Policy enforcement (0.9.0) + encryption at rest (0.9.2)
 
 The agent path (`svault get`) is **enforced inside the daemon** — the component
 that holds the key. It evaluates policy, consults the AI judge for sensitive
 secrets, writes the audit record (stamped with the connecting process's
 **peer UID**, which — unlike the self-asserted `--caller` — can't be forged), and
 only then returns a value. The CLI runs the identical gate locally when no daemon
-is up. Secret classification (scope/tier/`require_reason`/`description`) lives in
-the **HMAC-signed `meta.yaml`**, so a same-UID process can't downgrade a tier without
-the passphrase (#5/#22). See [Policy engine](policy-engine.md).
+is up.
+
+Since **0.9.2**, the entire policy surface — per-secret classification
+(scope/tier/`require_reason`/`description`), caller rules, access fallback, and the
+per-vault judge override — is **AES-256-GCM encrypted inside `vault.enc`**, not the
+plaintext `meta.yaml`. So a same-UID process can neither *read* the policy at rest
+to learn what reason/scope would pass (no reconnaissance) nor *tamper* with a tier
+or caller without the passphrase. The public `meta.yaml` keeps only non-sensitive
+metadata (name, description, storage, settings).
+
+**Denials are opaque to the caller.** A denied `svault get` returns only a generic
+message; the detailed reason (judge score + rationale, mismatch, rate limit) is
+recorded in the audit log for the human — never returned to the caller — so an
+agent can't hill-climb a denied request into a passing one.
 
 This raises the bar for cooperative/semi-trusted agents and produces a
 tamper-resistant audit trail; it is **not** a sandbox against a hostile same-UID

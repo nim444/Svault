@@ -11,11 +11,13 @@ mod ui;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
-use ratatui::widgets::{ListState, TableState};
+use ratatui::widgets::TableState;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::crypto::VaultKey;
 use crate::meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
+use crate::policy::SecretRule;
 use crate::session;
 use crate::vault::{list_vault_dirs, Vault, SVAULT_DIR};
 
@@ -254,8 +256,12 @@ pub struct SettingsForm {
 impl SettingsForm {
     const FIELDS: usize = SettingsField::ORDER.len();
 
-    fn from_meta(vault_dir: PathBuf, meta: VaultMeta) -> Self {
-        let (allow_mode, allow_list) = match &meta.access.allow_agent {
+    fn from_meta(
+        vault_dir: PathBuf,
+        meta: VaultMeta,
+        policy: &crate::policy::VaultPolicyData,
+    ) -> Self {
+        let (allow_mode, allow_list) = match &policy.access.allow_agent {
             AllowAgent::Bool(true) => (0, String::new()),
             AllowAgent::Bool(false) => (1, String::new()),
             AllowAgent::List(v) => (2, v.join(", ")),
@@ -266,11 +272,11 @@ impl SettingsForm {
             description: meta.description,
             allow_mode,
             allow_list,
-            rate_limit: meta.access.rate_limit,
+            rate_limit: policy.access.rate_limit.clone(),
             autolock: meta.settings.autolock,
             autolock_timer: meta.settings.autolock_timer,
-            default_tier: tier_idx(meta.default_tier),
-            judge: meta.judge.enabled.unwrap_or(false),
+            default_tier: tier_idx(policy.default_tier),
+            judge: policy.judge.enabled.unwrap_or(false),
             focus: 0,
             error: None,
         }
@@ -320,7 +326,14 @@ pub struct SecretScreen {
     pub vault_dir: PathBuf,
     pub name: String,
     pub secrets: Vec<String>,
-    pub list_state: ListState,
+    /// Per-secret classification from the encrypted policy, shown alongside each
+    /// name (tier/scope/require-reason/description) so the policy that governs an
+    /// agent `get` is visible without leaving the browser.
+    pub classifications: BTreeMap<String, SecretRule>,
+    /// The vault's default tier (from the decrypted policy), used to prefill the
+    /// add/classify forms.
+    pub default_tier: usize,
+    pub list_state: TableState,
     pub reveal: Option<Reveal>,
     pub pending_delete: Option<String>,
 }
@@ -351,6 +364,136 @@ impl SecretAddForm {
     /// Text-entry fields (name/value/scope/description) show a caret; tier/require_reason don't.
     fn focus_is_text(&self) -> bool {
         self.focus < 4
+    }
+}
+
+/// Reclassify an existing secret: edit the scope/tier/require-reason/description
+/// stored in the signed `meta.yaml`. The secret *value* is never touched here —
+/// this only edits the policy classification the gate reads.
+pub struct ClassifyForm {
+    pub vault_dir: PathBuf,
+    pub vault_name: String,
+    pub secret: String,
+    pub scope: String,
+    pub description: String,
+    pub tier: usize, // 0 low · 1 medium · 2 high
+    pub require_reason: bool,
+    pub focus: usize, // 0 scope · 1 description · 2 tier · 3 require_reason
+    pub error: Option<String>,
+}
+
+impl ClassifyForm {
+    const FIELDS: usize = 4;
+    /// Text-entry fields (scope/description) show a caret; tier/require_reason don't.
+    fn focus_is_text(&self) -> bool {
+        self.focus < 2
+    }
+}
+
+/// The focusable rows of the global judge-management screen, in display order.
+/// The first rows edit the global `JudgeConfig`; the last three are actions
+/// (set/remove the OpenRouter key, dry-run the model, save the config).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum JudgeField {
+    Enabled,
+    Model,
+    AllowThreshold,
+    HighThreshold,
+    Timeout,
+    ApiKey,
+    Test,
+    Save,
+}
+
+impl JudgeField {
+    pub const ORDER: [JudgeField; 8] = [
+        JudgeField::Enabled,
+        JudgeField::Model,
+        JudgeField::AllowThreshold,
+        JudgeField::HighThreshold,
+        JudgeField::Timeout,
+        JudgeField::ApiKey,
+        JudgeField::Test,
+        JudgeField::Save,
+    ];
+}
+
+/// Manage the global AI judge: the `.svault/config.yaml` `[judge]` section plus
+/// the `0600` OpenRouter key file. This is the TUI equivalent of `svault judge
+/// set-key / status / remove-key / test`, with the global enable/model/threshold
+/// knobs that previously required hand-editing the config.
+pub struct JudgeForm {
+    pub enabled: bool,
+    pub model: String,
+    pub allow_threshold: String,
+    pub high_threshold: String,
+    pub timeout: String,
+    /// Display-only summary of where the key resolves from; recomputed after a
+    /// set/remove so the screen always reflects the on-disk state.
+    pub key_status: String,
+    pub focus: usize,
+    pub error: Option<String>,
+    /// Result of the last `test` action (kind + message), shown under the form.
+    pub test_result: Option<(MsgKind, String)>,
+    /// When `Some`, the screen is in key-entry mode (masked input); the string is
+    /// the key being typed. `Esc` cancels, `Enter` writes it `0600`.
+    pub key_entry: Option<String>,
+}
+
+impl JudgeForm {
+    const FIELDS: usize = JudgeField::ORDER.len();
+
+    /// Build from the persisted global config and current key source.
+    fn load() -> Self {
+        let cfg = crate::config::SvaultConfig::load();
+        let j = &cfg.judge;
+        Self {
+            enabled: j.enabled,
+            model: j.model.clone(),
+            allow_threshold: j.allow_threshold.to_string(),
+            high_threshold: j.high_threshold.to_string(),
+            timeout: j.timeout_secs.to_string(),
+            key_status: key_status_line(j),
+            focus: 0,
+            error: None,
+            test_result: None,
+            key_entry: None,
+        }
+    }
+
+    pub fn current(&self) -> JudgeField {
+        JudgeField::ORDER[self.focus]
+    }
+
+    pub fn focus_is_text(&self) -> bool {
+        matches!(
+            self.current(),
+            JudgeField::Model
+                | JudgeField::AllowThreshold
+                | JudgeField::HighThreshold
+                | JudgeField::Timeout
+        )
+    }
+
+    fn text_field(&mut self) -> Option<&mut String> {
+        Some(match self.current() {
+            JudgeField::Model => &mut self.model,
+            JudgeField::AllowThreshold => &mut self.allow_threshold,
+            JudgeField::HighThreshold => &mut self.high_threshold,
+            JudgeField::Timeout => &mut self.timeout,
+            _ => return None,
+        })
+    }
+}
+
+/// One-line, value-free summary of where the OpenRouter key resolves from.
+fn key_status_line(cfg: &crate::config::JudgeConfig) -> String {
+    match crate::config::key_source(cfg) {
+        crate::config::KeySource::Env => {
+            format!("from ${} (environment)", crate::config::KEY_ENV)
+        }
+        crate::config::KeySource::File(p) => format!("present  ({})", p.display()),
+        crate::config::KeySource::None => "none — press enter to set".to_string(),
     }
 }
 
@@ -404,6 +547,10 @@ pub enum Screen {
     Recover(RecoverForm),
     /// Recent usage timeline for the selected vault.
     Activity(ActivityScreen),
+    /// Reclassify a secret's policy (scope/tier/require-reason/description).
+    Classify(ClassifyForm),
+    /// Manage the global AI judge (config + OpenRouter key + dry-run test).
+    Judge(JudgeForm),
 }
 
 // ── App ────────────────────────────────────────────────────────────────────────
@@ -497,6 +644,22 @@ impl App {
             Screen::Recover(form) => {
                 form.field_mut().push_str(&text);
                 form.error = None;
+            }
+            Screen::Classify(form) => {
+                match form.focus {
+                    0 => form.scope.push_str(&text),
+                    1 => form.description.push_str(&text),
+                    _ => {}
+                }
+                form.error = None;
+            }
+            Screen::Judge(form) => {
+                if let Some(buf) = form.key_entry.as_mut() {
+                    buf.push_str(&text);
+                } else if let Some(s) = form.text_field() {
+                    s.push_str(&text);
+                    form.error = None;
+                }
             }
             _ => {}
         }
@@ -607,6 +770,8 @@ impl App {
             Screen::Import(form) => self.key_import(form, key)?,
             Screen::Recover(form) => self.key_recover(form, key),
             Screen::Activity(scr) => self.key_activity(scr, key),
+            Screen::Classify(form) => self.key_classify(form, key)?,
+            Screen::Judge(form) => self.key_judge(form, key)?,
         }
         Ok(())
     }
@@ -629,11 +794,20 @@ impl App {
 
     /// Open the read-only activity timeline for the selected vault. The usage
     /// log isn't a secret (it holds no values), so no unlock is required.
+    ///
+    /// Global, vault-independent events (judge config + OpenRouter key changes,
+    /// recorded at the `.svault` base) are folded in and sorted with the vault's
+    /// own events, so a policy/judge change made from the `J` screen is visible
+    /// in the audit timeline too.
     fn start_activity(&mut self) {
         let Some(v) = self.selected_vault() else {
             return;
         };
-        let events = crate::usage::recent(&v.dir, 200);
+        let mut events = crate::usage::recent(&v.dir, 200);
+        events.extend(crate::usage::recent(Path::new(SVAULT_DIR), 200));
+        // RFC 3339 UTC timestamps sort correctly lexicographically; newest first.
+        events.sort_by(|a, b| b.ts.cmp(&a.ts));
+        events.truncate(200);
         let mut state = TableState::default();
         if !events.is_empty() {
             state.select(Some(0));
@@ -820,6 +994,7 @@ impl App {
             KeyCode::Char('r') => self.start_recover(),
             KeyCode::Char('v') => self.start_activity(),
             KeyCode::Char('d') => self.toggle_daemon(),
+            KeyCode::Char('J') => self.screen = Screen::Judge(JudgeForm::load()),
             KeyCode::Char('?') | KeyCode::Char('h') => self.show_help = true,
             KeyCode::Enter => self.open_secrets()?,
             _ => {}
@@ -959,8 +1134,28 @@ impl App {
             });
             return Ok(());
         }
-        let meta = VaultMeta::load_unverified(&v.dir)?;
-        self.screen = Screen::Settings(SettingsForm::from_meta(v.dir, meta));
+        // Access + judge config are encrypted, so open the vault (it's unlocked)
+        // to read the policy rather than the public meta.yaml.
+        let Some(key) = session::get_key(&v.dir) else {
+            self.screen = Screen::Unlock(UnlockForm {
+                vault_dir: v.dir,
+                name: v.name,
+                passphrase: String::new(),
+                error: None,
+                pending: Pending::Settings,
+            });
+            return Ok(());
+        };
+        match Vault::open_with_key(&v.dir, VaultKey::from_bytes(key)) {
+            Ok(vault) => {
+                self.screen = Screen::Settings(SettingsForm::from_meta(
+                    v.dir,
+                    vault.meta.clone(),
+                    &vault.policy,
+                ));
+            }
+            Err(e) => self.set_status(MsgKind::Error, format!("Cannot open vault: {e}")),
+        }
         Ok(())
     }
 
@@ -979,13 +1174,15 @@ impl App {
         match Vault::open_with_key(dir, VaultKey::from_bytes(key)) {
             Ok(vault) => {
                 let secrets = vault.list_secret_names().unwrap_or_default();
-                let mut list_state = ListState::default();
+                let mut list_state = TableState::default();
                 if !secrets.is_empty() {
                     list_state.select(Some(0));
                 }
                 self.screen = Screen::Secrets(SecretScreen {
                     vault_dir: dir.to_path_buf(),
                     name: name.to_string(),
+                    classifications: vault.policy.secrets.clone(),
+                    default_tier: tier_idx(vault.policy.default_tier),
                     secrets,
                     list_state,
                     reveal: None,
@@ -1081,23 +1278,28 @@ impl App {
         };
         // Storage is local and login is passphrase today; VaultMeta defaults to
         // "local" storage, so we only carry the wired settings forward.
-        let mut meta = VaultMeta::new(
+        let meta = VaultMeta::new(
             name.clone(),
             form.description.clone(),
-            AccessConfig {
-                allow_agent,
-                rate_limit: form.rate_limit.clone(),
-            },
             VaultSettings {
                 autolock: form.autolock,
                 autolock_timer: form.autolock_timer.clone(),
                 login_method: LoginMethod::Passphrase,
             },
         );
-        meta.default_tier = tier_at(form.default_tier);
-        meta.judge.enabled = Some(form.judge);
+        // The access rules, default tier, and judge override are encrypted in
+        // the vault payload, not the plaintext meta.yaml.
+        let mut vault_policy = crate::policy::VaultPolicyData {
+            access: AccessConfig {
+                allow_agent,
+                rate_limit: form.rate_limit.clone(),
+            },
+            default_tier: tier_at(form.default_tier),
+            ..crate::policy::VaultPolicyData::default()
+        };
+        vault_policy.judge.enabled = Some(form.judge);
 
-        match Vault::init(&vault_dir, &form.passphrase, meta) {
+        match Vault::init(&vault_dir, &form.passphrase, meta, vault_policy) {
             Ok(vault) => {
                 // Generate and store the recovery code, then show it once.
                 let code = crate::recovery::generate_code();
@@ -1192,18 +1394,23 @@ impl App {
             _ => AllowAgent::List(parse_agents(&form.allow_list)),
         };
 
-        // Carry the existing login method forward untouched — only the wired
-        // fields are editable here.
+        // Public meta gets the description + behavioural settings; the policy
+        // surface (access, default tier, judge override) is written encrypted.
         let mut meta = vault.meta.clone();
         meta.description = form.description.clone();
-        meta.access.allow_agent = allow_agent;
-        meta.access.rate_limit = form.rate_limit.clone();
         meta.settings.autolock = form.autolock;
         meta.settings.autolock_timer = form.autolock_timer.clone();
-        meta.default_tier = tier_at(form.default_tier);
-        meta.judge.enabled = Some(form.judge);
 
-        match vault.save_meta(&meta) {
+        let mut vault_policy = vault.policy.clone();
+        vault_policy.access.allow_agent = allow_agent;
+        vault_policy.access.rate_limit = form.rate_limit.clone();
+        vault_policy.default_tier = tier_at(form.default_tier);
+        vault_policy.judge.enabled = Some(form.judge);
+
+        match vault
+            .save_meta(&meta)
+            .and_then(|_| vault.save_policy(&vault_policy))
+        {
             Ok(_) => {
                 crate::usage::human(&form.vault_dir, "settings.update", None);
                 self.refresh_vaults();
@@ -1246,9 +1453,11 @@ impl App {
                         Pending::List => self.screen = Screen::List,
                         Pending::Secrets => self.enter_secrets(&form.vault_dir, &form.name)?,
                         Pending::Settings => {
-                            let meta = VaultMeta::load_unverified(&form.vault_dir)?;
-                            self.screen =
-                                Screen::Settings(SettingsForm::from_meta(form.vault_dir, meta));
+                            self.screen = Screen::Settings(SettingsForm::from_meta(
+                                form.vault_dir,
+                                vault.meta.clone(),
+                                &vault.policy,
+                            ));
                         }
                         Pending::FinishImport => {
                             // Re-sign meta.name so it matches the (suffixed) dir.
@@ -1319,10 +1528,8 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => secrets_next(&mut scr),
             KeyCode::Up | KeyCode::Char('k') => secrets_prev(&mut scr),
             KeyCode::Char('a') => {
-                // Default the tier to the vault's default_tier when we can read it.
-                let default_tier = VaultMeta::load_unverified(&scr.vault_dir)
-                    .map(|m| tier_idx(m.default_tier))
-                    .unwrap_or(0);
+                // Default the tier to the vault's default tier (from the policy).
+                let default_tier = scr.default_tier;
                 self.screen = Screen::SecretAdd(SecretAddForm {
                     vault_dir: scr.vault_dir.clone(),
                     vault_name: scr.name.clone(),
@@ -1336,6 +1543,36 @@ impl App {
                     error: None,
                 });
                 return Ok(());
+            }
+            KeyCode::Char('c') => {
+                if let Some(name) = scr.selected_name() {
+                    // Prefill from the existing classification, or the vault's
+                    // default tier when the secret has none yet.
+                    let rule = scr.classifications.get(&name).cloned();
+                    let default_tier = scr.default_tier;
+                    self.screen = Screen::Classify(ClassifyForm {
+                        vault_dir: scr.vault_dir.clone(),
+                        vault_name: scr.name.clone(),
+                        secret: name.clone(),
+                        scope: rule
+                            .as_ref()
+                            .map(|r| r.scope.clone())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| "misc".to_string()),
+                        description: rule
+                            .as_ref()
+                            .map(|r| r.description.clone())
+                            .unwrap_or_default(),
+                        tier: rule
+                            .as_ref()
+                            .map(|r| tier_idx(r.tier))
+                            .unwrap_or(default_tier),
+                        require_reason: rule.as_ref().map(|r| r.require_reason).unwrap_or(false),
+                        focus: 0,
+                        error: None,
+                    });
+                    return Ok(());
+                }
             }
             KeyCode::Enter | KeyCode::Char('g') => self.reveal_secret(&mut scr),
             KeyCode::Char('d') => {
@@ -1489,15 +1726,15 @@ impl App {
         match Vault::open_with_key(&form.vault_dir, VaultKey::from_bytes(key)) {
             Ok(vault) => match vault.add_secret(form.name.trim(), &form.value) {
                 Ok(_) => {
-                    // Classify in the signed meta so the policy gate applies to
+                    // Classify in the encrypted policy so the gate applies to
                     // TUI-added secrets too (scope/tier/require_reason from the form).
                     let scope = if form.scope.trim().is_empty() {
                         "misc".to_string()
                     } else {
                         form.scope.trim().to_string()
                     };
-                    let mut meta = vault.meta.clone();
-                    meta.secrets.insert(
+                    let mut vault_policy = vault.policy.clone();
+                    vault_policy.secrets.insert(
                         form.name.trim().to_string(),
                         crate::policy::SecretRule {
                             scope,
@@ -1506,7 +1743,7 @@ impl App {
                             description: form.description.trim().to_string(),
                         },
                     );
-                    let _ = vault.save_meta(&meta);
+                    let _ = vault.save_policy(&vault_policy);
                     crate::usage::human(&form.vault_dir, "secret.add", Some(form.name.trim()));
                     self.set_status(MsgKind::Ok, format!("Secret '{}' added", form.name.trim()));
                     let (dir, name) = (form.vault_dir.clone(), form.vault_name.clone());
@@ -1520,6 +1757,305 @@ impl App {
             Err(e) => {
                 form.error = Some(format!("{e}"));
                 self.screen = Screen::SecretAdd(form);
+            }
+        }
+        Ok(())
+    }
+
+    // ── Classify screen ───────────────────────────────────────────────────────
+
+    fn key_classify(&mut self, mut form: ClassifyForm, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                let (dir, name) = (form.vault_dir.clone(), form.vault_name.clone());
+                self.enter_secrets(&dir, &name)?;
+                return Ok(());
+            }
+            KeyCode::Tab | KeyCode::Down => form.focus = (form.focus + 1) % ClassifyForm::FIELDS,
+            KeyCode::BackTab | KeyCode::Up => {
+                form.focus = (form.focus + ClassifyForm::FIELDS - 1) % ClassifyForm::FIELDS
+            }
+            KeyCode::Left => classify_adjust(&mut form, false),
+            KeyCode::Right => classify_adjust(&mut form, true),
+            KeyCode::Enter => {
+                if form.focus == ClassifyForm::FIELDS - 1 {
+                    return self.submit_classify(form);
+                }
+                form.focus += 1;
+            }
+            KeyCode::Backspace => match form.focus {
+                0 => {
+                    form.scope.pop();
+                }
+                1 => {
+                    form.description.pop();
+                }
+                _ => {}
+            },
+            KeyCode::Char(c) => match form.focus {
+                0 => {
+                    form.scope.push(c);
+                    form.error = None;
+                }
+                1 => {
+                    form.description.push(c);
+                    form.error = None;
+                }
+                2 if c == ' ' => form.tier = cycle(form.tier, 3, true),
+                3 if c == ' ' => form.require_reason = !form.require_reason,
+                _ => {}
+            },
+            _ => {}
+        }
+        self.screen = Screen::Classify(form);
+        Ok(())
+    }
+
+    fn submit_classify(&mut self, mut form: ClassifyForm) -> Result<()> {
+        let Some(key) = session::get_key(&form.vault_dir) else {
+            self.set_status(MsgKind::Error, "Vault is locked");
+            self.screen = Screen::List;
+            return Ok(());
+        };
+        match Vault::open_with_key(&form.vault_dir, VaultKey::from_bytes(key)) {
+            Ok(vault) => {
+                let scope = if form.scope.trim().is_empty() {
+                    "misc".to_string()
+                } else {
+                    form.scope.trim().to_string()
+                };
+                let mut vault_policy = vault.policy.clone();
+                vault_policy.secrets.insert(
+                    form.secret.clone(),
+                    SecretRule {
+                        scope,
+                        tier: tier_at(form.tier),
+                        require_reason: form.require_reason,
+                        description: form.description.trim().to_string(),
+                    },
+                );
+                match vault.save_policy(&vault_policy) {
+                    Ok(_) => {
+                        crate::usage::human(&form.vault_dir, "secret.classify", Some(&form.secret));
+                        self.set_status(
+                            MsgKind::Ok,
+                            format!("Classification for '{}' saved", form.secret),
+                        );
+                        let (dir, name) = (form.vault_dir.clone(), form.vault_name.clone());
+                        self.enter_secrets(&dir, &name)?;
+                    }
+                    Err(e) => {
+                        form.error = Some(format!("{e}"));
+                        self.screen = Screen::Classify(form);
+                    }
+                }
+            }
+            Err(e) => {
+                form.error = Some(format!("{e}"));
+                self.screen = Screen::Classify(form);
+            }
+        }
+        Ok(())
+    }
+
+    // ── Judge management screen ─────────────────────────────────────────────────
+
+    fn key_judge(&mut self, mut form: JudgeForm, key: KeyEvent) -> Result<()> {
+        // Key-entry sub-mode takes the next keys (masked OpenRouter key input).
+        if let Some(mut buf) = form.key_entry.take() {
+            match key.code {
+                KeyCode::Esc => { /* cancelled — drop the buffer */ }
+                KeyCode::Backspace => {
+                    buf.pop();
+                    form.key_entry = Some(buf);
+                }
+                KeyCode::Char(c) => {
+                    buf.push(c);
+                    form.key_entry = Some(buf);
+                }
+                KeyCode::Enter => self.save_judge_key(&mut form, &buf),
+                _ => form.key_entry = Some(buf),
+            }
+            self.screen = Screen::Judge(form);
+            return Ok(());
+        }
+
+        match key.code {
+            KeyCode::Esc => {
+                self.screen = Screen::List;
+                return Ok(());
+            }
+            KeyCode::Tab | KeyCode::Down => form.focus = (form.focus + 1) % JudgeForm::FIELDS,
+            KeyCode::BackTab | KeyCode::Up => {
+                form.focus = (form.focus + JudgeForm::FIELDS - 1) % JudgeForm::FIELDS
+            }
+            KeyCode::Left | KeyCode::Right if form.current() == JudgeField::Enabled => {
+                form.enabled = !form.enabled;
+            }
+            // Delete on the key row removes the stored key file.
+            KeyCode::Delete if form.current() == JudgeField::ApiKey => {
+                self.remove_judge_key(&mut form)
+            }
+            KeyCode::Enter => match form.current() {
+                JudgeField::ApiKey => form.key_entry = Some(String::new()),
+                JudgeField::Test => self.run_judge_test(&mut form),
+                JudgeField::Save => return self.submit_judge(form),
+                JudgeField::Enabled => form.enabled = !form.enabled,
+                _ => form.focus += 1,
+            },
+            KeyCode::Backspace => {
+                if let Some(s) = form.text_field() {
+                    s.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if c == ' ' && form.current() == JudgeField::Enabled {
+                    form.enabled = !form.enabled;
+                } else if let Some(s) = form.text_field() {
+                    s.push(c);
+                    form.error = None;
+                }
+            }
+            _ => {}
+        }
+        self.screen = Screen::Judge(form);
+        Ok(())
+    }
+
+    /// Persist the typed OpenRouter key as a `0600` file, then refresh the status.
+    fn save_judge_key(&mut self, form: &mut JudgeForm, key: &str) {
+        let key = key.trim();
+        if key.is_empty() {
+            form.error = Some("empty key — nothing written".into());
+            return;
+        }
+        let cfg = crate::config::SvaultConfig::load();
+        match crate::config::set_openrouter_key(&cfg.judge, key) {
+            Ok(path) => {
+                form.key_status = key_status_line(&cfg.judge);
+                form.error = None;
+                log_judge("judge.key.set", None);
+                self.set_status(
+                    MsgKind::Ok,
+                    format!("OpenRouter key stored at {} (0600)", path.display()),
+                );
+            }
+            Err(e) => form.error = Some(format!("could not store key: {e}")),
+        }
+    }
+
+    fn remove_judge_key(&mut self, form: &mut JudgeForm) {
+        let cfg = crate::config::SvaultConfig::load();
+        match crate::config::remove_openrouter_key(&cfg.judge) {
+            Ok(Some(path)) => {
+                log_judge("judge.key.remove", None);
+                self.set_status(MsgKind::Ok, format!("Removed key file {}", path.display()));
+            }
+            Ok(None) => self.set_status(MsgKind::Info, "No key file to remove"),
+            Err(e) => self.set_status(MsgKind::Error, format!("could not remove key: {e}")),
+        }
+        form.key_status = key_status_line(&cfg.judge);
+    }
+
+    /// Dry-run the configured model against a sample request (the TUI equivalent
+    /// of `svault judge test`). Blocks the UI briefly for the HTTP round-trip.
+    fn run_judge_test(&mut self, form: &mut JudgeForm) {
+        let mut cfg = crate::config::SvaultConfig::load().judge;
+        // Verify the plumbing regardless of the global toggle, and use the
+        // (possibly unsaved) model the user is editing.
+        cfg.enabled = true;
+        if !form.model.trim().is_empty() {
+            cfg.model = form.model.trim().to_string();
+        }
+        let Some(rt) = crate::judge::JudgeRuntime::from_config(&cfg) else {
+            form.test_result = Some((
+                MsgKind::Error,
+                format!(
+                    "No OpenRouter key — set one here, or export ${}",
+                    crate::config::KEY_ENV
+                ),
+            ));
+            return;
+        };
+        let model = rt.model.clone();
+        let ctx = crate::judge::JudgeContext {
+            caller: "claude-code",
+            scope: "database",
+            reason: "run the nightly database migration to apply pending changes",
+            secret: "DB_URL",
+            tier: crate::policy::Tier::Medium,
+            vault: "demo-vault",
+            vault_description: "",
+            secret_description: "",
+            recent: "no prior requests in the last hour",
+        };
+        form.test_result = Some(match crate::judge::evaluate(&rt, &model, &ctx) {
+            crate::judge::JudgeVerdict::Allow { score, rationale } => {
+                (MsgKind::Ok, format!("ALLOW (score {score}) — {rationale}"))
+            }
+            crate::judge::JudgeVerdict::Deny { score, rationale } => {
+                (MsgKind::Warn, format!("DENY (score {score}) — {rationale}"))
+            }
+            crate::judge::JudgeVerdict::Unavailable { err } => {
+                (MsgKind::Error, format!("unavailable: {err}"))
+            }
+        });
+    }
+
+    fn submit_judge(&mut self, mut form: JudgeForm) -> Result<()> {
+        let parse_u8 = |s: &str, what: &str| -> std::result::Result<u8, String> {
+            s.trim()
+                .parse::<u8>()
+                .map_err(|_| format!("{what} must be a number 0-100"))
+        };
+        let allow = match parse_u8(&form.allow_threshold, "allow threshold") {
+            Ok(v) => v,
+            Err(e) => {
+                form.error = Some(e);
+                self.screen = Screen::Judge(form);
+                return Ok(());
+            }
+        };
+        let high = match parse_u8(&form.high_threshold, "high threshold") {
+            Ok(v) => v,
+            Err(e) => {
+                form.error = Some(e);
+                self.screen = Screen::Judge(form);
+                return Ok(());
+            }
+        };
+        let timeout = match form.timeout.trim().parse::<u64>() {
+            Ok(v) if v > 0 => v,
+            _ => {
+                form.error = Some("timeout must be a positive number of seconds".into());
+                self.screen = Screen::Judge(form);
+                return Ok(());
+            }
+        };
+        if form.model.trim().is_empty() {
+            form.error = Some("model is required".into());
+            self.screen = Screen::Judge(form);
+            return Ok(());
+        }
+
+        let mut cfg = crate::config::SvaultConfig::load();
+        cfg.judge.enabled = form.enabled;
+        cfg.judge.model = form.model.trim().to_string();
+        cfg.judge.allow_threshold = allow;
+        cfg.judge.high_threshold = high;
+        cfg.judge.timeout_secs = timeout;
+        match cfg.save() {
+            Ok(_) => {
+                log_judge(
+                    "judge.config",
+                    Some(if form.enabled { "enabled" } else { "disabled" }),
+                );
+                self.set_status(MsgKind::Ok, "Judge config saved");
+                self.screen = Screen::List;
+            }
+            Err(e) => {
+                form.error = Some(format!("could not save config: {e}"));
+                self.screen = Screen::Judge(form);
             }
         }
         Ok(())
@@ -1584,6 +2120,22 @@ fn secret_add_adjust(form: &mut SecretAddForm, forward: bool) {
         5 => form.require_reason = !form.require_reason,
         _ => {}
     }
+}
+
+fn classify_adjust(form: &mut ClassifyForm, forward: bool) {
+    match form.focus {
+        2 => form.tier = cycle(form.tier, 3, forward),
+        3 => form.require_reason = !form.require_reason,
+        _ => {}
+    }
+}
+
+/// Record a global (vault-independent) judge/policy change to `.svault/usage.log`
+/// so it shows in the audit timeline. The judge config + OpenRouter key are
+/// global, so they aren't tied to any one vault. Best-effort; never blocks the
+/// action (it's a no-op when `.svault/` doesn't exist yet).
+fn log_judge(action: &str, detail: Option<&str>) {
+    crate::usage::human(Path::new(SVAULT_DIR), action, detail);
 }
 
 fn cycle(current: usize, len: usize, forward: bool) -> usize {
@@ -1744,6 +2296,73 @@ mod tests {
         };
         assert_eq!(f.tier, 1, "right arrow cycles tier low → medium");
         assert_eq!(tier_at(f.tier), crate::policy::Tier::Medium);
+    }
+
+    #[test]
+    fn classify_form_cycles_tier_and_toggles_reason() {
+        let form = ClassifyForm {
+            vault_dir: PathBuf::from("."),
+            vault_name: "v".into(),
+            secret: "DB_URL".into(),
+            scope: "database".into(),
+            description: String::new(),
+            tier: 0,
+            require_reason: false,
+            focus: 2, // tier picker
+            error: None,
+        };
+        let mut app = bare_app(Screen::Classify(form));
+        press(&mut app, KeyCode::Right);
+        let Screen::Classify(f) = &app.screen else {
+            panic!("expected classify screen")
+        };
+        assert_eq!(f.tier, 1, "right arrow cycles tier low → medium");
+        // Move to the require-reason row and toggle it with space.
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Char(' '));
+        let Screen::Classify(f) = &app.screen else {
+            panic!("expected classify screen")
+        };
+        assert!(f.require_reason, "space toggles require-reason on");
+    }
+
+    #[test]
+    fn judge_screen_toggles_enabled_and_opens_key_entry() {
+        let form = JudgeForm {
+            enabled: false,
+            model: "google/gemini-2.5-flash".into(),
+            allow_threshold: "60".into(),
+            high_threshold: "80".into(),
+            timeout: "6".into(),
+            key_status: "none".into(),
+            focus: 0, // Enabled row
+            error: None,
+            test_result: None,
+            key_entry: None,
+        };
+        let mut app = bare_app(Screen::Judge(form));
+        press(&mut app, KeyCode::Char(' '));
+        let Screen::Judge(f) = &app.screen else {
+            panic!("expected judge screen")
+        };
+        assert!(f.enabled, "space toggles the global judge on");
+
+        // Jump to the API-key row and open the masked key-entry sub-mode.
+        let key_row = JudgeField::ORDER
+            .iter()
+            .position(|x| *x == JudgeField::ApiKey)
+            .unwrap();
+        if let Screen::Judge(f) = &mut app.screen {
+            f.focus = key_row;
+        }
+        press(&mut app, KeyCode::Enter);
+        let Screen::Judge(f) = &app.screen else {
+            panic!("expected judge screen")
+        };
+        assert!(
+            f.key_entry.is_some(),
+            "enter on the key row starts key entry"
+        );
     }
 
     #[test]

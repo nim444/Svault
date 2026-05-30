@@ -5,14 +5,14 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap},
     Frame,
 };
 
 use super::theme;
 use super::{
-    tier_label, App, CreateForm, MsgKind, Screen, SecretAddForm, SecretScreen, SettingsForm,
-    UnlockForm,
+    tier_label, App, ClassifyForm, CreateForm, JudgeField, JudgeForm, MsgKind, Screen,
+    SecretAddForm, SecretScreen, SettingsForm, UnlockForm,
 };
 
 const CYAN: Color = theme::ACCENT;
@@ -42,6 +42,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Screen::Import(form) => draw_import(frame, chunks[1], form),
         Screen::Recover(form) => draw_recover(frame, chunks[1], form),
         Screen::Activity(scr) => draw_activity(frame, chunks[1], scr),
+        Screen::Classify(form) => draw_classify(frame, chunks[1], form),
+        Screen::Judge(form) => draw_judge(frame, chunks[1], form),
     }
 
     draw_status(frame, chunks[2], app);
@@ -152,8 +154,8 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         match &app.screen {
             Screen::List => (
-                "↑/↓ move   enter open   c create   u unlock   l lock   s settings   v activity   e export   i import   r recover   d daemon   h/? help   q quit",
-                "↑/↓ move   enter open   h/? help   q quit",
+                "↑/↓ move   enter open   c create   u unlock   l lock   s settings   shift-J judge   v activity   e export   i import   r recover   d daemon   h/? help   q quit",
+                "↑/↓ move   enter open   shift-J judge   h/? help   q quit",
             ),
             Screen::Activity(_) => ("↑/↓ scroll   esc / b back   q quit", "↑/↓ scroll   esc back"),
             Screen::Create(_) => (
@@ -175,8 +177,8 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                     ("y confirm delete   n cancel", "y delete   n cancel")
                 } else {
                     (
-                        "↑/↓ move   enter view   a add   d delete   l lock   h/? help   esc back",
-                        "↑/↓ move   enter view   h/? help   esc back",
+                        "↑/↓ move   enter view   a add   c classify   d delete   l lock   h/? help   esc back",
+                        "↑/↓ move   enter view   c classify   h/? help   esc back",
                     )
                 }
             }
@@ -184,6 +186,20 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 "↑/↓ field   enter next/save   esc cancel",
                 "↑/↓ field   enter save   esc cancel",
             ),
+            Screen::Classify(_) => (
+                "↑/↓ field   ←/→ change   space toggle   enter next/save   esc cancel",
+                "↑/↓ field   enter save   esc cancel",
+            ),
+            Screen::Judge(form) => {
+                if form.key_entry.is_some() {
+                    ("type/paste key   enter store   esc cancel", "enter store   esc cancel")
+                } else {
+                    (
+                        "↑/↓ field   space toggle   enter edit/run/save   del remove key   esc back",
+                        "↑/↓ field   enter act   esc back",
+                    )
+                }
+            }
             Screen::RecoveryCode(_) => (
                 "press 'y' to confirm you have saved the code",
                 "'y' to confirm saved",
@@ -224,10 +240,18 @@ fn draw_help(frame: &mut Frame, area: Rect, screen: &Screen) {
             ("↑/↓ or j/k", "move selection"),
             ("enter or g", "reveal secret value"),
             ("a", "add a secret"),
+            ("c", "classify (tier / scope / reason / description)"),
             ("d", "delete the selected secret"),
             ("l", "lock the vault"),
             ("h or ?", "show this help"),
             ("esc or b", "back to vault list"),
+        ],
+        Screen::Judge(_) => &[
+            ("↑/↓", "move between rows"),
+            ("space / ←→", "toggle the judge on/off"),
+            ("enter", "edit field · set key · run test · save"),
+            ("del", "remove the stored OpenRouter key"),
+            ("esc", "back to vault list"),
         ],
         // Default to the list bindings — the main hub.
         _ => &[
@@ -238,6 +262,10 @@ fn draw_help(frame: &mut Frame, area: Rect, screen: &Screen) {
             (
                 "s",
                 "edit settings (description, agents, rate limit, auto-lock)",
+            ),
+            (
+                "shift-J",
+                "manage the AI judge (key, model, thresholds, test)",
             ),
             ("v", "view the activity timeline (human + agent)"),
             ("e / i", "export / import an encrypted bundle"),
@@ -620,6 +648,137 @@ fn draw_secret_add(frame: &mut Frame, area: Rect, form: &SecretAddForm) {
     );
 }
 
+fn draw_classify(frame: &mut Frame, area: Rect, form: &ClassifyForm) {
+    let fields = [
+        ("Scope", form.scope.clone()),
+        ("Description", form.description.clone()),
+        ("Tier", tier_label(form.tier).to_string()),
+        ("Require reason", yes_no(form.require_reason).to_string()),
+    ];
+    let mut lines = field_lines(&fields, form.focus, form.focus_is_text());
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Edits the signed policy for this secret — the value is not touched.",
+        Style::default().fg(DIM),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  space/←→ cycles tier & toggles require-reason",
+        Style::default().fg(DIM),
+    )));
+    if let Some(err) = &form.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  error: {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Classify · {} ", form.secret))
+        .border_style(Style::default().fg(DIM));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn draw_judge(frame: &mut Frame, area: Rect, form: &JudgeForm) {
+    // Action rows render their effect as the "value" so the screen reads as a
+    // single list (config fields then actions).
+    let fields = [
+        ("Enabled (global)", yes_no(form.enabled).to_string()),
+        ("Model", form.model.clone()),
+        ("Allow threshold", form.allow_threshold.clone()),
+        ("High threshold", form.high_threshold.clone()),
+        ("Timeout (s)", form.timeout.clone()),
+        ("OpenRouter key", form.key_status.clone()),
+        (
+            "Test judge",
+            "press enter to dry-run a sample request".to_string(),
+        ),
+        (
+            "Save config",
+            "press enter to write .svault/config.yaml".to_string(),
+        ),
+    ];
+    let focus = JudgeField::ORDER
+        .iter()
+        .position(|f| *f == form.current())
+        .unwrap_or(0);
+    let mut lines = field_lines(&fields, focus, form.focus_is_text());
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  The key is stored 0600 at ~/.config/svault/openrouter.key — never in config.",
+        Style::default().fg(DIM),
+    )));
+    if let Some((kind, msg)) = &form.test_result {
+        let color = match kind {
+            MsgKind::Ok => theme::OK,
+            MsgKind::Warn => theme::WARN,
+            MsgKind::Error => theme::ERR,
+            MsgKind::Info => theme::ACCENT,
+        };
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  test: {msg}"),
+            Style::default().fg(color),
+        )));
+    }
+    if let Some(err) = &form.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  error: {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" AI judge ")
+        .border_style(Style::default().fg(DIM));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+
+    // Key-entry modal (masked) sits on top when active.
+    if let Some(buf) = &form.key_entry {
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Paste your OpenRouter API key (sk-or-...)",
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::raw("  > "),
+                Span::styled(mask(buf), Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  enter  store 0600    esc  cancel",
+                Style::default().fg(DIM),
+            )),
+        ];
+        let popup = centered_rect(64, 40, area);
+        frame.render_widget(Clear, popup);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Set OpenRouter key ")
+            .border_style(Style::default().fg(CYAN));
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(block)
+                .wrap(Wrap { trim: false }),
+            popup,
+        );
+    }
+}
+
 fn draw_recovery_code(frame: &mut Frame, area: Rect, code: &str) {
     let lines = vec![
         Line::from(""),
@@ -788,16 +947,58 @@ fn draw_secrets(frame: &mut Frame, area: Rect, scr: &mut SecretScreen) {
         .block(block);
         frame.render_widget(p, area);
     } else {
-        let items: Vec<ListItem> = scr
+        // Each row shows the secret's name next to the policy classification
+        // (tier/scope/require-reason/description) that gates an agent `get`.
+        let header =
+            Row::new(["SECRET", "TIER", "SCOPE", "REASON?", "DESCRIPTION"]).style(theme::header());
+        let rows: Vec<Row> = scr
             .secrets
             .iter()
-            .map(|n| ListItem::new(Span::styled(n.clone(), Style::default().fg(CYAN))))
+            .map(|n| {
+                let rule = scr.classifications.get(n);
+                let (tier, tier_style) = match rule.map(|r| r.tier) {
+                    Some(crate::policy::Tier::High) => ("high", Style::default().fg(theme::ERR)),
+                    Some(crate::policy::Tier::Medium) => {
+                        ("medium", Style::default().fg(theme::WARN))
+                    }
+                    Some(crate::policy::Tier::Low) => ("low", Style::default().fg(theme::OK)),
+                    None => ("unset", Style::default().fg(theme::MUTED)),
+                };
+                let scope = rule
+                    .map(|r| r.scope.clone())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "-".to_string());
+                let reason = match rule.map(|r| r.require_reason) {
+                    Some(true) => "yes",
+                    _ => "-",
+                };
+                let desc = rule
+                    .map(|r| r.description.clone())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "-".to_string());
+                Row::new(vec![
+                    Cell::from(n.clone()).style(Style::default().fg(CYAN)),
+                    Cell::from(tier).style(tier_style),
+                    Cell::from(scope).style(Style::default().fg(theme::TEXT)),
+                    Cell::from(reason).style(Style::default().fg(theme::MUTED)),
+                    Cell::from(desc).style(Style::default().fg(theme::MUTED)),
+                ])
+            })
             .collect();
-        let list = List::new(items)
+        let widths = [
+            Constraint::Length(22),
+            Constraint::Length(8),
+            Constraint::Length(12),
+            Constraint::Length(8),
+            Constraint::Min(10),
+        ];
+        let table = Table::new(rows, widths)
+            .header(header)
             .block(block)
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .column_spacing(2)
+            .row_highlight_style(theme::selected_row())
             .highlight_symbol("> ");
-        frame.render_stateful_widget(list, area, &mut scr.list_state);
+        frame.render_stateful_widget(table, area, &mut scr.list_state);
     }
 
     // Reveal modal.

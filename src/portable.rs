@@ -204,16 +204,12 @@ mod tests {
 
     /// Build a minimal real vault on disk so build/import touch actual files.
     fn make_vault(base: &Path, name: &str) {
-        use crate::meta::{AccessConfig, VaultMeta, VaultSettings};
+        use crate::meta::{VaultMeta, VaultSettings};
+        use crate::policy::VaultPolicyData;
         use crate::vault::Vault;
         let dir = base.join(name);
-        let meta = VaultMeta::new(
-            name.to_string(),
-            "d".to_string(),
-            AccessConfig::default(),
-            VaultSettings::default(),
-        );
-        let vault = Vault::init(&dir, "Str0ng!Pass#99", meta).unwrap();
+        let meta = VaultMeta::new(name.to_string(), "d".to_string(), VaultSettings::default());
+        let vault = Vault::init(&dir, "Str0ng!Pass#99", meta, VaultPolicyData::default()).unwrap();
         crate::recovery::write(&dir, vault.key(), "AAAA-BBBB-CCCC").unwrap();
     }
 

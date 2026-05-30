@@ -1,15 +1,58 @@
 use anyhow::{anyhow, Result};
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::crypto::{self, VaultKey, SALT_SIZE};
 use crate::meta::VaultMeta;
+use crate::policy::VaultPolicyData;
 
 pub const SVAULT_DIR: &str = ".svault";
 
-/// Decrypted secrets — zeroed from memory on drop.
+/// Current on-disk version of the encrypted `vault.enc` payload.
+const PAYLOAD_VERSION: u32 = 2;
+
+/// The decrypted plaintext of `vault.enc`: the secret values **and** the full
+/// policy surface. Keeping the policy here (rather than in the plaintext
+/// `meta.yaml`) means it is AES-256-GCM encrypted at rest — a same-UID agent
+/// can't read tiers/scopes/descriptions/caller rules to plan a request that
+/// passes, and can't tamper with them without the vault key.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct VaultPayload {
+    #[serde(default = "default_payload_version")]
+    version: u32,
+    #[serde(default)]
+    secrets: HashMap<String, String>,
+    #[serde(default)]
+    policy: VaultPolicyData,
+}
+
+fn default_payload_version() -> u32 {
+    PAYLOAD_VERSION
+}
+
+/// Encrypt a payload under `key` with the given `salt` (the salt is prefixed to
+/// the ciphertext by [`crypto::encrypt`]).
+fn encrypt_payload(
+    key: &VaultKey,
+    salt: &[u8; SALT_SIZE],
+    payload: &VaultPayload,
+) -> Result<Vec<u8>> {
+    let json = SecretStore(serde_json::to_string(payload)?);
+    crypto::encrypt(key, salt, json.0.as_bytes())
+}
+
+/// Decrypt and parse `vault.enc`. Decryption also authenticates the blob (GCM),
+/// so a wrong key or any tampering is rejected here.
+fn decode_payload(key: &VaultKey, encrypted: &[u8]) -> Result<VaultPayload> {
+    let plaintext = crypto::decrypt(key, encrypted)?;
+    let store = SecretStore(String::from_utf8(plaintext)?);
+    Ok(serde_json::from_str(&store.0)?)
+}
+
+/// Wraps the decrypted JSON string and zeroes it from memory on drop.
 #[derive(Zeroize, ZeroizeOnDrop)]
 struct SecretStore(String);
 
@@ -17,12 +60,20 @@ struct SecretStore(String);
 pub struct Vault {
     pub vault_dir: PathBuf,
     pub meta: VaultMeta,
+    /// The decrypted policy, cached at open. Reads use this; writes go through
+    /// [`Vault::save_policy`] (callers re-open to refresh the cache).
+    pub policy: VaultPolicyData,
     key: VaultKey,
 }
 
 impl Vault {
-    /// Create a new vault at the given directory path.
-    pub fn init(vault_dir: &Path, passphrase: &str, meta_input: VaultMeta) -> Result<Self> {
+    /// Create a new vault at the given directory path with its initial policy.
+    pub fn init(
+        vault_dir: &Path,
+        passphrase: &str,
+        meta_input: VaultMeta,
+        policy: VaultPolicyData,
+    ) -> Result<Self> {
         if vault_dir.exists() {
             return Err(anyhow!("Vault already exists at {}", vault_dir.display()));
         }
@@ -44,8 +95,12 @@ impl Vault {
         rand::thread_rng().fill_bytes(&mut salt);
         let key = VaultKey::derive(passphrase, &salt)?;
 
-        let empty = serde_json::to_vec(&HashMap::<String, String>::new())?;
-        let encrypted = crypto::encrypt(&key, &salt, &empty)?;
+        let payload = VaultPayload {
+            version: PAYLOAD_VERSION,
+            secrets: HashMap::new(),
+            policy,
+        };
+        let encrypted = encrypt_payload(&key, &salt, &payload)?;
         std::fs::write(vault_dir.join("vault.enc"), &encrypted)?;
 
         meta_input.save(vault_dir, key.bytes())?;
@@ -54,6 +109,7 @@ impl Vault {
         Ok(Self {
             vault_dir: vault_dir.to_path_buf(),
             meta,
+            policy: payload.policy,
             key,
         })
     }
@@ -67,13 +123,14 @@ impl Vault {
         let salt = &encrypted[..SALT_SIZE];
         let key = VaultKey::derive(passphrase, salt)?;
 
-        // Verify correct passphrase by attempting decrypt
-        crypto::decrypt(&key, &encrypted)?;
+        // Decrypting authenticates the key and yields the secrets + policy.
+        let payload = decode_payload(&key, &encrypted)?;
 
         let meta = VaultMeta::load_verified(vault_dir, key.bytes())?;
         Ok(Self {
             vault_dir: vault_dir.to_path_buf(),
             meta,
+            policy: payload.policy,
             key,
         })
     }
@@ -83,11 +140,12 @@ impl Vault {
     /// (which holds the key in memory). Verifies the key by decrypting vault.enc.
     pub fn open_with_key(vault_dir: &Path, key: VaultKey) -> Result<Self> {
         let encrypted = std::fs::read(vault_dir.join("vault.enc"))?;
-        crypto::decrypt(&key, &encrypted)?;
+        let payload = decode_payload(&key, &encrypted)?;
         let meta = VaultMeta::load_verified(vault_dir, key.bytes())?;
         Ok(Self {
             vault_dir: vault_dir.to_path_buf(),
             meta,
+            policy: payload.policy,
             key,
         })
     }
@@ -98,66 +156,74 @@ impl Vault {
     }
 
     /// Re-encrypt the vault under a new passphrase: fresh salt + key, re-write
-    /// vault.enc, re-sign meta.yaml. The caller re-wraps recovery.enc afterwards.
+    /// vault.enc (secrets + policy), re-sign meta.yaml. The caller re-wraps
+    /// recovery.enc afterwards.
     pub fn rekey(&mut self, new_passphrase: &str) -> Result<()> {
-        let secrets = self.load_secrets()?;
+        let payload = self.load_payload()?;
         let mut salt = [0u8; SALT_SIZE];
         rand::thread_rng().fill_bytes(&mut salt);
         let new_key = VaultKey::derive(new_passphrase, &salt)?;
 
-        let json = SecretStore(serde_json::to_string(&secrets)?);
-        let data = crypto::encrypt(&new_key, &salt, json.0.as_bytes())?;
+        let data = encrypt_payload(&new_key, &salt, &payload)?;
         std::fs::write(self.vault_dir.join("vault.enc"), data)?;
         self.meta.save(&self.vault_dir, new_key.bytes())?;
+        self.policy = payload.policy;
         self.key = new_key;
         Ok(())
     }
 
-    /// Re-sign and persist updated metadata (settings, description, access).
+    /// Re-sign and persist updated public metadata (description, settings).
     /// Requires the vault to be open so the HMAC can be recomputed with the key.
     pub fn save_meta(&self, meta: &VaultMeta) -> Result<()> {
         meta.save(&self.vault_dir, self.key.bytes())
     }
 
+    /// Persist updated policy (classification, access, judge overrides, callers).
+    /// Re-encrypts vault.enc; the secret values are untouched. The in-memory
+    /// `self.policy` cache is not updated — callers re-open to refresh it.
+    pub fn save_policy(&self, policy: &VaultPolicyData) -> Result<()> {
+        let mut payload = self.load_payload()?;
+        payload.policy = policy.clone();
+        self.save_payload(&payload)
+    }
+
     pub fn add_secret(&self, name: &str, value: &str) -> Result<()> {
-        let mut secrets = self.load_secrets()?;
-        secrets.insert(name.to_string(), value.to_string());
-        self.save_secrets(&secrets)
+        let mut payload = self.load_payload()?;
+        payload.secrets.insert(name.to_string(), value.to_string());
+        self.save_payload(&payload)
     }
 
     /// Returns the value wrapped in `Zeroizing` so the caller's copy is wiped on
     /// drop (#6); the bulk decrypted store is already zeroized via `SecretStore`.
     pub fn get_secret(&self, name: &str) -> Result<Option<Zeroizing<String>>> {
         Ok(self
-            .load_secrets()?
+            .load_payload()?
+            .secrets
             .get(name)
             .map(|v| Zeroizing::new(v.clone())))
     }
 
     pub fn list_secret_names(&self) -> Result<Vec<String>> {
-        let mut names: Vec<String> = self.load_secrets()?.into_keys().collect();
+        let mut names: Vec<String> = self.load_payload()?.secrets.into_keys().collect();
         names.sort();
         Ok(names)
     }
 
     pub fn remove_secret(&self, name: &str) -> Result<bool> {
-        let mut secrets = self.load_secrets()?;
-        let removed = secrets.remove(name).is_some();
+        let mut payload = self.load_payload()?;
+        let removed = payload.secrets.remove(name).is_some();
         if removed {
-            self.save_secrets(&secrets)?;
+            self.save_payload(&payload)?;
         }
         Ok(removed)
     }
 
-    fn load_secrets(&self) -> Result<HashMap<String, String>> {
+    fn load_payload(&self) -> Result<VaultPayload> {
         let encrypted = std::fs::read(self.vault_dir.join("vault.enc"))?;
-        let plaintext = crypto::decrypt(&self.key, &encrypted)?;
-        let store = SecretStore(String::from_utf8(plaintext)?);
-        Ok(serde_json::from_str(&store.0)?)
+        decode_payload(&self.key, &encrypted)
     }
 
-    fn save_secrets(&self, secrets: &HashMap<String, String>) -> Result<()> {
-        let json = SecretStore(serde_json::to_string(secrets)?);
+    fn save_payload(&self, payload: &VaultPayload) -> Result<()> {
         let encrypted = std::fs::read(self.vault_dir.join("vault.enc"))?;
         if encrypted.len() < SALT_SIZE {
             return Err(anyhow!("vault.enc is too short — may be corrupted"));
@@ -165,7 +231,7 @@ impl Vault {
         let salt: [u8; SALT_SIZE] = encrypted[..SALT_SIZE]
             .try_into()
             .expect("slice length checked against SALT_SIZE above");
-        let data = crypto::encrypt(&self.key, &salt, json.0.as_bytes())?;
+        let data = encrypt_payload(&self.key, &salt, payload)?;
         std::fs::write(self.vault_dir.join("vault.enc"), data)?;
         Ok(())
     }
@@ -197,7 +263,8 @@ pub fn list_vault_dirs_in(base: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::meta::{AccessConfig, VaultMeta, VaultSettings};
+    use crate::meta::{VaultMeta, VaultSettings};
+    use crate::policy::VaultPolicyData;
     use tempfile::TempDir;
 
     fn tmp_vault(dir: &TempDir, name: &str, passphrase: &str) -> Vault {
@@ -205,10 +272,9 @@ mod tests {
         let meta = VaultMeta::new(
             name.to_string(),
             "test vault".to_string(),
-            AccessConfig::default(),
             VaultSettings::default(),
         );
-        Vault::init(&vault_dir, passphrase, meta).expect("init failed")
+        Vault::init(&vault_dir, passphrase, meta, VaultPolicyData::default()).expect("init failed")
     }
 
     #[test]
@@ -358,10 +424,10 @@ mod tests {
         let enc_path = vault_dir.join("vault.enc");
         std::fs::write(&enc_path, vec![0u8; SALT_SIZE - 1]).unwrap();
 
-        // save_secrets must return an error rather than panic on the short slice.
-        let mut secrets = HashMap::new();
-        secrets.insert("K".to_string(), "v".to_string());
-        let result = v.save_secrets(&secrets);
+        // save_payload must return an error rather than panic on the short slice.
+        let mut payload = VaultPayload::default();
+        payload.secrets.insert("K".to_string(), "v".to_string());
+        let result = v.save_payload(&payload);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("too short"));
     }
@@ -373,14 +439,90 @@ mod tests {
         let v = tmp_vault(&dir, "test", "Str0ng!Pass#99");
         let key = v.key.bytes().to_vec();
 
-        // Tamper with meta.yaml — change allow_agent to false
+        // Tamper with meta.yaml — change the (signed, public) description.
         let meta_path = vault_dir.join("meta.yaml");
         let content = std::fs::read_to_string(&meta_path).unwrap();
-        let tampered = content.replace("allow_agent: true", "allow_agent: false");
+        let tampered = content.replace("test vault", "tampered vault");
+        assert_ne!(tampered, content, "test must actually mutate meta.yaml");
         std::fs::write(&meta_path, tampered).unwrap();
 
         let result = VaultMeta::load_verified(&vault_dir, &key);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("tampered"));
+    }
+
+    /// Policy (classification, access, callers) survives a save + reopen via the
+    /// encrypted payload.
+    #[test]
+    fn policy_roundtrips_through_encrypted_payload() {
+        use crate::policy::{CallerRule, SecretRule, Tier};
+        let dir = TempDir::new().unwrap();
+        let vault_dir = dir.path().join("test");
+        let v = tmp_vault(&dir, "test", "Str0ng!Pass#99");
+
+        let mut pol = v.policy.clone();
+        pol.secrets.insert(
+            "DB_PW".into(),
+            SecretRule {
+                scope: "database".into(),
+                tier: Tier::High,
+                require_reason: true,
+                description: "prod billing dsn".into(),
+            },
+        );
+        pol.callers.insert(
+            "claude".into(),
+            CallerRule {
+                scopes: vec!["database".into()],
+                rate_limit: "3/hour".into(),
+            },
+        );
+        v.save_policy(&pol).unwrap();
+
+        let reopened = Vault::open(&vault_dir, "Str0ng!Pass#99").unwrap();
+        let rule = reopened.policy.classify("DB_PW").unwrap();
+        assert_eq!(rule.tier, Tier::High);
+        assert_eq!(rule.scope, "database");
+        assert!(rule.require_reason);
+        assert_eq!(
+            reopened.policy.caller("claude").unwrap().rate_limit,
+            "3/hour"
+        );
+    }
+
+    /// The plaintext meta.yaml must leak no policy a same-UID agent could use to
+    /// plan a bypass: no tier/scope/description/caller appears at rest.
+    #[test]
+    fn meta_yaml_leaks_no_classification_at_rest() {
+        use crate::policy::{SecretRule, Tier};
+        let dir = TempDir::new().unwrap();
+        let vault_dir = dir.path().join("test");
+        let v = tmp_vault(&dir, "test", "Str0ng!Pass#99");
+        let mut pol = v.policy.clone();
+        pol.secrets.insert(
+            "STRIPE_KEY".into(),
+            SecretRule {
+                scope: "payments".into(),
+                tier: Tier::High,
+                require_reason: true,
+                description: "secret-purpose-string".into(),
+            },
+        );
+        v.save_policy(&pol).unwrap();
+
+        let meta_text = std::fs::read_to_string(vault_dir.join("meta.yaml")).unwrap();
+        for needle in [
+            "STRIPE_KEY",
+            "payments",
+            "high",
+            "secret-purpose-string",
+            "require_reason",
+            "allow_agent",
+        ] {
+            assert!(
+                !meta_text.contains(needle),
+                "meta.yaml leaked policy token at rest: {needle}"
+            );
+        }
     }
 }

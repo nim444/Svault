@@ -13,11 +13,17 @@
 use std::path::Path;
 
 use crate::judge::{self, JudgeContext, JudgeRuntime, JudgeVerdict};
-use crate::meta::VaultMeta;
-use crate::policy::{self, Decision, Policy, Tier};
+use crate::policy::{self, Decision, Tier, VaultPolicyData};
 
 const HIGH_HUMAN_ONLY: &str =
     "high-sensitivity secret — a human must retrieve it via 'svault secret get'";
+
+/// The single, opaque message returned to a *caller* on any denial. The real
+/// reason (judge score + rationale, scope/caller mismatch, rate limit, …) is
+/// recorded in the audit log for the human — never sent back to the agent, so a
+/// caller can't learn what to change to make a denied request pass. The CLI
+/// prefixes this with a `denied:` label, so the constant itself omits it.
+pub const GENERIC_DENY: &str = "request not authorized for this secret";
 
 /// The gate's verdict: the final decision plus a short note for the audit log
 /// (the judge score/rationale, or why it was denied).
@@ -38,12 +44,11 @@ impl Verdict {
 /// Authorize a structured request. `policy` is `None` when there's no policy
 /// file; `judge` is `None` when the judge is globally disabled / unconfigured.
 pub fn authorize(
-    policy: Option<&Policy>,
-    meta: &VaultMeta,
+    policy: &VaultPolicyData,
     req: &policy::Request,
     judge: Option<&JudgeRuntime>,
 ) -> Verdict {
-    let base = policy::evaluate(policy, meta, req);
+    let base = policy::evaluate(policy, req);
     let tier = base.tier();
     if let Decision::Deny(_, why) = &base {
         let note = why.clone();
@@ -53,11 +58,11 @@ pub fn authorize(
         };
     }
 
-    // Per-vault opt-out: meta.judge.enabled = Some(false) disables it here even
+    // Per-vault opt-out: policy.judge.enabled = Some(false) disables it here even
     // when a global runtime exists.
-    let vault_enabled = meta.judge.enabled.unwrap_or(true);
+    let vault_enabled = policy.judge.enabled.unwrap_or(true);
     let active = judge.is_some() && vault_enabled;
-    let rule = meta.classify(req.secret);
+    let rule = policy.classify(req.secret);
     let require_reason = rule.map(|r| r.require_reason).unwrap_or(false);
 
     // Should we actually call the model? Low tier skips it unless require_reason.
@@ -74,7 +79,11 @@ pub fn authorize(
     }
 
     let rt = judge.expect("active implies Some");
-    let model = meta.judge.model.clone().unwrap_or_else(|| rt.model.clone());
+    let model = policy
+        .judge
+        .model
+        .clone()
+        .unwrap_or_else(|| rt.model.clone());
     let recent = recent_summary(req.vault_dir, req.caller);
     let ctx = JudgeContext {
         caller: req.caller,
@@ -83,7 +92,7 @@ pub fn authorize(
         secret: req.secret,
         tier,
         vault: req.vault,
-        vault_description: &meta.description,
+        vault_description: req.vault_description,
         secret_description: rule.map(|r| r.description.as_str()).unwrap_or(""),
         recent: &recent,
     };

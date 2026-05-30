@@ -155,13 +155,14 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
-    /// AI judge: manage the OpenRouter key and test it.
+    /// AI judge: manage the OpenRouter key, toggle it on/off, and test it.
     ///
-    /// Actions: `set-key` (store the key as a 0600 file), `status` (show where
-    /// the key resolves from + model config), `remove-key` (delete the file),
-    /// `test` (dry-run a sample request against the model).
+    /// Actions: `set-key` (store the key as a 0600 file), `enable` / `disable`
+    /// (turn the judge on/off globally), `status` (show where the key resolves
+    /// from + model config), `remove-key` (delete the file), `test` (dry-run a
+    /// sample request against the model).
     Judge {
-        /// set-key | status | remove-key | test
+        /// set-key | enable | disable | status | remove-key | test
         action: String,
         #[arg(long)]
         reason: Option<String>,
@@ -398,10 +399,6 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
     let mut meta = VaultMeta::new(
         name.clone(),
         description,
-        AccessConfig {
-            allow_agent,
-            rate_limit,
-        },
         VaultSettings {
             autolock,
             autolock_timer,
@@ -409,9 +406,18 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
         },
     );
     meta.storage = storage.to_string();
-    meta.default_tier = default_tier;
-    meta.judge.enabled = Some(judge_enabled);
-    let vault = Vault::init(&vault_dir, &passphrase, meta)?;
+    // The policy surface (access, default tier, judge override) is stored
+    // AES-256-GCM encrypted inside vault.enc, not in the plaintext meta.yaml.
+    let mut vault_policy = policy::VaultPolicyData {
+        access: AccessConfig {
+            allow_agent,
+            rate_limit,
+        },
+        default_tier,
+        ..policy::VaultPolicyData::default()
+    };
+    vault_policy.judge.enabled = Some(judge_enabled);
+    let vault = Vault::init(&vault_dir, &passphrase, meta, vault_policy)?;
 
     // Generate a recovery code and wrap the vault key under it. Shown once.
     let recovery_code = recovery::generate_code();
@@ -472,6 +478,32 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
             style("  Save it first — it cannot be retrieved later.").yellow()
         );
     }
+
+    // If the vault opted into the judge, tell the user what's still needed for it
+    // to actually gate access — the judge needs the global switch on AND a key.
+    if judge_enabled {
+        let jcfg = config::SvaultConfig::load().judge;
+        let has_key = config::openrouter_key(&jcfg).is_some();
+        if !jcfg.enabled || !has_key {
+            println!();
+            println!(
+                "{} the AI judge is on for this vault, but it won't act until:",
+                style("note:").cyan()
+            );
+            if !has_key {
+                println!(
+                    "{}",
+                    style("    • an OpenRouter key is set   →  svault judge set-key").dim()
+                );
+            }
+            if !jcfg.enabled {
+                println!(
+                    "{}",
+                    style("    • the judge is enabled       →  svault judge enable").dim()
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -484,6 +516,7 @@ fn cmd_settings(vault_name: Option<&str>) -> Result<()> {
     let vault = open_unlocked_or_prompt(&vault_dir, &preview.name)?;
 
     let mut meta = vault.meta.clone();
+    let mut vault_policy = vault.policy.clone();
 
     println!(
         "{}",
@@ -505,12 +538,12 @@ fn cmd_settings(vault_name: Option<&str>) -> Result<()> {
     println!(
         "  {:<16} {}",
         style("Allow agent").dim(),
-        meta.access.allow_agent
+        vault_policy.access.allow_agent
     );
     println!(
         "  {:<16} {}",
         style("Rate limit").dim(),
-        meta.access.rate_limit
+        vault_policy.access.rate_limit
     );
     println!(
         "  {:<16} {}",
@@ -535,11 +568,11 @@ fn cmd_settings(vault_name: Option<&str>) -> Result<()> {
         .with_initial_text(&meta.description)
         .interact_text()?;
 
-    meta.access.allow_agent = prompt_allow_agent(Some(&meta.access.allow_agent))?;
+    vault_policy.access.allow_agent = prompt_allow_agent(Some(&vault_policy.access.allow_agent))?;
 
-    meta.access.rate_limit = Input::new()
+    vault_policy.access.rate_limit = Input::new()
         .with_prompt("  Rate limit")
-        .with_initial_text(&meta.access.rate_limit)
+        .with_initial_text(&vault_policy.access.rate_limit)
         .interact_text()?;
 
     meta.settings.autolock = Confirm::new()
@@ -557,6 +590,7 @@ fn cmd_settings(vault_name: Option<&str>) -> Result<()> {
     meta.settings.login_method = prompt_login_method(Some(meta.settings.login_method))?;
 
     vault.save_meta(&meta)?;
+    vault.save_policy(&vault_policy)?;
     usage::human(&vault_dir, "settings.update", None);
 
     println!();
@@ -773,7 +807,7 @@ fn cmd_secret(
             };
             let tier = match tier_arg {
                 Some(t) => parse_tier(t),
-                None => prompt_tier(vault.meta.default_tier)?,
+                None => prompt_tier(vault.policy.default_tier)?,
             };
             // Optional purpose note the AI judge uses to assess whether a
             // request's reason fits the secret. Blank is fine.
@@ -784,8 +818,11 @@ fn cmd_secret(
                     .allow_empty(true)
                     .interact_text()?,
             };
-            let mut meta = vault.meta.clone();
-            meta.secrets.insert(
+            // Classification lives in the encrypted policy (not the plaintext
+            // meta.yaml), so a same-UID agent can't read the tier/scope/purpose
+            // to plan a bypass. Re-encrypts the vault; values are untouched.
+            let mut policy = vault.policy.clone();
+            policy.secrets.insert(
                 secret_name.clone(),
                 policy::SecretRule {
                     scope,
@@ -794,13 +831,13 @@ fn cmd_secret(
                     description,
                 },
             );
-            vault.save_meta(&meta)?;
+            vault.save_policy(&policy)?;
             usage::human(&vault_dir, "secret.add", Some(&secret_name));
             println!(
                 "{} Secret '{}' added (scope={}, tier={})",
                 style("ok:").green().bold(),
                 secret_name,
-                meta.secrets[&secret_name].scope,
+                policy.secrets[&secret_name].scope,
                 tier
             );
         }
@@ -886,21 +923,22 @@ fn cmd_vaults() -> Result<()> {
         );
         return Ok(());
     }
+    // Access rules + classification are encrypted inside each vault now, so the
+    // pre-unlock listing shows only public metadata. Use 'svault policy check'
+    // (unlocks) to see who may access what.
     println!(
-        "{:<12} {:<20} {:<28} {:<18} {:<12} {}",
+        "{:<12} {:<20} {:<40} {}",
         style("STORAGE").bold(),
         style("NAME").bold(),
         style("DESCRIPTION").bold(),
-        style("ALLOW AGENT").bold(),
-        style("RATE LIMIT").bold(),
         style("CREATED").bold(),
     );
-    println!("{}", style("─".repeat(98)).dim());
+    println!("{}", style("─".repeat(80)).dim());
     for dir in &dirs {
         if let Ok(meta) = VaultMeta::load_unverified(dir) {
             let created = &meta.created_at[..10];
             println!(
-                "{:<12} {:<20} {:<28} {:<18} {:<12} {}",
+                "{:<12} {:<20} {:<40} {}",
                 meta.storage,
                 style(&meta.name).cyan(),
                 if meta.description.is_empty() {
@@ -908,8 +946,6 @@ fn cmd_vaults() -> Result<()> {
                 } else {
                     meta.description.clone()
                 },
-                meta.access.allow_agent.to_string(),
-                meta.access.rate_limit,
                 created,
             );
         }
@@ -965,38 +1001,21 @@ fn cmd_get(
     }
 
     // No daemon (or vault not unlocked there): run the SAME gate locally against
-    // the verified meta, then fetch from the session/prompt.
+    // the decrypted, key-authenticated policy, then fetch from the session/prompt.
     let vault = open_unlocked_or_prompt(&vault_dir, &meta_preview.name)?;
-    let meta = &vault.meta; // verified by open — #22
-    let policy_box;
-    let policy_opt = match policy::load() {
-        policy::PolicyLoad::Absent => None,
-        policy::PolicyLoad::Loaded(p) => {
-            policy_box = p;
-            Some(policy_box.as_ref())
-        }
-        policy::PolicyLoad::Error(msg) => {
-            let why = format!("policy file error (failing closed): {msg}");
-            audit::record(
-                &vault_dir,
-                &audit::Entry::now(&caller, name, scope, "low", "deny", &why, reason),
-            )?;
-            usage::agent(&vault_dir, &caller, "get.deny", Some(name));
-            deny_and_exit(&why, &caller, name, scope);
-        }
-    };
-
     let judge = judge::JudgeRuntime::from_config(&config::SvaultConfig::load().judge);
     let req = policy::Request {
-        vault: &meta.name,
+        vault: &vault.meta.name,
+        vault_description: &vault.meta.description,
         vault_dir: &vault_dir,
         secret: name,
         scope,
         reason,
         caller: &caller,
     };
-    let verdict = gate::authorize(policy_opt, meta, &req, judge.as_ref());
+    let verdict = gate::authorize(&vault.policy, &req, judge.as_ref());
     let decision_str = if verdict.allowed() { "allow" } else { "deny" };
+    // Audit keeps the full reason; the caller only ever sees a generic denial.
     audit::record(
         &vault_dir,
         &audit::Entry::now(
@@ -1017,11 +1036,7 @@ fn cmd_get(
     );
 
     if !verdict.allowed() {
-        let why = match verdict.decision {
-            policy::Decision::Deny(_, why) => why,
-            _ => verdict.note,
-        };
-        deny_and_exit(&why, &caller, name, scope);
+        deny_and_exit(gate::GENERIC_DENY, &caller, name, scope);
     }
     let tier = verdict.tier();
     match vault.get_secret(name)? {
@@ -1052,7 +1067,9 @@ fn deny_and_exit(why: &str, caller: &str, name: &str, scope: &str) -> ! {
     std::process::exit(1);
 }
 
-/// `svault policy check <caller>` and `svault policy init`.
+/// `svault policy check <caller>` and `svault policy init`. Caller rules now live
+/// AES-256-GCM encrypted inside each vault (not a committable `svault.policy.yaml`),
+/// so both subcommands resolve a vault and unlock it to read/write the policy.
 fn cmd_policy(action: &str, caller: Option<&str>) -> Result<()> {
     match action {
         "check" => {
@@ -1063,21 +1080,10 @@ fn cmd_policy(action: &str, caller: Option<&str>) -> Result<()> {
                 );
                 std::process::exit(1);
             };
-            match policy::load() {
-                policy::PolicyLoad::Loaded(policy) => cmd_policy_check(&policy, caller),
-                policy::PolicyLoad::Absent => {
-                    println!(
-                        "{}",
-                        style("No svault.policy.yaml found — running in fallback mode (meta.yaml allow_agent / rate_limit).").dim()
-                    );
-                    println!("{}", style("Run 'svault policy init' to create one.").dim());
-                    Ok(())
-                }
-                policy::PolicyLoad::Error(msg) => {
-                    eprintln!("{} {}", style("error:").red(), msg);
-                    std::process::exit(1);
-                }
-            }
+            let vault_dir = resolve_vault_dir(None)?;
+            let preview = VaultMeta::load_unverified(&vault_dir)?;
+            let vault = open_unlocked_or_prompt(&vault_dir, &preview.name)?;
+            cmd_policy_check(&vault, caller)
         }
         "init" => cmd_policy_init(),
         _ => {
@@ -1091,8 +1097,33 @@ fn cmd_policy(action: &str, caller: Option<&str>) -> Result<()> {
     }
 }
 
-fn cmd_policy_check(policy: &policy::Policy, caller: &str) -> Result<()> {
-    let Some(rule) = policy.caller(caller) else {
+fn cmd_policy_check(vault: &Vault, caller: &str) -> Result<()> {
+    let pol = &vault.policy;
+    println!(
+        "{}",
+        style(format!(
+            "┌─ Policy · {} · {caller} ──────────────────────┐",
+            vault.meta.name
+        ))
+        .dim()
+    );
+
+    if pol.callers.is_empty() {
+        println!(
+            "{}",
+            style(
+                "No caller rules defined — this vault runs in fallback mode (allow_agent / rate_limit).",
+            )
+            .dim()
+        );
+        println!(
+            "{}",
+            style("Run 'svault policy init' to add caller rules.").dim()
+        );
+        return Ok(());
+    }
+
+    let Some(rule) = pol.caller(caller) else {
         eprintln!(
             "{} Caller '{}' is not defined and there is no 'default' caller",
             style("error:").red(),
@@ -1101,10 +1132,6 @@ fn cmd_policy_check(policy: &policy::Policy, caller: &str) -> Result<()> {
         std::process::exit(1);
     };
 
-    println!(
-        "{}",
-        style(format!("┌─ Policy · {caller} ──────────────────────────┐")).dim()
-    );
     println!(
         "  {:<14} {}",
         style("Scopes").dim(),
@@ -1117,16 +1144,7 @@ fn cmd_policy_check(policy: &policy::Policy, caller: &str) -> Result<()> {
     println!("  {:<14} {}", style("Rate limit").dim(), rule.rate_limit);
     println!();
 
-    // Classification now lives in each vault's signed meta.yaml, so enumerate
-    // across vaults using their metadata.
-    let mut rows: Vec<(String, String, String, policy::Tier)> = Vec::new();
-    for dir in list_vault_dirs() {
-        if let Ok(meta) = VaultMeta::load_unverified(&dir) {
-            for (secret, scope, tier) in policy.accessible(caller, &meta) {
-                rows.push((meta.name.clone(), secret, scope, tier));
-            }
-        }
-    }
+    let rows = pol.accessible(caller);
     if rows.is_empty() {
         println!(
             "{}",
@@ -1134,34 +1152,25 @@ fn cmd_policy_check(policy: &policy::Policy, caller: &str) -> Result<()> {
         );
     } else {
         println!(
-            "{:<18} {:<22} {:<12} {}",
-            style("VAULT").bold(),
+            "{:<22} {:<12} {}",
             style("SECRET").bold(),
             style("SCOPE").bold(),
             style("TIER").bold()
         );
-        println!("{}", style("─".repeat(60)).dim());
-        for (vault, secret, scope, tier) in &rows {
-            println!(
-                "{:<18} {:<22} {:<12} {}",
-                style(vault).cyan(),
-                secret,
-                scope,
-                tier
-            );
+        println!("{}", style("─".repeat(48)).dim());
+        for (secret, scope, tier) in &rows {
+            println!("{:<22} {:<12} {}", secret, scope, tier);
         }
     }
 
-    // Audit summary across all vaults.
+    // Audit summary for this vault.
     let mut total = 0usize;
     let mut denied = 0usize;
-    for dir in list_vault_dirs() {
-        for e in audit::all(&dir).unwrap_or_default() {
-            if e.caller == caller {
-                total += 1;
-                if e.decision == "deny" {
-                    denied += 1;
-                }
+    for e in audit::all(&vault.vault_dir).unwrap_or_default() {
+        if e.caller == caller {
+            total += 1;
+            if e.decision == "deny" {
+                denied += 1;
             }
         }
     }
@@ -1175,39 +1184,47 @@ fn cmd_policy_check(policy: &policy::Policy, caller: &str) -> Result<()> {
     Ok(())
 }
 
-/// Scaffold a `svault.policy.yaml` from the vaults that exist today.
+/// Seed default caller rules into a vault's encrypted policy.
 fn cmd_policy_init() -> Result<()> {
-    let path = Path::new(policy::POLICY_FILE);
-    if path.exists() {
+    let vault_dir = resolve_vault_dir(None)?;
+    let preview = VaultMeta::load_unverified(&vault_dir)?;
+    let vault = open_unlocked_or_prompt(&vault_dir, &preview.name)?;
+
+    let mut pol = vault.policy.clone();
+    if !pol.callers.is_empty() {
         eprintln!(
-            "{} {} already exists",
+            "{} vault '{}' already has caller rules — edit them with 'svault settings'",
             style("error:").red(),
-            policy::POLICY_FILE
+            vault.meta.name
         );
         std::process::exit(1);
     }
 
-    // Per-secret classification (scope/tier/require_reason) now lives in each
-    // vault's signed meta.yaml — set it with `svault secret add` or `svault
-    // settings`. The policy file holds only the caller definitions (who may
-    // request which scopes), which are non-secret and committable.
-    let out = String::from(
-        "version: 1\n\n# Callers that may request secrets via 'svault get'.\n\
-         # Secret classification (scope/tier) lives in each vault's signed\n\
-         # meta.yaml — set it per-secret with 'svault secret add' / 'svault settings'.\n\
-         callers:\n  claude-code:\n    scopes: [misc]\n    rate_limit: 20/hour\n\
-         \x20\x20default:\n    scopes: []\n    rate_limit: 5/hour\n",
+    pol.callers.insert(
+        "claude-code".to_string(),
+        policy::CallerRule {
+            scopes: vec!["misc".to_string()],
+            rate_limit: "20/hour".to_string(),
+        },
     );
+    pol.callers.insert(
+        "default".to_string(),
+        policy::CallerRule {
+            scopes: vec![],
+            rate_limit: "5/hour".to_string(),
+        },
+    );
+    vault.save_policy(&pol)?;
+    usage::human(&vault_dir, "policy.init", None);
 
-    std::fs::write(path, out)?;
     println!(
-        "{} Wrote {}",
+        "{} Seeded caller rules for vault '{}' (claude-code, default)",
         style("ok:").green().bold(),
-        policy::POLICY_FILE
+        vault.meta.name
     );
     println!(
         "{}",
-        style("  Edit the caller scopes, then commit it — it holds no secrets.").dim()
+        style("  They are encrypted inside the vault — not a committable file.").dim()
     );
     println!(
         "{}",
@@ -1623,15 +1640,32 @@ fn cmd_judge(action: &str, t: JudgeTestArgs) -> Result<()> {
         "set-key" | "set" => cmd_judge_set_key(),
         "status" | "key" | "key-status" => cmd_judge_status(),
         "remove-key" | "remove" | "unset" => cmd_judge_remove_key(),
+        "enable" | "on" => cmd_judge_toggle(true),
+        "disable" | "off" => cmd_judge_toggle(false),
         other => {
             eprintln!(
-                "{} Unknown action '{}'. Use: set-key | status | remove-key | test",
+                "{} Unknown action '{}'. Use: set-key | enable | disable | status | remove-key | test",
                 style("error:").red(),
                 other
             );
             std::process::exit(1);
         }
     }
+}
+
+/// `svault judge enable|disable` — flip the global on/off switch in
+/// `.svault/config.yaml`. The judge only acts when this is on AND a key is
+/// configured; per-vault `meta.judge.enabled = false` can still opt a vault out.
+fn cmd_judge_toggle(enabled: bool) -> Result<()> {
+    let mut cfg = config::SvaultConfig::load();
+    cfg.judge.enabled = enabled;
+    cfg.save()?;
+    let word = if enabled { "enabled" } else { "disabled" };
+    println!("{} AI judge {} (global)", style("ok:").green().bold(), word);
+    if enabled && config::openrouter_key(&cfg.judge).is_none() {
+        println!("  note: no OpenRouter key yet — run `svault judge set-key` to activate it.");
+    }
+    Ok(())
 }
 
 /// `svault judge set-key` — prompt for the OpenRouter key (hidden) and store it

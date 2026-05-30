@@ -254,6 +254,21 @@ impl SvaultConfig {
             .and_then(|s| serde_yaml::from_str(&s).ok())
             .unwrap_or_default()
     }
+
+    /// Persist to `.svault/config.yaml` as an owner-only file (it carries no
+    /// secret — the OpenRouter key never lives here — but the daemon/lock
+    /// settings shouldn't be world-writable). Creates `.svault/` if needed.
+    pub fn save(&self) -> std::io::Result<()> {
+        let path = config_path();
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                crate::secfile::create_dir_owner_only(parent)?;
+            }
+        }
+        let body = serde_yaml::to_string(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        crate::secfile::write_owner_only(&path, body.as_bytes())
+    }
 }
 
 #[cfg(all(test, unix))]

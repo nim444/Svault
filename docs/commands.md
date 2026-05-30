@@ -21,7 +21,8 @@ svault secret remove <NAME> [-v VAULT]   # delete a secret
 ```
 
 `secret add` also **classifies** the secret (scope + sensitivity tier +
-`--description`) into the signed `meta.yaml`; the flags drive non-interactive use,
+`--description`) into the vault's AES-256-GCM **encrypted** policy (not the plaintext
+`meta.yaml`); the flags drive non-interactive use,
 otherwise you're prompted (defaulting to the vault's `default_tier`).
 `--require-reason` makes the AI judge run for that secret even at low tier, and
 `--description` records what the secret is for so the judge can check the stated
@@ -33,10 +34,14 @@ can have several — local today, remote planned.)
 See [Policy engine](policy-engine.md) for the full pipeline. Since 0.9.0 the agent
 path is **enforced inside the daemon** (and re-run locally when no daemon is up).
 
+Since 0.9.2 the policy (classification + caller rules) is **encrypted inside the
+vault**, so a denied request returns only a generic message — the real reason is
+in the audit log — and both `policy` subcommands unlock the vault.
+
 ```bash
 svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # enforced, gated request
-svault policy init                 # scaffold svault.policy.yaml (caller definitions)
-svault policy check <caller>       # what a caller can access + recent activity
+svault policy init                 # seed caller rules into the vault's encrypted policy
+svault policy check <caller>       # what a caller can access + recent activity (unlocks the vault)
 ```
 
 ## AI judge (OpenRouter)
@@ -47,12 +52,18 @@ Configure `[judge]` in `.svault/config.yaml`; the key comes from
 
 ```bash
 svault judge set-key      # prompt for the key, store it 0600 (or: echo $KEY | svault judge set-key)
+svault judge enable       # turn the judge on globally (writes .svault/config.yaml); `disable` to turn off
 svault judge status       # show where the key resolves from + model config (never prints the key)
 svault judge test --reason "run the nightly migration" --scope database --tier high \
   --vault billing-api --vault-description "production billing service" \
   --description "production Postgres connection string"   # --vault/--description optional
 svault judge remove-key   # delete the stored key file
 ```
+
+The judge acts only when it's **enabled globally** (`svault judge enable`, or the
+TUI `J` screen) **and** a key is configured; a per-vault `meta.judge.enabled =
+false` can still opt one vault out. All of this — key, enable, model, thresholds,
+and a live test — is also drivable from the TUI (`J` on the vault list).
 
 `judge test` builds a sample request and asks the live model — nothing is read or
 written. Pass a realistic `--vault` name: the model sees it, so a default like
@@ -149,11 +160,12 @@ the decision (with the peer UID), and only then returns a value — there's no
 unguarded path.
 
 ```bash
-# One-time: scaffold the caller block, then grant scopes by editing it.
+# One-time: seed caller rules into the vault's encrypted policy, then edit
+# scopes in `svault settings`.
 $ svault policy init
-  # secret classification is set per-secret on `svault secret add` (signed meta)
+  # secret classification is set per-secret on `svault secret add` (encrypted in the vault)
 
-# What can the "claude" caller reach right now?
+# What can the "claude" caller reach right now? (unlocks the vault)
 $ svault policy check claude
 
 # (optional) turn the AI judge on for this machine:

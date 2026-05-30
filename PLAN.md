@@ -140,6 +140,31 @@
 - [x] **AI judge (OpenRouter)** — blocking `ureq` (bundled rustls, no async), default `google/gemini-2.5-flash`; tier-dependent fail modes (medium fail-open + audit flag, high fail-closed). Off until a key is configured. Manage the key with `svault judge set-key` / `status` / `remove-key` (0600 file or `$SVAULT_OPENROUTER_KEY`); `svault judge test` dry-runs setup. New modules `gate.rs` + `judge.rs`.
 - [x] Suite now 98 (+1 ignored stress benchmark); clippy + `cargo fmt --check` clean.
 
+### [DONE] Policy + judge in the TUI (0.9.1)
+
+> Surfaces the 0.9.0 engine in the interactive UI — no new security surface, it manages the same signed meta + `0600` key file the CLI does.
+
+- [x] **`J` judge-management screen** — toggle the judge globally, edit model / allow- & high-thresholds / timeout (persisted via new `SvaultConfig::save()` → owner-only `.svault/config.yaml`), set the OpenRouter key (masked entry → `0600`), remove it (`Del`), and run a live `test`.
+- [x] **Per-secret classification in the browser** — secrets render as a table (`TIER · SCOPE · REASON? · DESCRIPTION`); `c` reclassifies a secret (re-signs `meta.yaml`, value untouched).
+- [x] **`svault judge enable` / `disable`** — CLI parity for the global switch; `svault create` nudges what's still needed when a vault opts into the judge.
+- [x] **Audit** — `secret.classify` + global `judge.config`/`judge.key.set`/`judge.key.remove` events; the activity timeline folds the global events in. Suite now 101; clippy + `cargo fmt --check` clean.
+
+### [DONE] Policy encrypted at rest (0.9.2)
+
+> Closes the policy-reconnaissance path. Through 0.9.1 only secret *values* were
+> encrypted; the whole policy surface sat in the plaintext (HMAC-signed)
+> `meta.yaml` plus the committable `svault.policy.yaml`, so a same-UID agent could
+> *read* every tier/scope/description/caller and craft a request designed to pass.
+> Honest boundary: this defeats reading the files to plan a bypass; it is **not** a
+> sandbox against a hostile same-UID process reading the unlocked daemon's memory.
+
+- [x] **Policy moved into the encrypted payload** — per-secret classification (scope/tier/`require_reason`/description), `allow_agent` + `rate_limit`, the per-vault judge override, `default_tier`, and **caller rules** all live in `policy::VaultPolicyData`, stored AES-256-GCM-encrypted inside `vault.enc` (`VaultPayload { version: 2, secrets, policy }`). The public `meta.yaml` now carries only non-sensitive metadata (name, description, storage, created-at, version, settings) and stays HMAC-signed.
+- [x] **Caller rules are per-vault and encrypted** — the committable `svault.policy.yaml` is gone; `svault policy init` seeds callers into a vault's encrypted policy and `svault policy check <caller>` unlocks the vault to read them.
+- [x] **Generic denials to the caller** — every denied `svault get` returns the single opaque `gate::GENERIC_DENY` string (`denied: request not authorized for this secret`); the real reason (judge score + rationale, scope/caller mismatch, rate limit) is recorded only in the audit log.
+- [x] **Policy view/edit requires an unlocked vault** — `svault settings`, `svault secret add`, the TUI classification table, and `svault policy check`/`init` all open the vault first; the vault list no longer shows allow-agent / rate-limit columns.
+- [x] TUI judge-management shortcut labelled **`shift-J`** (`j` is list-down).
+- [x] On-disk payload bumped to **v2**; no migration (no released users) — vaults are created fresh. Suite now 103 (+1 ignored stress benchmark); clippy + `cargo fmt --check` clean.
+
 ### [TODO] 2.0.0 — GUI client (Tauri)
 > Version plan: the CLI is hardened to a stable **1.0.0** first; the GUI is a
 > deliberate **2.0.0**, and Claude / AI-platform access is **3.0.0**. 0.7.0+ is
@@ -150,7 +175,7 @@
   - [ ] **Auto-lock settings** — visual controls for idle timeout (default 15 min) and hard max lock (default 8h)
   - [ ] **Session monitor** — show active sessions, locked/unlocked state, auto-lock countdown timer
   - [ ] **Secret management** — view secret names (never values), add/remove secrets with GUI
-  - [ ] **Policy viewer** — inspect what a caller can access (from `svault.policy.yaml`)
+  - [ ] **Policy viewer** — inspect what a caller can access (from the unlocked vault's encrypted policy)
   - [ ] **Status notifications** — system tray icon, notifications for lock/unlock, timeouts
   - [ ] **Settings UI** — configure Svault defaults, daemon socket path, log level
   - [ ] **Audit log viewer** — see who accessed what (from policy logs)
@@ -214,10 +239,12 @@
 
 Done: Step 1 (vault) · Step 1+ (TUI) · Step 2 (policy engine) · Step 3
 (daemon + recovery) · 0.6.0–0.8.0 (security hardening) · 0.9.0 (enforced policy
-engine + AI judge).
+engine + AI judge) · 0.9.1 (policy + judge in the TUI) · 0.9.2 (policy encrypted
+at rest, generic denials).
 
-1. **→ 1.0.0** — a final independent review of the enforced 0.9.0 engine plus the
-   install channels below → the first stable, audited CLI. **(current focus)**
+1. **→ 1.0.0** — a final independent review of the enforced, encrypted-policy
+   engine plus the install channels below → the first stable, audited CLI.
+   **(current focus)**
 2. **2.0.0** — GUI client (Tauri desktop app for vault management)
 3. **3.0.0** — Claude / AI-platform access: MCP server + platform hooks
    (Claude Code, Cursor, Copilot, VS Code, Aider)

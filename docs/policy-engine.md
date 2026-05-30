@@ -33,9 +33,11 @@ re-run any step later to change things.
 
 ### 1. Classify your secrets (scope + tier + description)
 
-Classification lives in the signed `meta.yaml`. Set it when you add a secret, or
-re-run `secret add` on an existing name to **reclassify** it (the value is
-preserved if you leave it unchanged; the meta is re-signed). The optional
+Classification lives **AES-256-GCM encrypted inside the vault** (not the plaintext
+`meta.yaml`), so a same-UID agent can neither read a secret's tier/scope/purpose to
+plan a passing request nor tamper with it without the passphrase. Set it when you
+add a secret, or re-run `secret add` on an existing name to **reclassify** it (the
+value is preserved if you leave it unchanged). The optional
 `--description` records *what the secret is for* — the AI judge weighs it against
 the stated reason, so a request whose reason doesn't match the secret's purpose is
 denied:
@@ -62,17 +64,18 @@ settings) is also given to the judge as overall context.
 
 ### 2. Define who may ask (callers)
 
-Callers live in the committable `svault.policy.yaml` (no secrets, no
-classification). Scaffold it, then edit:
+Caller rules (who holds which scopes, at what rate limit) live **encrypted inside
+the vault**, alongside the classification — they're no longer a committable
+`svault.policy.yaml`. Seed and inspect them (both unlock the vault):
 
 ```bash
-svault policy init          # writes svault.policy.yaml with a caller block
-$EDITOR svault.policy.yaml  # add callers, scopes, rate limits (see below)
+svault policy init                # seed default callers into the vault's policy
 svault policy check claude-code   # verify what that caller can now reach
 ```
 
-To **change** a caller's access, edit the file — discovery is anchored to the
-project root and re-read on every request, so there's nothing to reload.
+To **change** a caller's access, edit it in `svault settings` (re-encrypts the
+vault). When no caller rules are defined, caller authorization falls back to the
+vault's `allow_agent` / `rate_limit`.
 
 ### 3. Turn on the AI judge (optional, for medium/high)
 
@@ -101,9 +104,12 @@ svault get DB_PASSWORD -v billing --scope database \
 ```
 
 Granted → the value prints to stdout (+ an audit row); denied → non-zero exit with
-the reason. The judge sees the vault's and secret's descriptions, so the reason
-has to fit what the secret is actually for. Review history any time with
-`svault policy check <caller>`.
+a **generic** message (`denied: request not authorized for this secret`). The real
+reason — judge score + rationale, scope/caller mismatch, rate limit — is recorded
+only in the audit log, for you; the caller learns nothing it could use to refine a
+denied request into a passing one. The judge sees the vault's and secret's
+descriptions, so the reason has to fit what the secret is actually for. Review
+history any time with `svault policy check <caller>`.
 
 ## The request pipeline
 
@@ -128,11 +134,12 @@ flowchart TD
 ```
 
 On **allow**, the value is printed to stdout (status goes to stderr, so an agent
-capturing stdout gets only the value). On **deny**, it exits non-zero and logs why.
+capturing stdout gets only the value). On **deny**, it exits non-zero with a
+generic message; the detailed reason is logged for the human, not returned.
 
 ## Sensitivity tiers
 
-Each secret is classified in the vault's **signed `meta.yaml`** (see below). With
+Each secret is classified in the vault's **encrypted policy** (see below). With
 the AI judge **enabled**:
 
 | Tier | Agent behaviour |
@@ -144,11 +151,11 @@ the AI judge **enabled**:
 With the judge **disabled** (no key / `enabled = false`), it falls back to the
 pre-0.9.0 rule: low/medium allowed (medium flagged), **high = human-only**.
 
-## Per-secret classification (signed)
+## Per-secret classification (encrypted)
 
-Classification lives in `meta.yaml`, which is HMAC-signed with the vault key — so
-a same-UID attacker can't downgrade a tier or scope without the passphrase
-(findings #5/#22). Set it when adding a secret:
+Classification lives **AES-256-GCM encrypted inside `vault.enc`** — so a same-UID
+attacker can neither read a tier/scope/purpose at rest (no recon) nor downgrade it
+without the passphrase. Set it when adding a secret:
 
 ```bash
 svault secret add DB_PASSWORD --scope database --tier high --description "prod Postgres DSN"
@@ -161,13 +168,15 @@ Each secret carries `scope`, `tier`, `require_reason`, and an optional
 `default_tier`, chosen at `svault create`), and description. A `"*"` entry in the
 classification map acts as the default for any unlisted secret.
 
-## `svault.policy.yaml` — caller definitions
+## Caller rules (encrypted, per-vault)
 
-The committable policy file now holds **only the callers** (who may request which
-scopes, and their rate limits) — it contains no secrets and no classification:
+Caller definitions — who may request which scopes, and at what rate limit — live
+**encrypted inside the vault**, next to the classification. There is no longer a
+committable `svault.policy.yaml`; everything that would help an agent plan a
+bypass is unreadable at rest. Seed defaults with `svault policy init` and edit
+them in `svault settings`. Conceptually a vault's caller rules look like:
 
 ```yaml
-version: 1
 callers:
   claude-code:
     scopes: [database, api]
@@ -177,11 +186,10 @@ callers:
     rate_limit: 5/hour
 ```
 
-Discovery is **anchored to the project root** (the directory holding `.svault/`)
-— Svault never searches above it (#5). A file that exists but fails to parse
-**fails closed** (the request is denied), rather than silently falling back to
-allow-all (N-2). With no policy file at all, caller authorization falls back to
-the vault's `allow_agent` / `rate_limit` in `meta.yaml`.
+When a vault has no caller rules, caller authorization falls back to the vault's
+`allow_agent` / `rate_limit`. (Team policy-as-code sharing — a committable, signed
+export of caller rules — is planned as an explicit opt-in, separate from at-rest
+storage.)
 
 ## The AI judge
 
@@ -198,7 +206,7 @@ svault judge test --reason "run the nightly database migration" --scope database
 
 ## Helper commands
 
-- `svault policy init` — scaffold a `svault.policy.yaml` with the caller block.
-- `svault policy check <caller>` — show a caller's scopes, the classified secrets it can reach (read from each vault's meta), its rate limit, and recent activity / denials.
+- `svault policy init` — seed default caller rules into a vault's encrypted policy (unlocks the vault).
+- `svault policy check <caller>` — unlock the vault and show a caller's scopes, the classified secrets it can reach, its rate limit, and recent activity / denials.
 
 Every request is appended to `.svault/<vault>/audit.log` (gitignored, mode `0600`).

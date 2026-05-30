@@ -148,16 +148,13 @@ mod tests {
 
     #[test]
     fn recover_and_rekey_resets_passphrase_and_keeps_code() {
-        use crate::meta::{AccessConfig, VaultMeta, VaultSettings};
+        use crate::meta::{VaultMeta, VaultSettings};
+        use crate::policy::VaultPolicyData;
         let dir = TempDir::new().unwrap();
         let vault_dir = dir.path().join("v");
-        let meta = VaultMeta::new(
-            "v".to_string(),
-            "d".to_string(),
-            AccessConfig::default(),
-            VaultSettings::default(),
-        );
-        let vault = Vault::init(&vault_dir, "Old!Pass#11", meta).unwrap();
+        let meta = VaultMeta::new("v".to_string(), "d".to_string(), VaultSettings::default());
+        let vault =
+            Vault::init(&vault_dir, "Old!Pass#11", meta, VaultPolicyData::default()).unwrap();
         vault.add_secret("K", "val").unwrap();
         let code = generate_code();
         write(&vault_dir, vault.key(), &code).unwrap();

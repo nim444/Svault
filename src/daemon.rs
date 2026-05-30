@@ -319,35 +319,22 @@ mod imp {
                         }
                     }
                 };
-                let meta = &v.meta; // verified by open_with_key — #22
-
-                // Load policy, failing CLOSED on a present-but-unparseable file.
-                let policy_box;
-                let policy_opt = match policy::load() {
-                    policy::PolicyLoad::Absent => None,
-                    policy::PolicyLoad::Loaded(p) => {
-                        policy_box = p;
-                        Some(policy_box.as_ref())
-                    }
-                    policy::PolicyLoad::Error(msg) => {
-                        let why = format!("policy file error (failing closed): {msg}");
-                        audit_gated(
-                            &dir, &caller, &secret, &scope, "low", "deny", &why, &reason, peer_uid,
-                        );
-                        return Response::Denied { reason: why };
-                    }
-                };
-
+                // All policy comes from the decrypted, vault-key-authenticated
+                // payload (#22) — classification, caller rules, judge overrides.
                 let req = policy::Request {
-                    vault: &meta.name,
+                    vault: &v.meta.name,
+                    vault_description: &v.meta.description,
                     vault_dir: &dir,
                     secret: &secret,
                     scope: &scope,
                     reason: &reason,
                     caller: &caller,
                 };
-                let verdict = gate::authorize(policy_opt, meta, &req, ctx.judge.as_ref());
+                let verdict = gate::authorize(&v.policy, &req, ctx.judge.as_ref());
                 let decision_str = if verdict.allowed() { "allow" } else { "deny" };
+                // The full reason (judge score + rationale, mismatch, rate limit)
+                // is recorded for the human; the caller only ever sees a generic
+                // denial, so it can't learn what to change to pass.
                 audit_gated(
                     &dir,
                     &caller,
@@ -360,11 +347,9 @@ mod imp {
                     peer_uid,
                 );
                 if !verdict.allowed() {
-                    let reason = match verdict.decision {
-                        policy::Decision::Deny(_, why) => why,
-                        _ => verdict.note,
+                    return Response::Denied {
+                        reason: gate::GENERIC_DENY.to_string(),
                     };
-                    return Response::Denied { reason };
                 }
                 match v.get_secret(&secret) {
                     Ok(Some(value)) => Response::Granted {
@@ -995,19 +980,15 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::meta::{AccessConfig, VaultMeta, VaultSettings};
+        use crate::meta::{VaultMeta, VaultSettings};
+        use crate::policy::VaultPolicyData;
         use crate::vault::Vault;
         use tempfile::TempDir;
 
         fn make_vault(base: &Path, name: &str, pass: &str) {
             let dir = vault_dir(base, name);
-            let meta = VaultMeta::new(
-                name.to_string(),
-                "d".to_string(),
-                AccessConfig::default(),
-                VaultSettings::default(),
-            );
-            let v = Vault::init(&dir, pass, meta).unwrap();
+            let meta = VaultMeta::new(name.to_string(), "d".to_string(), VaultSettings::default());
+            let v = Vault::init(&dir, pass, meta, VaultPolicyData::default()).unwrap();
             v.add_secret("API_KEY", "s3cr3t").unwrap();
         }
 
@@ -1067,16 +1048,9 @@ mod imp {
         /// enforce. (No policy file exists in tests → caller auth via allow_agent.)
         fn make_classified_vault(base: &Path, name: &str, secret: &str, scope: &str, tier: Tier) {
             let dir = vault_dir(base, name);
-            let meta = VaultMeta::new(
-                name.to_string(),
-                "d".to_string(),
-                AccessConfig::default(),
-                VaultSettings::default(),
-            );
-            let v = Vault::init(&dir, PASS, meta).unwrap();
-            v.add_secret(secret, "s3cr3t").unwrap();
-            let mut m = v.meta.clone();
-            m.secrets.insert(
+            let meta = VaultMeta::new(name.to_string(), "d".to_string(), VaultSettings::default());
+            let mut policy = VaultPolicyData::default();
+            policy.secrets.insert(
                 secret.to_string(),
                 crate::policy::SecretRule {
                     scope: scope.to_string(),
@@ -1085,7 +1059,8 @@ mod imp {
                     description: String::new(),
                 },
             );
-            v.save_meta(&m).unwrap();
+            let v = Vault::init(&dir, PASS, meta, policy).unwrap();
+            v.add_secret(secret, "s3cr3t").unwrap();
         }
 
         struct FakeJudge(std::result::Result<String, String>);

@@ -3,10 +3,7 @@ use chrono::Utc;
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::collections::BTreeMap;
 use std::path::Path;
-
-use crate::policy::SecretRule;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -118,6 +115,12 @@ pub struct VaultJudgeConfig {
     pub model: Option<String>,
 }
 
+/// The **public** vault metadata: `meta.yaml`. HMAC-signed (tamper-evident) but
+/// plaintext, so it carries only what the pre-unlock vault list needs and *no*
+/// policy that would help an agent plan a bypass. The entire policy surface
+/// (per-secret classification, access rules, caller rules, judge overrides) is
+/// AES-256-GCM encrypted inside `vault.enc` (see [`crate::policy::VaultPolicyData`])
+/// and is only readable once the vault is unlocked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultMeta {
     pub name: String,
@@ -131,21 +134,7 @@ pub struct VaultMeta {
     #[serde(default = "default_version")]
     pub version: u32,
     #[serde(default)]
-    pub access: AccessConfig,
-    #[serde(default)]
     pub settings: VaultSettings,
-    /// Per-secret classification (scope, tier, require_reason). Because it lives
-    /// in the HMAC-signed meta.yaml, a same-UID attacker can't downgrade a tier
-    /// or scope without the vault key (finding #5/#22). A `"*"` entry, if
-    /// present, is the default classification for any unlisted secret.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub secrets: BTreeMap<String, SecretRule>,
-    /// Per-vault AI-judge overrides (inherit the global config when unset).
-    #[serde(default)]
-    pub judge: VaultJudgeConfig,
-    /// Default tier applied to a secret added without an explicit one.
-    #[serde(default)]
-    pub default_tier: crate::policy::Tier,
 }
 
 fn default_version() -> u32 {
@@ -153,30 +142,15 @@ fn default_version() -> u32 {
 }
 
 impl VaultMeta {
-    pub fn new(
-        name: String,
-        description: String,
-        access: AccessConfig,
-        settings: VaultSettings,
-    ) -> Self {
+    pub fn new(name: String, description: String, settings: VaultSettings) -> Self {
         Self {
             name,
             description,
             storage: "local".to_string(),
             created_at: Utc::now().to_rfc3339(),
             version: 1,
-            access,
             settings,
-            secrets: BTreeMap::new(),
-            judge: VaultJudgeConfig::default(),
-            default_tier: crate::policy::Tier::default(),
         }
-    }
-
-    /// The classification for `secret`: an explicit entry, else the `"*"`
-    /// default, else `None` (the vault has no classification for it).
-    pub fn classify(&self, secret: &str) -> Option<&SecretRule> {
-        self.secrets.get(secret).or_else(|| self.secrets.get("*"))
     }
 
     /// Serialize, sign with HMAC, write to meta.yaml.
@@ -246,12 +220,7 @@ mod storage_check {
 
     #[test]
     fn storage_roundtrips() {
-        let mut meta = VaultMeta::new(
-            "v".into(),
-            "d".into(),
-            AccessConfig::default(),
-            VaultSettings::default(),
-        );
+        let mut meta = VaultMeta::new("v".into(), "d".into(), VaultSettings::default());
         meta.storage = "cloud".into();
         let body = serde_yaml::to_string(&meta).unwrap();
         let back: VaultMeta = serde_yaml::from_str(&body).unwrap();

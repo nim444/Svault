@@ -11,7 +11,9 @@ surface is added:
 | **0.1 – 0.6** | Shipped | CLI core — encrypted vault (AES-256-GCM + Argon2id), Ratatui TUI, policy engine (`svault get`), Unix daemon, recovery + export/import, and the 0.6.0 security-hardening pass |
 | **0.7.0** | Shipped | Security-hardening pass — `cargo audit` CI gate, client-side key derivation, daemon peer-UID bond, owner-only files/dirs, entropy floor, zeroized secrets, SLSA provenance |
 | **0.8.0** | Shipped | Security-review-response release — owner-only TUI export, daemon transport zeroization, `sigaction`, etc. |
-| **0.9.0** | In review (PR #15) | **Enforced policy engine + AI judge** — daemon-side policy + audit (peer-UID stamped), signed per-secret classification, OpenRouter judge for medium/high secrets, and `svault judge set-key/status/remove-key` to manage the key |
+| **0.9.0** | Shipped | **Enforced policy engine + AI judge** — daemon-side policy + audit (peer-UID stamped), signed per-secret classification, OpenRouter judge for medium/high secrets, and `svault judge set-key/status/remove-key` to manage the key |
+| **0.9.1** | Shipped | **Policy + judge in the TUI** — `shift-J` judge-management screen (key, global on/off, model, thresholds, live test), per-secret classification table + `c` reclassify, `svault judge enable/disable` for CLI parity, and judge/policy changes reflected in the audit timeline |
+| **0.9.2** | Shipped | **Policy encrypted at rest** — classification, caller rules, access, and judge overrides moved out of the plaintext `meta.yaml`/`svault.policy.yaml` into the AES-256-GCM `vault.enc` (no read-to-bypass), and **denials are generic to the caller** (full reason only in the audit log) |
 | **1.0.0** | Planned | First **stable release**: install channels + a final independent review of the enforced engine, then a hardened, audited CLI |
 | **2.0.0** | Planned | Desktop **GUI** (Tauri) for vault management + system tray |
 | **3.0.0** | Planned | **Claude / AI-platform access** — MCP server + Pre/PostToolUse hooks (Claude Code, Cursor, Copilot, VS Code, Aider) |
@@ -38,6 +40,10 @@ files/dirs + atomic socket (#14/#16), graceful shutdown (#17), zeroized secrets
 `sigaction` shutdown signals (N-9).
 
 **Done in 0.9.0** (the enforced-policy release): policy + audit moved **inside the daemon** so the socket is the choke point (#2, N-5), the audit trail is stamped with the unforgeable peer UID (N-1), secret classification moved to the **signed `meta.yaml`** with anchored policy discovery (#5) and verified-meta gating (#22), unparseable policy **fails closed** (N-2), and the **AI judge** (OpenRouter) gates medium/high secrets — with `svault judge set-key`/`status`/`remove-key` to manage the key as a `0600` file.
+
+**Done in 0.9.1** (TUI surface): the policy engine + AI judge are now drivable from the TUI — a `shift-J` judge-management screen (set/remove the OpenRouter key, toggle the judge globally, edit model/thresholds, live test), a per-secret classification table with `c` to reclassify, `svault judge enable`/`disable` for CLI parity, and judge/policy changes recorded to the audit timeline.
+
+**Done in 0.9.2** (policy encrypted at rest): the whole policy surface — per-secret classification, caller rules, access fallback, and the per-vault judge override — moved out of the plaintext `meta.yaml` (and the former committable `svault.policy.yaml`) into the AES-256-GCM-encrypted `vault.enc`. A same-UID agent can no longer *read* the tiers/scopes/descriptions/caller scopes/rate limits at rest to plan a request that passes, nor tamper with them. Denials to the caller are now **generic** — the score/rationale/mismatch reason lives only in the audit log — so a caller can't hill-climb a denied request. (This closes the read-to-bypass path; it remains, by design, not a sandbox against a hostile same-UID process reading the unlocked daemon's memory.)
 
 **Remaining before 1.0.0** (see the [0.9.0 findings register](security-review/findings/0.9.0.md)):
 - A final **independent security review of the 0.9.0 enforced engine** — the explicit gate.

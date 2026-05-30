@@ -17,17 +17,20 @@ Since 0.9.0 this pipeline runs **inside the daemon** (the CLI re-runs it locally
 when no daemon is up) — the enforced choke point, not advisory. The `reason` field
 is required by the [policy engine](policy-engine.md); for medium/high-tier secrets
 the [AI judge](security.md#ai-judge) scores it. An AI that can't plausibly explain
-why it needs a secret is refused. Secret classification (scope/tier) lives in the
-HMAC-signed `meta.yaml`.
+why it needs a secret is refused. Since 0.9.2 the whole policy surface — secret
+classification (scope/tier), caller rules, access fallback, and judge overrides —
+lives AES-256-GCM **encrypted inside `vault.enc`**, not in the plaintext
+`meta.yaml`, so a same-UID agent can't read it at rest to plan a passing request.
 
 ## On-disk layout
 
 ```
 .svault/
   my-project/
-    vault.enc     ← AES-256-GCM encrypted secrets        (safe to commit)
+    vault.enc     ← AES-256-GCM encrypted secrets + the
+                    full policy surface                   (safe to commit)
     meta.yaml     ← name, storage backend, description,
-                    access rules                          (safe to commit, HMAC-signed)
+                    settings (no policy)                  (safe to commit, HMAC-signed)
     recovery.enc  ← vault key wrapped under the recovery
                     code                                  (safe to commit)
     .gitignore    ← auto-written at create; blocks .session + logs
