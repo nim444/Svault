@@ -34,7 +34,13 @@ resilience and a logged stress simulation — see the carry-forward register
 **0.7.0** was reviewed by three independent models, which unanimously re-confirmed
 the advisory-policy gap (#2/#5/#22) as the blocker for a 1.0.0 "enforced" claim and
 surfaced a handful of new items — consolidated with dispositions in
-**[findings/0.7.0.md](findings/0.7.0.md)**. 0.8.0 acts on them.
+**[findings/0.7.0.md](findings/0.7.0.md)**. 0.8.0 acts on them. **0.9.0** closes the
+policy thread — enforcement + audit moved **inside the daemon**, classification in
+the signed `meta.yaml`, anchored fail-closed discovery — and adds the AI judge. The
+maintainer pre-review register **[findings/0.9.0.md](findings/0.9.0.md)** records
+those closures, the one residual (N-1: caller authorization still self-asserted,
+audit now peer-UID-stamped), and the judge's new surface (prompt injection, data
+egress, key handling). The **independent 0.9.0 review is pending and gates 1.0.0.**
 
 | Version | Date | Reviewer | Overall posture | Review |
 |---|---|---|---|---|

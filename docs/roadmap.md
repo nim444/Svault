@@ -39,8 +39,10 @@ files/dirs + atomic socket (#14/#16), graceful shutdown (#17), zeroized secrets
 
 **Done in 0.9.0** (the enforced-policy release): policy + audit moved **inside the daemon** so the socket is the choke point (#2, N-5), the audit trail is stamped with the unforgeable peer UID (N-1), secret classification moved to the **signed `meta.yaml`** with anchored policy discovery (#5) and verified-meta gating (#22), unparseable policy **fails closed** (N-2), and the **AI judge** (OpenRouter) gates medium/high secrets — with `svault judge set-key`/`status`/`remove-key` to manage the key as a `0600` file.
 
-**Remaining before 1.0.0:**
-- A final independent security review of the 0.9.0 enforced engine, and the install channels below.
+**Remaining before 1.0.0** (see the [0.9.0 findings register](security-review/findings/0.9.0.md)):
+- A final **independent security review of the 0.9.0 enforced engine** — the explicit gate.
+- **Decide N-1** — caller *authorization* is still self-asserted (audit is now peer-UID-stamped, so attribution is honest); accept that as the boundary, or add a per-agent token / OS-bound caller identity.
+- **Adversarially test the AI judge** — prompt injection via the `reason` field (J-1) in particular.
 - **Accepted/backlog, not blockers** — Windows atomic owner-only DACL (N-7), tamper-evident audit sink (#15/N-8), tunable Argon2id (N-12).
 - **Distribution** — `install.sh`, Homebrew tap, cargo-binstall, Docker (see below).
 
