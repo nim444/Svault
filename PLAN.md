@@ -120,6 +120,26 @@
 - [x] **Connect resilience** — `daemon::send` retries the socket connect with short backoff (absorbs OS listener-backlog drops under burst).
 - [x] Suite now 82 (+1 ignored stress benchmark); clippy clean.
 
+### [DONE] Security-review hardening (0.7.0)
+
+> Acts on the 0.7.0 review register ([findings/0.7.0.md](docs/security-review/findings/0.7.0.md)).
+
+- [x] `cargo audit` CI gate + `ratatui` 0.30 (#9/#10); client-side key derivation so the passphrase never crosses the socket (#3); daemon peer-UID bond (#1); owner-only files/dirs + atomic socket (#14/#16); graceful shutdown (#17); zeroized secrets (#6); release checksums + SLSA provenance (#11); passphrase entropy floor (#12).
+
+### [DONE] Review-response (0.8.0)
+
+- [x] Owner-only TUI export (N-3) + import dir (N-4); `0600` rotated `daemon.log` (N-10); daemon transport zeroization (N-6); `sigaction` shutdown signals (N-9). Idempotent `release.yml` publish step.
+
+### [DONE] Enforced policy engine + AI judge (0.9.0)
+
+> The headline release: the policy engine moves from advisory to **enforced**, and the AI judge lands. Closes #2/#5/#22 + N-1/N-2/N-5.
+
+- [x] **Policy + audit inside the daemon** — the agent path is a `GetGated` request; the daemon evaluates policy, consults the judge, audits (stamped with the unforgeable **peer UID**), then returns a value. The socket is the single choke point; the CLI runs the identical gate locally when no daemon is up. No unguarded read path (#2, N-1, N-5).
+- [x] **Signed per-secret classification** — `scope`/`tier`/`require_reason` live in the HMAC-signed `meta.yaml` (`svault secret add --scope --tier --require-reason`), so a same-UID attacker can't downgrade a tier without the key (#5/#22). Vault create sets a `default_tier` + per-vault judge toggle.
+- [x] **Anchored, fail-closed policy discovery** — `svault.policy.yaml` holds callers only; discovery stops at the project root (#5); an unparseable policy denies rather than allow-all (N-2).
+- [x] **AI judge (OpenRouter)** — blocking `ureq` (bundled rustls, no async), default `google/gemini-2.5-flash`; tier-dependent fail modes (medium fail-open + audit flag, high fail-closed). Off until a key is configured. Manage the key with `svault judge set-key` / `status` / `remove-key` (0600 file or `$SVAULT_OPENROUTER_KEY`); `svault judge test` dry-runs setup. New modules `gate.rs` + `judge.rs`.
+- [x] Suite now 98 (+1 ignored stress benchmark); clippy + `cargo fmt --check` clean.
+
 ### [TODO] 2.0.0 — GUI client (Tauri)
 > Version plan: the CLI is hardened to a stable **1.0.0** first; the GUI is a
 > deliberate **2.0.0**, and Claude / AI-platform access is **3.0.0**. 0.7.0+ is
@@ -193,10 +213,11 @@
 ## Build sequence (by version)
 
 Done: Step 1 (vault) · Step 1+ (TUI) · Step 2 (policy engine) · Step 3
-(daemon + recovery) · 0.6.0 (security hardening).
+(daemon + recovery) · 0.6.0–0.8.0 (security hardening) · 0.9.0 (enforced policy
+engine + AI judge).
 
-1. **0.7.0 → 1.0.0** — security hardening (review findings), supply-chain CI
-   gate, and install channels → a stable, audited CLI. **(current focus)**
+1. **→ 1.0.0** — a final independent review of the enforced 0.9.0 engine plus the
+   install channels below → the first stable, audited CLI. **(current focus)**
 2. **2.0.0** — GUI client (Tauri desktop app for vault management)
 3. **3.0.0** — Claude / AI-platform access: MCP server + platform hooks
    (Claude Code, Cursor, Copilot, VS Code, Aider)

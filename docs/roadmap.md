@@ -11,9 +11,8 @@ surface is added:
 | **0.1 – 0.6** | Shipped | CLI core — encrypted vault (AES-256-GCM + Argon2id), Ratatui TUI, policy engine (`svault get`), Unix daemon, recovery + export/import, and the 0.6.0 security-hardening pass |
 | **0.7.0** | Shipped | Security-hardening pass — `cargo audit` CI gate, client-side key derivation, daemon peer-UID bond, owner-only files/dirs, entropy floor, zeroized secrets, SLSA provenance |
 | **0.8.0** | Shipped | Security-review-response release — owner-only TUI export, daemon transport zeroization, `sigaction`, etc. |
-| **0.9.0** | In progress | **Enforced policy engine + AI judge** — daemon-side policy + audit (peer-UID stamped), signed per-secret classification, OpenRouter judge for medium/high secrets |
-| **→ 1.0.0** | Planned | Install channels + a final independent review, then the first **stable, audited** release |
-| **1.0.0** | Planned | First **stable release**: a hardened, audited command-line tool |
+| **0.9.0** | In review (PR #15) | **Enforced policy engine + AI judge** — daemon-side policy + audit (peer-UID stamped), signed per-secret classification, OpenRouter judge for medium/high secrets, and `svault judge set-key/status/remove-key` to manage the key |
+| **1.0.0** | Planned | First **stable release**: install channels + a final independent review of the enforced engine, then a hardened, audited CLI |
 | **2.0.0** | Planned | Desktop **GUI** (Tauri) for vault management + system tray |
 | **3.0.0** | Planned | **Claude / AI-platform access** — MCP server + Pre/PostToolUse hooks (Claude Code, Cursor, Copilot, VS Code, Aider) |
 | **Cloud** (opt-in) | Planned | Anomaly scoring via Claude Haiku — free tier + premium plans |
@@ -38,7 +37,7 @@ files/dirs + atomic socket (#14/#16), graceful shutdown (#17), zeroized secrets
 (N-4), `0600` rotated `daemon.log` (N-10), daemon transport zeroization (N-6), and
 `sigaction` shutdown signals (N-9).
 
-**Done in 0.9.0** (the enforced-policy release): policy + audit moved **inside the daemon** so the socket is the choke point (#2, N-5), the audit trail is stamped with the unforgeable peer UID (N-1), secret classification moved to the **signed `meta.yaml`** with anchored policy discovery (#5) and verified-meta gating (#22), unparseable policy **fails closed** (N-2), and the **AI judge** (OpenRouter) gates medium/high secrets.
+**Done in 0.9.0** (the enforced-policy release): policy + audit moved **inside the daemon** so the socket is the choke point (#2, N-5), the audit trail is stamped with the unforgeable peer UID (N-1), secret classification moved to the **signed `meta.yaml`** with anchored policy discovery (#5) and verified-meta gating (#22), unparseable policy **fails closed** (N-2), and the **AI judge** (OpenRouter) gates medium/high secrets — with `svault judge set-key`/`status`/`remove-key` to manage the key as a `0600` file.
 
 **Remaining before 1.0.0:**
 - A final independent security review of the 0.9.0 enforced engine, and the install channels below.

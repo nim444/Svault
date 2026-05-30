@@ -21,6 +21,71 @@ Every decision is audited and stamped with the connecting process's **peer UID**
 > is **not** a sandbox against a hostile *same-UID* process, which can read the
 > daemon's memory directly — that boundary is documented in [security.md](security.md).
 
+## Step-by-step: set up & change policy and the judge
+
+A full setup is four moves. Each is independent — do only what you need, and
+re-run any step later to change things.
+
+### 1. Classify your secrets (scope + tier)
+
+Classification lives in the signed `meta.yaml`. Set it when you add a secret, or
+re-run `secret add` on an existing name to **reclassify** it (the value is
+preserved if you leave it unchanged; the meta is re-signed):
+
+```bash
+# Add and classify in one step
+svault secret add DB_PASSWORD --scope database --tier high
+svault secret add STRIPE_KEY  --scope payments --tier high --require-reason
+svault secret add ANALYTICS   --scope api      --tier low
+
+# Modify later — re-running with new flags updates the classification
+svault secret add ANALYTICS   --scope api      --tier medium
+```
+
+Run `svault secret add NAME` with no flags to be prompted interactively (the tier
+defaults to the vault's `default_tier`). In the TUI, `a` in the secret browser
+opens the same form (scope / tier / require-reason). A `"*"` entry in the map is
+the default rule for any secret you didn't classify.
+
+### 2. Define who may ask (callers)
+
+Callers live in the committable `svault.policy.yaml` (no secrets, no
+classification). Scaffold it, then edit:
+
+```bash
+svault policy init          # writes svault.policy.yaml with a caller block
+$EDITOR svault.policy.yaml  # add callers, scopes, rate limits (see below)
+svault policy check claude-code   # verify what that caller can now reach
+```
+
+To **change** a caller's access, edit the file — discovery is anchored to the
+project root and re-read on every request, so there's nothing to reload.
+
+### 3. Turn on the AI judge (optional, for medium/high)
+
+The judge is **off until a key is present**. Store an OpenRouter key, enable it,
+and verify — no secret is touched:
+
+```bash
+svault judge set-key        # paste the key (hidden), or: echo "$KEY" | svault judge set-key
+svault judge status         # confirm: key present + model/thresholds
+svault judge test --reason "run the nightly db migration" --scope database --tier high
+```
+
+Enable it for the machine in `.svault/config.yaml` (`judge.enabled: true`) or per
+vault at `svault create` (and in TUI settings). **Change** the model/thresholds by
+editing `[judge]` in that file; **rotate or remove** the key with `svault judge
+set-key` again or `svault judge remove-key`.
+
+### 4. Make a request as the agent
+
+```bash
+svault get DB_PASSWORD --scope database --reason "run the nightly migration" --caller claude-code
+```
+
+Granted → the value prints to stdout (+ an audit row); denied → non-zero exit with
+the reason. Review history any time with `svault policy check <caller>`.
+
 ## The request pipeline
 
 ```bash
