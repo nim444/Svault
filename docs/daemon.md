@@ -88,7 +88,7 @@ svault daemon doctor --fix    # also remove a stale socket / pid file
 
 - One daemon per project `.svault/`. Socket at `.svault/daemon.sock` (mode `0600`), pid at `.svault/daemon.pid`, log at `.svault/daemon.log`. All three are inside `.svault/`, which is gitignored.
 - `start` execs `svault daemon run` in its own session (`setsid`) so closing the terminal won't kill it; output goes to the log file.
-- Protocol: newline-delimited JSON requests (`Ping`, `Status`, `Unlock`, `Lock`, `LockAll`, `Get`, `Shutdown`) over the socket.
+- Protocol: newline-delimited JSON requests (`Ping`, `Status`, `Unlock`, `Lock`, `LockAll`, `Get`, `GetGated`, `Shutdown`) over the socket. `Get` is the human path (audited); `GetGated` is the **enforced agent path** — the daemon runs the policy engine + AI judge and audits the decision (with the peer UID) before returning a value (0.9.0). Every read, human or agent, is now recorded.
 - **Concurrency:** the listener spawns one thread per connection. Shared key state is a mutex-guarded map, but a `Get` only holds the lock long enough to copy the 32-byte key and update the last-used timestamp — the actual AES-GCM decryption happens outside the lock, so parallel reads from many agents don't serialize on each other.
 - On `stop` / `Shutdown` the daemon clears its key map (zeroizing every key) and removes the socket and pid file. A `stop` fallback signals the pid if the socket is unresponsive.
 

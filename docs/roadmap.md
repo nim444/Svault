@@ -10,10 +10,9 @@ surface is added:
 |---|---|---|
 | **0.1 – 0.6** | Shipped | CLI core — encrypted vault (AES-256-GCM + Argon2id), Ratatui TUI, policy engine (`svault get`), Unix daemon, recovery + export/import, and the 0.6.0 security-hardening pass |
 | **0.7.0** | Shipped | Security-hardening pass — `cargo audit` CI gate, client-side key derivation, daemon peer-UID bond, owner-only files/dirs, entropy floor, zeroized secrets, SLSA provenance |
-| **0.8.0** | In progress | Security-review-response release — acts on the three independent 0.7.0 reviews (owner-only TUI export, daemon transport zeroization, `sigaction`, etc.); **policy enforcement deferred to 0.9.0** |
-| **0.9.0** | Planned | **Policy as an enforced control** (the last substantive gap) — daemon-side policy + audit, caller authentication, signed/pinned policy file |
-| **→ 1.0.0** | Planned | Install channels + final review, then the first **stable, audited** release |
-| **1.0.0** | Planned | First **stable release**: a hardened, audited command-line tool |
+| **0.8.0** | Shipped | Security-review-response release — owner-only TUI export, daemon transport zeroization, `sigaction`, etc. |
+| **0.9.0** | In review (PR #15) | **Enforced policy engine + AI judge** — daemon-side policy + audit (peer-UID stamped), signed per-secret classification, OpenRouter judge for medium/high secrets, and `svault judge set-key/status/remove-key` to manage the key |
+| **1.0.0** | Planned | First **stable release**: install channels + a final independent review of the enforced engine, then a hardened, audited CLI |
 | **2.0.0** | Planned | Desktop **GUI** (Tauri) for vault management + system tray |
 | **3.0.0** | Planned | **Claude / AI-platform access** — MCP server + Pre/PostToolUse hooks (Claude Code, Cursor, Copilot, VS Code, Aider) |
 | **Cloud** (opt-in) | Planned | Anomaly scoring via Claude Haiku — free tier + premium plans |
@@ -38,8 +37,12 @@ files/dirs + atomic socket (#14/#16), graceful shutdown (#17), zeroized secrets
 (N-4), `0600` rotated `daemon.log` (N-10), daemon transport zeroization (N-6), and
 `sigaction` shutdown signals (N-9).
 
-**Remaining before 1.0.0:**
-- **Policy as an enforced control (the gate)** — evaluate policy + write audit inside the daemon so the socket is the choke point (#2, N-5), authenticate the caller (N-1), sign/pin `svault.policy.yaml` and anchor its discovery (#5), fail closed on an unparseable policy (N-2), and verify `meta.yaml` on the fallback path (#22). All three 0.7.0 reviews flagged this as the blocker for a "stable / enforced" label. Scheduled for 0.9.0.
+**Done in 0.9.0** (the enforced-policy release): policy + audit moved **inside the daemon** so the socket is the choke point (#2, N-5), the audit trail is stamped with the unforgeable peer UID (N-1), secret classification moved to the **signed `meta.yaml`** with anchored policy discovery (#5) and verified-meta gating (#22), unparseable policy **fails closed** (N-2), and the **AI judge** (OpenRouter) gates medium/high secrets — with `svault judge set-key`/`status`/`remove-key` to manage the key as a `0600` file.
+
+**Remaining before 1.0.0** (see the [0.9.0 findings register](security-review/findings/0.9.0.md)):
+- A final **independent security review of the 0.9.0 enforced engine** — the explicit gate.
+- **Decide N-1** — caller *authorization* is still self-asserted (audit is now peer-UID-stamped, so attribution is honest); accept that as the boundary, or add a per-agent token / OS-bound caller identity.
+- **Adversarially test the AI judge** — prompt injection via the `reason` field (J-1) in particular.
 - **Accepted/backlog, not blockers** — Windows atomic owner-only DACL (N-7), tamper-evident audit sink (#15/N-8), tunable Argon2id (N-12).
 - **Distribution** — `install.sh`, Homebrew tap, cargo-binstall, Docker (see below).
 

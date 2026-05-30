@@ -11,7 +11,8 @@ use ratatui::{
 
 use super::theme;
 use super::{
-    App, CreateForm, MsgKind, Screen, SecretAddForm, SecretScreen, SettingsForm, UnlockForm,
+    tier_label, App, CreateForm, MsgKind, Screen, SecretAddForm, SecretScreen, SettingsForm,
+    UnlockForm,
 };
 
 const CYAN: Color = theme::ACCENT;
@@ -509,13 +510,15 @@ fn draw_create(frame: &mut Frame, area: Rect, form: &CreateForm) {
         ("Rate limit", form.rate_limit.clone()),
         ("Auto-lock", yes_no(form.autolock).to_string()),
         ("Auto-lock timer", form.autolock_timer.clone()),
+        ("Default tier", tier_label(form.default_tier).to_string()),
+        ("AI judge", yes_no(form.judge).to_string()),
         ("Passphrase", mask(&form.passphrase)),
         ("Confirm passphrase", mask(&form.confirm)),
     ];
     let mut lines = field_lines(&fields, form.focus, form.focus_is_text());
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Storage: local   Login: passphrase   (more options coming soon)",
+        "  Storage: local   Login: passphrase   (space/←→ toggles tier & judge)",
         Style::default().fg(DIM),
     )));
     if let Some(err) = &form.error {
@@ -555,11 +558,13 @@ fn draw_settings(frame: &mut Frame, area: Rect, form: &SettingsForm) {
         ("Rate limit", form.rate_limit.clone()),
         ("Auto-lock", yes_no(form.autolock).to_string()),
         ("Auto-lock timer", form.autolock_timer.clone()),
+        ("Default tier", tier_label(form.default_tier).to_string()),
+        ("AI judge", yes_no(form.judge).to_string()),
     ];
     let mut lines = field_lines(&fields, form.focus, form.focus_is_text());
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Login: passphrase   (more options coming soon)",
+        "  Login: passphrase   (space/←→ toggles tier & judge)",
         Style::default().fg(DIM),
     )));
     if let Some(err) = &form.error {
@@ -582,8 +587,20 @@ fn draw_settings(frame: &mut Frame, area: Rect, form: &SettingsForm) {
 }
 
 fn draw_secret_add(frame: &mut Frame, area: Rect, form: &SecretAddForm) {
-    let fields = [("Name", form.name.clone()), ("Value", mask(&form.value))];
-    let mut lines = field_lines(&fields, form.focus, true);
+    let fields = [
+        ("Name", form.name.clone()),
+        ("Value", mask(&form.value)),
+        ("Scope", form.scope.clone()),
+        ("Description", form.description.clone()),
+        ("Tier", tier_label(form.tier).to_string()),
+        ("Require reason", yes_no(form.require_reason).to_string()),
+    ];
+    let mut lines = field_lines(&fields, form.focus, form.focus_is_text());
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  space/←→ cycles tier & toggles require-reason",
+        Style::default().fg(DIM),
+    )));
     if let Some(err) = &form.error {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(

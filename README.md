@@ -41,6 +41,7 @@ flowchart LR
 | [Installation](docs/installation.md) | crates.io, from source, supported platforms |
 | [Interactive mode (TUI)](docs/tui.md) | The full-screen dashboard and keybindings |
 | [Command reference](docs/commands.md) | Every subcommand and flag |
+| [End-to-end walkthrough](docs/walkthrough.md) | Full flow: create → classify → judge → gated `get`, with real model output |
 | [Policy engine](docs/policy-engine.md) | The agent path — `svault get`, scopes, tiers, audit |
 | [Recovery & portability](docs/recovery.md) | Recovery code for a lost passphrase, export/import bundles |
 | [Daemon](docs/daemon.md) | Optional Unix daemon — keys in memory, auto-lock, `daemon start/stop/status/doctor` |
@@ -59,13 +60,13 @@ flowchart LR
 # Install
 cargo install svault-ai
 
-# 1. Create an encrypted vault (interactive: storage, name, agents, auto-lock, passphrase…)
-#    Prints a one-time recovery code — save it (see 'svault recover').
+# 1. Create an encrypted vault (interactive: storage, name, agents, auto-lock,
+#    default tier, AI judge, passphrase…). Prints a one-time recovery code — save it.
 svault create
 
-# 2. Add secrets
-svault secret add DB_URL
-svault secret add API_KEY
+# 2. Add secrets — also classifies each one (scope + sensitivity tier) for the gate
+svault secret add DB_URL --scope database --tier medium
+svault secret add API_KEY --scope api --tier low
 
 # 3. Unlock for your session (derived key cached, not prompted again)
 svault unlock
@@ -110,7 +111,7 @@ Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s`
 
 <br>
 
-`svault secret get` is the **human path** — passphrase, no questions asked. `svault get` is the **agent path**: a structured request that an AI must justify.
+`svault secret get` is the **human path** — passphrase, no questions asked. `svault get` is the **agent path**: a structured request that an AI must justify. As of 0.9.0 it is **enforced inside the daemon** (the component that holds the key), not advisory — there is no unguarded read path, and every decision is audited with the connecting process's peer UID.
 
 ```bash
 svault get DB_URL --scope database --reason "run nightly migration" --caller claude-code
@@ -123,16 +124,18 @@ flowchart TD
     RSN -->|no| DENY["Deny + audit"]
     RSN -->|yes| CAP{"Caller holds scope<br/>& matches secret?"}
     CAP -->|no| DENY
-    CAP -->|yes| TIER{"Sensitivity tier?"}
-    TIER -->|high| DENY
-    TIER -->|low / medium| RATE{"Within rate limit<br/>& no burst?"}
+    CAP -->|yes| RATE{"Within rate limit<br/>& no burst?"}
     RATE -->|no| DENY
-    RATE -->|yes| ALLOW["Return value + audit"]
+    RATE -->|yes| TIER{"Tier?"}
+    TIER -->|low| ALLOW["Return value + audit"]
+    TIER -->|medium / high| JUDGE{"AI judge"}
+    JUDGE -->|allow| ALLOW
+    JUDGE -->|deny| DENY
 ```
 
-Policy lives in a committable `svault.policy.yaml` (no secrets inside). `high`-tier secrets are never handed to an agent.
+**AI judge (0.9.0):** for medium/high-tier secrets, Svault asks a cheap, fast LLM via your OpenRouter account whether the stated *reason* plausibly justifies the request — the behavioural gate that makes Svault AI-aware. Per-secret classification (scope/tier + an optional **description** the judge weighs against the request's reason) lives in the **signed `meta.yaml`** (set with `svault secret add --scope --tier --description`); the committable `svault.policy.yaml` holds only caller definitions. The judge is **off until you configure a key** — store it with `svault judge set-key` (or `$SVAULT_OPENROUTER_KEY`), then try `svault judge test`.
 
-**Full pipeline, YAML schema, tiers → [docs/policy-engine.md](docs/policy-engine.md)**
+**Full pipeline, tiers, judge setup → [docs/policy-engine.md](docs/policy-engine.md)**
 
 </details>
 
@@ -202,14 +205,16 @@ Every `0.x.0` release goes through an **independent security review + bulletproo
 
 ```mermaid
 flowchart TD
-    U["AI Agent / User"] -->|"svault_get_secret(name, scope, reason)"| D["Svault"]
-    D --> AUTH["Multi-factor auth<br/>Passphrase · YubiKey · TOTP · Touch ID"]
-    AUTH --> POL["Policy checks<br/>reason → capability → rate limit<br/>burst detection · audit log"]
-    POL --> TIER["Sensitivity tier enforcement"]
-    TIER --> ENC["(.svault/&lt;vault&gt;/vault.enc<br/>AES-256-GCM encrypted)"]
+    U["AI Agent"] -->|"svault get (scope + reason)"| D["Svault daemon<br/>(enforced gate)"]
+    D --> POL["Policy checks<br/>reason → capability → rate limit · burst"]
+    POL --> TIER{"Sensitivity tier"}
+    TIER -->|low| OUT["audit (peer UID) → value"]
+    TIER -->|medium / high| JUDGE["AI judge (OpenRouter)"]
+    JUDGE --> OUT
+    OUT --> ENC["(.svault/&lt;vault&gt;/vault.enc<br/>AES-256-GCM encrypted)"]
 ```
 
-**Auth methods, full layout → [docs/architecture.md](docs/architecture.md)**
+**Enforced-engine details, full layout → [docs/architecture.md](docs/architecture.md)**
 
 </details>
 
@@ -223,8 +228,10 @@ flowchart TD
 | **Step 1+** | Done | Interactive Ratatui TUI — forms, browsers, lock-aware secrets |
 | **Step 2** | Done | Policy engine — caller identity, `reason`, scopes, tiers, rate limit, audit log |
 | **Step 3** | Done | Recovery (code + export/import) and the Unix daemon (keys in memory, auto-lock). Extra auth methods (YubiKey, TOTP, Touch ID/Face ID) deferred |
-| **Step 4** | Planned | Desktop GUI (Tauri) + system tray |
-| **Step 5** | Planned | MCP integration — Claude Code, Cursor, Copilot, VS Code, Aider |
+| **0.9.0** | Done | **Enforced** policy engine (in the daemon, peer-UID-audited) + signed per-secret classification + **AI judge** (OpenRouter) |
+| **1.0.0** | Planned | Final independent review + install channels, then the first stable release |
+| **2.0.0** | Planned | Desktop GUI (Tauri) + system tray |
+| **3.0.0** | Planned | MCP integration — Claude Code, Cursor, Copilot, VS Code, Aider |
 | **Cloud** | Planned | Anomaly scoring via Claude Haiku — free tier + premium plans |
 
 **Full roadmap → [docs/roadmap.md](docs/roadmap.md)**
@@ -237,7 +244,7 @@ flowchart TD
 cargo test
 ```
 
-84 tests (plus one `#[ignore]`d stress benchmark) covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, **truncated `vault.enc` errors instead of panicking**, tampered `meta.yaml` rejected, session unlock/lock/lock-all, **the session caching a derived key (never a passphrase)**, passphrase strength checks + **entropy floor**, **owner-only file (0600) / dir (0700) permissions**, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, full recover-and-rekey roundtrip (old passphrase rejected, secret preserved, code still valid), export-bundle checksum integrity, build→import recreating an openable vault, **import name-collision suffixing + rename re-signing meta**, storage-backend metadata roundtrip, the daemon (protocol JSON roundtrip, **client-derived-key unlock + bogus-key rejection**, auto-lock idle/hard-max/active decisions, a unix unlock→get→lock→shutdown integration test, a concurrent-reads stress test, **poisoned-mutex recovery**, and **connection-slot accounting**), usage-log source stamping (event tagged with the current surface; old logs parse as unknown), and TUI key dispatch (field navigation, the rate-limit space-toggle regression, paste handling, and **help opening with `h` or `?`**).
+99 tests (plus one `#[ignore]`d stress benchmark) covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, **truncated `vault.enc` errors instead of panicking**, tampered `meta.yaml` rejected, session unlock/lock/lock-all, **the session caching a derived key (never a passphrase)**, passphrase strength checks + **entropy floor**, **owner-only file (0600) / dir (0700) permissions**, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, full recover-and-rekey roundtrip (old passphrase rejected, secret preserved, code still valid), export-bundle checksum integrity, build→import recreating an openable vault, **import name-collision suffixing + rename re-signing meta**, storage-backend metadata roundtrip, the daemon (protocol JSON roundtrip, **client-derived-key unlock + bogus-key rejection**, auto-lock idle/hard-max/active decisions, a unix unlock→get→lock→shutdown integration test, a concurrent-reads stress test, **poisoned-mutex recovery**, and **connection-slot accounting**), usage-log source stamping (event tagged with the current surface; old logs parse as unknown), TUI key dispatch (field navigation, the rate-limit space-toggle regression, paste handling, and **help opening with `h` or `?`**), and the **0.9.0 enforced engine** — the AI judge's JSON parsing + tier-dependent fail modes (with a fake transport, no network), **the vault/secret descriptions reaching the judge prompt only when set**, and the daemon's gated read path (policy allow/deny, **high-tier fail-closed when the judge is unavailable**, medium fail-open, peer-UID-stamped audit), and the **OpenRouter key store** (`set-key`/`status`/`remove-key` round-trip writes a `0600` file, trims the key, and resolves the source).
 
 A heavier concurrency / pressure simulation runs on demand (`cargo test --release daemon_stress_simulation -- --ignored --nocapture`); methodology and a recorded run are in [docs/security-review/stress/0.6.0.md](docs/security-review/stress/0.6.0.md).
 

@@ -3,7 +3,7 @@
 //! `Option`: `Some(..)` means the daemon handled it, `None` means "no daemon —
 //! fall back to the file-session path." On non-Unix everything returns `None`.
 
-/// Result of asking the daemon for a secret.
+/// Result of asking the daemon for a secret (human path).
 pub enum GetOutcome {
     /// The daemon returned the value.
     Value(String),
@@ -13,9 +13,21 @@ pub enum GetOutcome {
     NotFound,
 }
 
+/// Result of a gated (agent-path) request to the daemon.
+pub enum GatedOutcome {
+    /// Policy + judge allowed it; carries the value and tier.
+    Granted(String, crate::policy::Tier),
+    /// Policy or the AI judge denied it.
+    Denied(String),
+    /// Daemon up but the vault isn't unlocked — caller should fall back.
+    NotUnlocked,
+    /// Vault unlocked but the secret doesn't exist.
+    NotFound,
+}
+
 #[cfg(unix)]
 mod imp {
-    use super::GetOutcome;
+    use super::{GatedOutcome, GetOutcome};
     use crate::daemon::{self, Request, Response};
     use anyhow::{anyhow, Result};
     use std::path::PathBuf;
@@ -101,6 +113,34 @@ mod imp {
         }
     }
 
+    /// Agent path: a gated request the daemon evaluates (policy + judge + audit).
+    /// `None` = no daemon, so the caller runs the same gate locally instead.
+    pub fn get_gated(
+        vault: &str,
+        secret: &str,
+        caller: &str,
+        scope: &str,
+        reason: &str,
+    ) -> Option<GatedOutcome> {
+        if !available() {
+            return None;
+        }
+        let req = Request::GetGated {
+            vault: vault.to_string(),
+            secret: secret.to_string(),
+            caller: caller.to_string(),
+            scope: scope.to_string(),
+            reason: reason.to_string(),
+        };
+        match daemon::send(&base(), &req) {
+            Ok(Response::Granted { value, tier }) => Some(GatedOutcome::Granted(value, tier)),
+            Ok(Response::Denied { reason }) => Some(GatedOutcome::Denied(reason)),
+            Ok(Response::NotUnlocked) => Some(GatedOutcome::NotUnlocked),
+            Ok(Response::NotFound) => Some(GatedOutcome::NotFound),
+            _ => None,
+        }
+    }
+
     /// Names of vaults currently unlocked in the daemon (empty if none / down).
     pub fn unlocked_vaults() -> Vec<String> {
         if !available() {
@@ -115,7 +155,7 @@ mod imp {
 
 #[cfg(not(unix))]
 mod imp {
-    use super::GetOutcome;
+    use super::{GatedOutcome, GetOutcome};
     use anyhow::Result;
 
     pub fn unlock(_vault: &str, _passphrase: &str) -> Option<Result<()>> {
@@ -130,9 +170,18 @@ mod imp {
     pub fn get(_vault: &str, _secret: &str) -> Option<GetOutcome> {
         None
     }
+    pub fn get_gated(
+        _vault: &str,
+        _secret: &str,
+        _caller: &str,
+        _scope: &str,
+        _reason: &str,
+    ) -> Option<GatedOutcome> {
+        None
+    }
     pub fn unlocked_vaults() -> Vec<String> {
         Vec::new()
     }
 }
 
-pub use imp::{get, lock, lock_all, unlock, unlocked_vaults};
+pub use imp::{get, get_gated, lock, lock_all, unlock, unlocked_vaults};

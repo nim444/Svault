@@ -4,15 +4,21 @@
 
 ```mermaid
 flowchart TD
-    U["AI Agent / User"] -->|"svault_get_secret(name, scope, reason)"| D["Svault daemon"]
-    D --> AUTH["Multi-factor auth<br/>Passphrase · YubiKey · TOTP · Touch ID/Face ID"]
-    AUTH --> POL["Policy checks<br/>reason → capability → rate limit<br/>burst detection · audit log"]
-    POL --> SCORE["Claude anomaly score (cloud, optional)"]
-    SCORE --> TIER["Sensitivity tier enforcement"]
-    TIER --> ENC["(.svault/&lt;vault&gt;/vault.enc<br/>AES-256-GCM encrypted, safe to commit)"]
+    U["AI Agent"] -->|"svault get (scope + reason)"| D["Svault daemon<br/>(enforced gate)"]
+    D --> POL["Policy checks<br/>reason → capability → rate limit<br/>burst detection"]
+    POL --> TIER{"Sensitivity tier"}
+    TIER -->|low| OUT
+    TIER -->|medium / high| JUDGE["AI judge (OpenRouter)<br/>scores the reason"]
+    JUDGE --> OUT["audit (peer UID) → return value"]
+    OUT --> ENC["(.svault/&lt;vault&gt;/vault.enc<br/>AES-256-GCM encrypted, safe to commit)"]
 ```
 
-The `reason` field is required by the [policy engine](policy-engine.md). An AI that cannot explain why it needs a secret is refused immediately.
+Since 0.9.0 this pipeline runs **inside the daemon** (the CLI re-runs it locally
+when no daemon is up) — the enforced choke point, not advisory. The `reason` field
+is required by the [policy engine](policy-engine.md); for medium/high-tier secrets
+the [AI judge](security.md#ai-judge) scores it. An AI that can't plausibly explain
+why it needs a secret is refused. Secret classification (scope/tier) lives in the
+HMAC-signed `meta.yaml`.
 
 ## On-disk layout
 

@@ -1,6 +1,6 @@
 [package]
 name = "svault-ai"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 authors = ["Soluzy <nima@soluzy.ro>"]
 description = "AI-aware secret access layer — enforces structured requests and detects suspicious patterns"
@@ -43,6 +43,10 @@ zeroize = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+
+# AI judge — blocking HTTPS to OpenRouter (bundled rustls, no OpenSSL). The
+# daemon is thread-per-connection/synchronous, so no async runtime is involved.
+ureq = { version = "2", features = ["json", "tls"] }
 
 # Error handling
 anyhow = "1"

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - Unreleased
+
+The **enforced policy engine** release — closes the advisory-policy gap that all
+three 0.7.0 reviews named as the 1.0.0 blocker (#2/#5/#22, review N-1/N-2/N-5) —
+plus the **AI judge**, Svault's behavioural gate.
+
+### Added
+- **AI judge (OpenRouter)** — for medium/high-tier secrets (and any secret flagged `require_reason`), the daemon asks a cheap, fast LLM whether the caller's stated *reason* plausibly justifies the request, given the secret's scope/tier and the caller's recent activity. Configurable model (default `google/gemini-2.5-flash`), thresholds, and timeout in `.svault/config.yaml` `[judge]`. The key comes from `$SVAULT_OPENROUTER_KEY` or a `0600` key file — never committable config. **Off until a key is configured**, so upgrading never silently calls an external API. Synchronous (`ureq`, bundled rustls — no async runtime). Manage the key with `svault judge set-key` (hidden prompt or stdin → `0600` file), `svault judge status` (resolves the source without printing the key), and `svault judge remove-key`; `svault judge test [--vault --vault-description --description ...]` dry-runs a sample request against the live model without touching a secret.
+- **Per-secret classification in the signed `meta.yaml`** — each secret carries a `scope`, `tier` (low/medium/high), `require_reason`, and an optional `description`, set via `svault secret add [--scope --tier --require-reason --description]` or interactively (and in the TUI add form). The **description** records what the secret is for and is given to the AI judge as context, so a request whose reason doesn't fit the secret's purpose is denied; the vault's own description is included too. Because it's HMAC-signed, a same-UID attacker can't downgrade a tier without the vault key (#5/#22). Vault creation now also sets a `default_tier` and a per-vault judge toggle.
+
+### Changed
+- **Policy is now enforced inside the daemon.** The agent path (`svault get`) sends a structured `GetGated` request; the daemon evaluates policy, consults the judge per tier, audits the decision, and only then returns a value — the socket is the single choke point (#2). The CLI runs the identical gate locally when no daemon is up. There is no longer an unguarded read path.
+- **Tiers, with the judge on:** low = auto-allow; medium = judge-gated, **fail-open** + audit-flag if the judge is unavailable; high = judge-gated, **fail-closed**. With the judge **off**, behaviour is the pre-0.9.0 rule (high = human-only), so nothing regresses.
+- **Audit trail** now records every daemon read (human and agent) stamped with the connecting process's **peer UID** — unforgeable, unlike the self-asserted caller string (N-1) — closing the unaudited-daemon-read gap (N-5).
+- The policy file (`svault.policy.yaml`) now holds **caller definitions only**; secret classification moved to the signed meta. Discovery is **anchored to the project root** (no unbounded upward walk, #5) and a present-but-unparseable policy now **fails closed** (N-2).
+
 ## [0.8.0] - 2026-05-30
 
 A security-review-response + hardening release. Acts on the three independent

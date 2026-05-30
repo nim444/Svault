@@ -117,12 +117,14 @@ pub enum CreateField {
     RateLimit,
     Autolock,
     AutolockTimer,
+    DefaultTier,
+    Judge,
     Passphrase,
     Confirm,
 }
 
 impl CreateField {
-    pub const ORDER: [CreateField; 9] = [
+    pub const ORDER: [CreateField; 11] = [
         CreateField::Name,
         CreateField::Description,
         CreateField::AllowMode,
@@ -130,6 +132,8 @@ impl CreateField {
         CreateField::RateLimit,
         CreateField::Autolock,
         CreateField::AutolockTimer,
+        CreateField::DefaultTier,
+        CreateField::Judge,
         CreateField::Passphrase,
         CreateField::Confirm,
     ];
@@ -143,6 +147,8 @@ pub struct CreateForm {
     pub rate_limit: String,
     pub autolock: bool,
     pub autolock_timer: String,
+    pub default_tier: usize, // 0 low · 1 medium · 2 high
+    pub judge: bool,
     pub passphrase: String,
     pub confirm: String,
     pub focus: usize,
@@ -165,6 +171,8 @@ impl CreateForm {
             rate_limit: "10/hour".to_string(),
             autolock: true,
             autolock_timer: "1d".to_string(),
+            default_tier: 0,
+            judge: false,
             passphrase: String::new(),
             confirm: String::new(),
             focus: 0,
@@ -180,7 +188,10 @@ impl CreateForm {
     pub fn focus_is_text(&self) -> bool {
         !matches!(
             self.current(),
-            CreateField::AllowMode | CreateField::Autolock
+            CreateField::AllowMode
+                | CreateField::Autolock
+                | CreateField::DefaultTier
+                | CreateField::Judge
         )
     }
 
@@ -208,16 +219,20 @@ pub enum SettingsField {
     RateLimit,
     Autolock,
     AutolockTimer,
+    DefaultTier,
+    Judge,
 }
 
 impl SettingsField {
-    pub const ORDER: [SettingsField; 6] = [
+    pub const ORDER: [SettingsField; 8] = [
         SettingsField::Description,
         SettingsField::AllowMode,
         SettingsField::AllowList,
         SettingsField::RateLimit,
         SettingsField::Autolock,
         SettingsField::AutolockTimer,
+        SettingsField::DefaultTier,
+        SettingsField::Judge,
     ];
 }
 
@@ -230,6 +245,8 @@ pub struct SettingsForm {
     pub rate_limit: String,
     pub autolock: bool,
     pub autolock_timer: String,
+    pub default_tier: usize,
+    pub judge: bool,
     pub focus: usize,
     pub error: Option<String>,
 }
@@ -252,6 +269,8 @@ impl SettingsForm {
             rate_limit: meta.access.rate_limit,
             autolock: meta.settings.autolock,
             autolock_timer: meta.settings.autolock_timer,
+            default_tier: tier_idx(meta.default_tier),
+            judge: meta.judge.enabled.unwrap_or(false),
             focus: 0,
             error: None,
         }
@@ -264,7 +283,10 @@ impl SettingsForm {
     pub fn focus_is_text(&self) -> bool {
         !matches!(
             self.current(),
-            SettingsField::AllowMode | SettingsField::Autolock
+            SettingsField::AllowMode
+                | SettingsField::Autolock
+                | SettingsField::DefaultTier
+                | SettingsField::Judge
         )
     }
 
@@ -316,8 +338,20 @@ pub struct SecretAddForm {
     pub vault_name: String,
     pub name: String,
     pub value: String,
-    pub focus: usize, // 0 name · 1 value
+    pub scope: String,
+    pub description: String,
+    pub tier: usize, // 0 low · 1 medium · 2 high
+    pub require_reason: bool,
+    pub focus: usize, // 0 name · 1 value · 2 scope · 3 description · 4 tier · 5 require_reason
     pub error: Option<String>,
+}
+
+impl SecretAddForm {
+    const FIELDS: usize = 6;
+    /// Text-entry fields (name/value/scope/description) show a caret; tier/require_reason don't.
+    fn focus_is_text(&self) -> bool {
+        self.focus < 4
+    }
 }
 
 pub struct ImportForm {
@@ -989,8 +1023,12 @@ impl App {
                 }
             }
             KeyCode::Char(c) => {
-                if form.current() == CreateField::Autolock && c == ' ' {
+                if c == ' ' && form.current() == CreateField::Autolock {
                     form.autolock = !form.autolock; // space toggles auto-lock
+                } else if c == ' ' && form.current() == CreateField::Judge {
+                    form.judge = !form.judge;
+                } else if c == ' ' && form.current() == CreateField::DefaultTier {
+                    form.default_tier = cycle(form.default_tier, 3, true);
                 } else if let Some(s) = form.text_field() {
                     s.push(c);
                     form.error = None;
@@ -1043,7 +1081,7 @@ impl App {
         };
         // Storage is local and login is passphrase today; VaultMeta defaults to
         // "local" storage, so we only carry the wired settings forward.
-        let meta = VaultMeta::new(
+        let mut meta = VaultMeta::new(
             name.clone(),
             form.description.clone(),
             AccessConfig {
@@ -1056,6 +1094,8 @@ impl App {
                 login_method: LoginMethod::Passphrase,
             },
         );
+        meta.default_tier = tier_at(form.default_tier);
+        meta.judge.enabled = Some(form.judge);
 
         match Vault::init(&vault_dir, &form.passphrase, meta) {
             Ok(vault) => {
@@ -1111,8 +1151,12 @@ impl App {
                 }
             }
             KeyCode::Char(c) => {
-                if form.current() == SettingsField::Autolock && c == ' ' {
+                if c == ' ' && form.current() == SettingsField::Autolock {
                     form.autolock = !form.autolock;
+                } else if c == ' ' && form.current() == SettingsField::Judge {
+                    form.judge = !form.judge;
+                } else if c == ' ' && form.current() == SettingsField::DefaultTier {
+                    form.default_tier = cycle(form.default_tier, 3, true);
                 } else if let Some(s) = form.text_field() {
                     s.push(c);
                     form.error = None;
@@ -1156,6 +1200,8 @@ impl App {
         meta.access.rate_limit = form.rate_limit.clone();
         meta.settings.autolock = form.autolock;
         meta.settings.autolock_timer = form.autolock_timer.clone();
+        meta.default_tier = tier_at(form.default_tier);
+        meta.judge.enabled = Some(form.judge);
 
         match vault.save_meta(&meta) {
             Ok(_) => {
@@ -1273,11 +1319,19 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => secrets_next(&mut scr),
             KeyCode::Up | KeyCode::Char('k') => secrets_prev(&mut scr),
             KeyCode::Char('a') => {
+                // Default the tier to the vault's default_tier when we can read it.
+                let default_tier = VaultMeta::load_unverified(&scr.vault_dir)
+                    .map(|m| tier_idx(m.default_tier))
+                    .unwrap_or(0);
                 self.screen = Screen::SecretAdd(SecretAddForm {
                     vault_dir: scr.vault_dir.clone(),
                     vault_name: scr.name.clone(),
                     name: String::new(),
                     value: String::new(),
+                    scope: "misc".to_string(),
+                    description: String::new(),
+                    tier: default_tier,
+                    require_reason: false,
                     focus: 0,
                     error: None,
                 });
@@ -1367,30 +1421,54 @@ impl App {
                 self.enter_secrets(&dir, &name)?;
                 return Ok(());
             }
-            KeyCode::Tab | KeyCode::Down => form.focus = (form.focus + 1) % 2,
-            KeyCode::BackTab | KeyCode::Up => form.focus = (form.focus + 1) % 2, // 2 fields: same target
+            KeyCode::Tab | KeyCode::Down => form.focus = (form.focus + 1) % SecretAddForm::FIELDS,
+            KeyCode::BackTab | KeyCode::Up => {
+                form.focus = (form.focus + SecretAddForm::FIELDS - 1) % SecretAddForm::FIELDS
+            }
+            KeyCode::Left => secret_add_adjust(&mut form, false),
+            KeyCode::Right => secret_add_adjust(&mut form, true),
             KeyCode::Enter => {
-                if form.focus == 0 {
-                    form.focus = 1;
-                } else {
+                if form.focus == SecretAddForm::FIELDS - 1 {
                     return self.submit_secret_add(form);
                 }
+                form.focus += 1;
             }
-            KeyCode::Backspace => {
-                if form.focus == 0 {
+            KeyCode::Backspace => match form.focus {
+                0 => {
                     form.name.pop();
-                } else {
+                }
+                1 => {
                     form.value.pop();
                 }
-            }
-            KeyCode::Char(c) => {
-                if form.focus == 0 {
-                    form.name.push(c);
-                } else {
-                    form.value.push(c);
+                2 => {
+                    form.scope.pop();
                 }
-                form.error = None;
-            }
+                3 => {
+                    form.description.pop();
+                }
+                _ => {}
+            },
+            KeyCode::Char(c) => match form.focus {
+                0 => {
+                    form.name.push(c);
+                    form.error = None;
+                }
+                1 => {
+                    form.value.push(c);
+                    form.error = None;
+                }
+                2 => {
+                    form.scope.push(c);
+                    form.error = None;
+                }
+                3 => {
+                    form.description.push(c);
+                    form.error = None;
+                }
+                4 if c == ' ' => form.tier = cycle(form.tier, 3, true),
+                5 if c == ' ' => form.require_reason = !form.require_reason,
+                _ => {}
+            },
             _ => {}
         }
         self.screen = Screen::SecretAdd(form);
@@ -1411,6 +1489,24 @@ impl App {
         match Vault::open_with_key(&form.vault_dir, VaultKey::from_bytes(key)) {
             Ok(vault) => match vault.add_secret(form.name.trim(), &form.value) {
                 Ok(_) => {
+                    // Classify in the signed meta so the policy gate applies to
+                    // TUI-added secrets too (scope/tier/require_reason from the form).
+                    let scope = if form.scope.trim().is_empty() {
+                        "misc".to_string()
+                    } else {
+                        form.scope.trim().to_string()
+                    };
+                    let mut meta = vault.meta.clone();
+                    meta.secrets.insert(
+                        form.name.trim().to_string(),
+                        crate::policy::SecretRule {
+                            scope,
+                            tier: tier_at(form.tier),
+                            require_reason: form.require_reason,
+                            description: form.description.trim().to_string(),
+                        },
+                    );
+                    let _ = vault.save_meta(&meta);
                     crate::usage::human(&form.vault_dir, "secret.add", Some(form.name.trim()));
                     self.set_status(MsgKind::Ok, format!("Secret '{}' added", form.name.trim()));
                     let (dir, name) = (form.vault_dir.clone(), form.vault_name.clone());
@@ -1439,10 +1535,35 @@ fn parse_agents(raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// Tier <-> picker-index helpers (0 low · 1 medium · 2 high).
+fn tier_at(idx: usize) -> crate::policy::Tier {
+    match idx {
+        1 => crate::policy::Tier::Medium,
+        2 => crate::policy::Tier::High,
+        _ => crate::policy::Tier::Low,
+    }
+}
+fn tier_idx(t: crate::policy::Tier) -> usize {
+    match t {
+        crate::policy::Tier::Low => 0,
+        crate::policy::Tier::Medium => 1,
+        crate::policy::Tier::High => 2,
+    }
+}
+pub fn tier_label(idx: usize) -> &'static str {
+    match idx {
+        1 => "medium",
+        2 => "high",
+        _ => "low",
+    }
+}
+
 fn create_adjust(form: &mut CreateForm, forward: bool) {
     match form.current() {
         CreateField::AllowMode => form.allow_mode = cycle(form.allow_mode, 3, forward),
         CreateField::Autolock => form.autolock = !form.autolock,
+        CreateField::DefaultTier => form.default_tier = cycle(form.default_tier, 3, forward),
+        CreateField::Judge => form.judge = !form.judge,
         _ => {}
     }
 }
@@ -1451,6 +1572,16 @@ fn settings_adjust(form: &mut SettingsForm, forward: bool) {
     match form.current() {
         SettingsField::AllowMode => form.allow_mode = cycle(form.allow_mode, 3, forward),
         SettingsField::Autolock => form.autolock = !form.autolock,
+        SettingsField::DefaultTier => form.default_tier = cycle(form.default_tier, 3, forward),
+        SettingsField::Judge => form.judge = !form.judge,
+        _ => {}
+    }
+}
+
+fn secret_add_adjust(form: &mut SecretAddForm, forward: bool) {
+    match form.focus {
+        4 => form.tier = cycle(form.tier, 3, forward),
+        5 => form.require_reason = !form.require_reason,
         _ => {}
     }
 }
@@ -1574,8 +1705,45 @@ mod tests {
         assert!(!form.focus_is_text());
         form.focus = idx(CreateField::Autolock);
         assert!(!form.focus_is_text());
+        form.focus = idx(CreateField::DefaultTier);
+        assert!(!form.focus_is_text());
+        form.focus = idx(CreateField::Judge);
+        assert!(!form.focus_is_text());
         form.focus = idx(CreateField::Passphrase);
         assert!(form.focus_is_text());
+    }
+
+    #[test]
+    fn space_on_judge_field_toggles_it() {
+        let mut app = bare_app(create_at(CreateField::Judge));
+        press(&mut app, KeyCode::Char(' '));
+        let Screen::Create(form) = &app.screen else {
+            panic!("expected create screen")
+        };
+        assert!(form.judge, "space must toggle the AI judge on");
+    }
+
+    #[test]
+    fn secret_add_tier_cycles_and_classifies() {
+        let form = SecretAddForm {
+            vault_dir: PathBuf::from("."),
+            vault_name: "v".into(),
+            name: String::new(),
+            value: String::new(),
+            scope: "misc".into(),
+            description: String::new(),
+            tier: 0,
+            require_reason: false,
+            focus: 4, // tier picker
+            error: None,
+        };
+        let mut app = bare_app(Screen::SecretAdd(form));
+        press(&mut app, KeyCode::Right);
+        let Screen::SecretAdd(f) = &app.screen else {
+            panic!("expected secret-add screen")
+        };
+        assert_eq!(f.tier, 1, "right arrow cycles tier low → medium");
+        assert_eq!(tier_at(f.tier), crate::policy::Tier::Medium);
     }
 
     #[test]

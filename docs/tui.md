@@ -43,10 +43,12 @@ The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` 
 5. Rate limit
 6. Auto-lock toggle
 7. Auto-lock timer
-8. Passphrase
-9. Confirm passphrase
+8. Default tier (low / medium / high) — applied to secrets you add later
+9. AI judge (on / off) — gate medium/high secrets for this vault
+10. Passphrase
+11. Confirm passphrase
 
-`←` / `→` cycle the allow-agent mode and toggle auto-lock; `space` also toggles auto-lock; typing or pasting edits text fields; `Tab` / arrows move between fields. A caret marks the field you're editing. Storage is `local` and login is `passphrase` today — both are shown as a static note rather than a selectable field, so the form never offers a choice that does nothing (remotes and extra login methods are on the [roadmap](roadmap.md)).
+`←` / `→` cycle the pickers (allow-agent mode, default tier) and toggle auto-lock / the AI judge; `space` also cycles/toggles the focused picker; typing or pasting edits text fields; `Tab` / arrows move between fields. A caret marks the field you're editing. Settings (`s`) edits the same access/auto-lock fields plus the default tier and judge toggle. Storage is `local` and login is `passphrase` today — both are shown as a static note rather than a selectable field, so the form never offers a choice that does nothing (remotes and extra login methods are on the [roadmap](roadmap.md)).
 
 After the vault is created, the **recovery code** is shown once on its own screen. It is not stored in plaintext and is never shown again — save it (password manager or offline paper), then press `y` to confirm and return to the vault list. See [Recovery](recovery.md).
 
@@ -73,6 +75,8 @@ This is backed by a per-vault `usage.log` (`.svault/<name>/usage.log`, JSON line
 | `l` | Lock the vault and return to the list |
 | `Esc` / `b` | Back to the vault list |
 | `?` | Show the help overlay |
+
+The **add-secret** form also classifies the secret: name, value, **scope**, **description** (optional — what it's for, used by the AI judge), **tier** (low/medium/high, defaulting to the vault's default tier), and a **require-reason** toggle. `space` / `←` `→` cycle the tier and toggle require-reason; the text fields (name/value/scope/description) accept typing and paste. This is the same classification you can set non-interactively with `svault secret add --scope --tier --require-reason --description`, and it's what the policy gate enforces.
 
 A locked vault routes through a passphrase prompt first, then resumes the action you asked for.
 

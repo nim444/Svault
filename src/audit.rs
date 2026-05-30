@@ -27,6 +27,11 @@ pub struct Entry {
     pub decision: String,
     pub rule: String,
     pub reason: String,
+    /// The connecting process's OS UID, stamped by the daemon. Unlike `caller`
+    /// (a self-asserted string) this is unforgeable, so it's the trustworthy
+    /// identity in the trail (finding N-1). `None` for CLI-local decisions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_uid: Option<u32>,
 }
 
 fn unknown_source() -> String {
@@ -55,7 +60,20 @@ impl Entry {
             decision: decision.to_string(),
             rule: rule.to_string(),
             reason: reason.to_string(),
+            peer_uid: None,
         }
+    }
+
+    /// Stamp the connecting process's UID (daemon path).
+    pub fn with_peer_uid(mut self, uid: Option<u32>) -> Self {
+        self.peer_uid = uid;
+        self
+    }
+
+    /// Override the source surface (e.g. "agent" for the daemon gate).
+    pub fn with_source(mut self, source: &str) -> Self {
+        self.source = source.to_string();
+        self
     }
 
     /// Parse the timestamp back into a `DateTime`, if it is valid RFC 3339.

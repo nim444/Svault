@@ -28,7 +28,7 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 **Repository**: https://github.com/Soluzy/Svault
 **Description**: An AI-aware secret manager written in Rust. It sits between AI agents and credentials, enforcing structured requests (scope + reason) and policy controls.
 
-**Important**: Review the **latest version** available in the repository (currently **0.7.0**; confirm against `Cargo.toml`). The project has had two dedicated security-hardening releases (0.6.0, 0.7.0). Do **not** take the changes below on trust — verify each one in the code and look for what it missed, bypasses, or weakens elsewhere:
+**Important**: Review the **latest version** available in the repository (currently **0.9.0**; confirm against `Cargo.toml`). The project has had three dedicated security-hardening releases (0.6.0, 0.7.0, 0.8.0) and, in 0.9.0, moved the policy engine from advisory to **enforced**. Do **not** take the changes below on trust — verify each one in the code and look for what it missed, bypasses, or weakens elsewhere:
 
 - **Daemon (Unix, 0.5.0+)** — holds keys in memory, served over a `0600` Unix socket; configurable connection ceiling + per-connection read timeout (0.6.0); key-store lock recovers from poisoning; `daemon::send` retries connects.
 - **Socket secrecy (0.7.0, #3)** — the master passphrase is **derived client-side**; only the 32-byte derived key crosses the socket. Check the client (`client.rs`) and daemon (`daemon.rs`) agree and that a wrong passphrase fails locally.
@@ -39,7 +39,7 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 - **Supply chain (0.7.0, #9/#10/#11)** — a `cargo audit` CI gate, `ratatui` 0.30 (advisories cleared), SHA-256 checksums + SLSA build-provenance attestation on release artifacts.
 - **Graceful shutdown (0.7.0, #17)** — `SIGTERM`/`SIGINT` zeroize keys and clean up.
 
-**Scrutinize especially — the known gap:** the **policy engine is currently advisory, not enforced.** The daemon `Get` path runs no policy/audit check; caller/scope/reason on `svault get` are self-asserted; `svault.policy.yaml` is unsigned and located by an upward directory search. Evaluate how much this undercuts the product's "knows an AI is asking / gates agent access" claim, and whether a same-UID agent can simply bypass the policy layer. Also evaluate the **same-UID trust model** the project documents (it is not a sandbox against a hostile same-UID process) — say whether that boundary is reasonable and clearly communicated.
+**Scrutinize especially — the 0.9.0 enforced engine.** The policy engine is now enforced **inside the daemon**: the agent path is a `GetGated` request (`daemon.rs`) that runs `policy::evaluate` + the AI judge (`judge.rs`/`gate.rs`), audits the decision with the peer UID, and only then returns a value; the CLI runs the same gate locally when no daemon is up. Secret classification (scope/tier/`require_reason`) lives in the **HMAC-signed `meta.yaml`**; the policy file holds only callers, with anchored discovery and fail-closed parsing. Verify, don't trust: (1) that there is **no unguarded read path** — can a same-UID process get a classified secret without passing the gate (e.g. a direct `Get` vs `GetGated`, or `svault secret get`)? (2) that the **judge fail modes** are correct (medium fail-open, high fail-closed) and the judge can't be trivially spoofed or its prompt injected via the `reason`; (3) **key handling** for `$SVAULT_OPENROUTER_KEY` / the `0600` key file (no logging, no leak, refusal on loose perms); (4) that tier/scope **can't be downgraded** by editing `meta.yaml` (HMAC). Also evaluate the **same-UID trust model** the project documents (it is explicitly *not* a sandbox against a hostile same-UID process, which can read daemon memory) — say whether that boundary is reasonable and clearly communicated, and whether the enforced gate is honestly scoped to cooperative/semi-trusted agents + audit.
 
 ### Instructions
 
@@ -60,7 +60,7 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 
 - Cryptographic design and implementation quality
 - Secret handling (memory safety, zeroization, logging, exposure windows)
-- **The policy engine for AI/agent access — is it actually enforced?** Trace whether `svault get`'s caller/scope/reason and tiers gate anything at the daemon, or are purely advisory/audit. Assess the unsigned policy file + upward search. This is the headline claim; weigh it honestly.
+- **The policy engine for AI/agent access — is the 0.9.0 enforcement sound?** Trace the `GetGated` daemon path (`daemon.rs` → `gate::authorize` → `policy::evaluate` + `judge::evaluate` → audit). Confirm there is **no unguarded path** to a classified secret, that classification in the signed `meta.yaml` can't be tampered without the key, that policy discovery is anchored + fails closed, and that the AI-judge fail modes (medium fail-open, high fail-closed) and key handling are correct. This is the headline claim; weigh it honestly.
 - **The Unix daemon (0.5.0+)**: architecture, socket model + `0600`/umask, peer-UID bond (#1), client-side key derivation (#3, passphrase off the socket), connection ceiling / read timeout, poison recovery, auto-lock, graceful shutdown (#17)
 - **Secrets at rest (0.7.0)**: owner-only `.session` (key, not passphrase), `recovery.enc`, export bundles; `0700` dirs; Windows ACL via `icacls` (#4/#14/#16). Assess residual risk (key-equivalent files) and robustness of the Windows path
 - Passphrase strength enforcement (entropy floor + `--force`, #12)
@@ -111,7 +111,7 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 
 ## Recommendations for Corporate Adoption
 
-[Prioritized, actionable, reflecting the current 0.7.0 state — and say whether policy enforcement (#2/#5) should block a 1.0.0 "stable" label]
+[Prioritized, actionable, reflecting the current 0.9.0 state — and say whether the enforced policy engine + AI judge are sound enough to support a 1.0.0 "stable" label, or what must change first]
 
 ## Overall Risk Assessment by Context
 
@@ -138,4 +138,4 @@ Perform this review as if you are presenting it to a company's security committe
 
 ---
 
-**This prompt is intentionally kept current** with Svault’s latest released version (0.7.0) and major features — the Unix daemon (0.5.0), the 0.6.0/0.7.0 security hardening, and the still-advisory policy engine — so other models can produce relevant, fresh, and unbiased security reviews. Update it again when 1.0.0 lands the enforced policy engine.
+**This prompt is intentionally kept current** with Svault’s latest version (0.9.0) and major features — the Unix daemon (0.5.0), the 0.6.0–0.8.0 security hardening, and the **0.9.0 enforced policy engine + AI judge** — so other models can produce relevant, fresh, and unbiased security reviews. Update it again as the security model evolves toward 1.0.0.

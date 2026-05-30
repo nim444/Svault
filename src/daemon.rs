@@ -37,8 +37,21 @@ pub enum Request {
     Lock { vault: String },
     /// Drop every cached key.
     LockAll,
-    /// Read one secret value from an unlocked vault.
+    /// Read one secret value from an unlocked vault — the **human path**
+    /// (`svault secret get`). Audited, but not policy/judge-gated; the human
+    /// already holds the passphrase.
     Get { vault: String, secret: String },
+    /// The **agent path** (`svault get`): a structured, policy- and judge-gated
+    /// request. The daemon evaluates policy, consults the AI judge per tier,
+    /// audits the decision (stamped with the peer UID), and only then returns a
+    /// value. This is the enforced choke point (#2/#5/#22).
+    GetGated {
+        vault: String,
+        secret: String,
+        caller: String,
+        scope: String,
+        reason: String,
+    },
     /// Lock everything and stop the daemon.
     Shutdown,
 }
@@ -60,6 +73,16 @@ pub enum Response {
     },
     Secret {
         value: String,
+    },
+    /// A gated request was allowed; carries the value and the secret's tier (for
+    /// the granted-status line).
+    Granted {
+        value: String,
+        tier: crate::policy::Tier,
+    },
+    /// A gated request was denied by policy or the AI judge.
+    Denied {
+        reason: String,
     },
     /// The vault isn't unlocked in the daemon — the caller should fall back.
     NotUnlocked,
@@ -89,7 +112,9 @@ mod imp {
     use super::{is_expired, Request, Response, VaultStatus, LOG_NAME, PID_NAME, SOCKET_NAME};
     use crate::config::SvaultConfig;
     use crate::crypto::VaultKey;
+    use crate::judge::JudgeRuntime;
     use crate::vault::{Vault, SVAULT_DIR};
+    use crate::{audit, gate, policy};
     use anyhow::{anyhow, Context, Result};
     use std::collections::HashMap;
     use std::io::{BufRead, BufReader, Write};
@@ -152,9 +177,21 @@ mod imp {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    /// Server-wide handler context, built once at start and shared (Arc) across
+    /// connection threads. `judge` is `None` when the AI judge is disabled or
+    /// unconfigured — the gate then runs the static tier rules.
+    pub(super) struct ServerCtx {
+        base: PathBuf,
+        idle: u64,
+        max: u64,
+        judge: Option<JudgeRuntime>,
+    }
+
     // ── Request handling ──────────────────────────────────────────────────
 
-    fn handle(store: &Store, base: &Path, idle: u64, max: u64, req: Request) -> Response {
+    fn handle(store: &Store, ctx: &ServerCtx, peer_uid: Option<u32>, req: Request) -> Response {
+        let base = ctx.base.as_path();
+        let (idle, max) = (ctx.idle, ctx.max);
         match req {
             Request::Ping => Response::Pong {
                 version: env!("CARGO_PKG_VERSION").to_string(),
@@ -221,27 +258,37 @@ mod imp {
                 Response::Status { vaults }
             }
             Request::Get { vault, secret } => {
-                // Minimal critical section: clone the key + bump last_used under
-                // the lock, then open + decrypt OUTSIDE it so concurrent Gets
-                // don't serialize on the mutex.
-                let key_bytes = {
-                    let mut s = lock_store(store);
-                    match s.get_mut(&vault) {
-                        Some(h) => {
-                            h.last_used = Instant::now();
-                            *h.key
-                        }
-                        None => return Response::NotUnlocked,
-                    }
+                // Human path (`svault secret get`): no policy/judge gate (the
+                // human holds the passphrase), but still audited so no daemon
+                // read is unrecorded (N-5).
+                let key_bytes = match cached_key(store, &vault) {
+                    Some(k) => k,
+                    None => return Response::NotUnlocked,
                 };
                 let dir = vault_dir(base, &vault);
                 match Vault::open_with_key(&dir, VaultKey::from_bytes(key_bytes)) {
                     Ok(v) => match v.get_secret(&secret) {
                         // The original Zeroizing<String> wipes on drop; this transport
                         // copy and the serialized buffer are wiped after reply() (N-6).
-                        Ok(Some(value)) => Response::Secret {
-                            value: value.to_string(),
-                        },
+                        Ok(Some(value)) => {
+                            let _ = audit::record(
+                                &dir,
+                                &audit::Entry::now(
+                                    "human",
+                                    &secret,
+                                    "-",
+                                    "-",
+                                    "allow",
+                                    "human path",
+                                    "",
+                                )
+                                .with_source("human")
+                                .with_peer_uid(peer_uid),
+                            );
+                            Response::Secret {
+                                value: value.to_string(),
+                            }
+                        }
                         Ok(None) => Response::NotFound,
                         Err(e) => Response::Error {
                             message: e.to_string(),
@@ -252,9 +299,116 @@ mod imp {
                     },
                 }
             }
+            Request::GetGated {
+                vault,
+                secret,
+                caller,
+                scope,
+                reason,
+            } => {
+                let key_bytes = match cached_key(store, &vault) {
+                    Some(k) => k,
+                    None => return Response::NotUnlocked,
+                };
+                let dir = vault_dir(base, &vault);
+                let v = match Vault::open_with_key(&dir, VaultKey::from_bytes(key_bytes)) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Response::Error {
+                            message: e.to_string(),
+                        }
+                    }
+                };
+                let meta = &v.meta; // verified by open_with_key — #22
+
+                // Load policy, failing CLOSED on a present-but-unparseable file.
+                let policy_box;
+                let policy_opt = match policy::load() {
+                    policy::PolicyLoad::Absent => None,
+                    policy::PolicyLoad::Loaded(p) => {
+                        policy_box = p;
+                        Some(policy_box.as_ref())
+                    }
+                    policy::PolicyLoad::Error(msg) => {
+                        let why = format!("policy file error (failing closed): {msg}");
+                        audit_gated(
+                            &dir, &caller, &secret, &scope, "low", "deny", &why, &reason, peer_uid,
+                        );
+                        return Response::Denied { reason: why };
+                    }
+                };
+
+                let req = policy::Request {
+                    vault: &meta.name,
+                    vault_dir: &dir,
+                    secret: &secret,
+                    scope: &scope,
+                    reason: &reason,
+                    caller: &caller,
+                };
+                let verdict = gate::authorize(policy_opt, meta, &req, ctx.judge.as_ref());
+                let decision_str = if verdict.allowed() { "allow" } else { "deny" };
+                audit_gated(
+                    &dir,
+                    &caller,
+                    &secret,
+                    &scope,
+                    &verdict.tier().to_string(),
+                    decision_str,
+                    &verdict.note,
+                    &reason,
+                    peer_uid,
+                );
+                if !verdict.allowed() {
+                    let reason = match verdict.decision {
+                        policy::Decision::Deny(_, why) => why,
+                        _ => verdict.note,
+                    };
+                    return Response::Denied { reason };
+                }
+                match v.get_secret(&secret) {
+                    Ok(Some(value)) => Response::Granted {
+                        value: value.to_string(),
+                        tier: verdict.tier(),
+                    },
+                    Ok(None) => Response::NotFound,
+                    Err(e) => Response::Error {
+                        message: e.to_string(),
+                    },
+                }
+            }
             // Shutdown is acknowledged here; the connection handler sets the flag.
             Request::Shutdown => Response::Ok,
         }
+    }
+
+    /// Clone a cached key + bump `last_used` under the lock (minimal critical
+    /// section), or `None` if the vault isn't unlocked.
+    fn cached_key(store: &Store, vault: &str) -> Option<[u8; 32]> {
+        let mut s = lock_store(store);
+        s.get_mut(vault).map(|h| {
+            h.last_used = Instant::now();
+            *h.key
+        })
+    }
+
+    /// Record a gated (agent-path) decision, stamped agent-source + peer UID.
+    #[allow(clippy::too_many_arguments)]
+    fn audit_gated(
+        dir: &Path,
+        caller: &str,
+        secret: &str,
+        scope: &str,
+        tier: &str,
+        decision: &str,
+        rule: &str,
+        reason: &str,
+        peer_uid: Option<u32>,
+    ) {
+        let entry = audit::Entry::now(caller, secret, scope, tier, decision, rule, reason)
+            .with_source("agent")
+            .with_peer_uid(peer_uid);
+        let _ = audit::record(dir, &entry);
     }
 
     fn reply(w: &mut UnixStream, resp: &Response) -> std::io::Result<()> {
@@ -269,13 +423,11 @@ mod imp {
     }
 
     /// Serve one connection: read newline-delimited requests until EOF.
-    #[allow(clippy::too_many_arguments)]
     fn serve_conn(
         stream: UnixStream,
         store: Store,
-        base: PathBuf,
-        idle: u64,
-        max: u64,
+        ctx: Arc<ServerCtx>,
+        peer_uid: Option<u32>,
         shutdown: Arc<AtomicBool>,
         sock: PathBuf,
     ) {
@@ -312,12 +464,13 @@ mod imp {
                 }
             };
             let is_shutdown = matches!(req, Request::Shutdown);
-            let mut resp = handle(&store, &base, idle, max, req);
+            let mut resp = handle(&store, &ctx, peer_uid, req);
             let _ = reply(&mut writer, &resp);
             // Wipe the secret value held in the in-memory response now that it's
             // been written, so it doesn't linger in the freed allocation (N-6).
-            if let Response::Secret { value } = &mut resp {
-                value.zeroize();
+            match &mut resp {
+                Response::Secret { value } | Response::Granted { value, .. } => value.zeroize(),
+                _ => {}
             }
             if is_shutdown {
                 shutdown.store(true, Ordering::SeqCst);
@@ -377,14 +530,12 @@ mod imp {
         });
     }
 
-    /// True when the connecting peer runs as our own effective UID.
-    /// Defense-in-depth over the 0600 socket: even if the socket perms were
-    /// somehow loosened, a different-UID process is refused (#1). Portable
+    /// The connecting peer's UID, or `None` if it can't be determined. Portable
     /// across the daemon's targets: `SO_PEERCRED` on Linux, `getpeereid` on
-    /// macOS/BSD (std's `peer_cred` is still unstable).
-    fn peer_is_self(stream: &UnixStream) -> bool {
+    /// macOS/BSD (std's `peer_cred` is still unstable). Used both for the
+    /// peer-UID bond (#1) and to stamp the audit trail (N-1).
+    fn peer_uid(stream: &UnixStream) -> Option<u32> {
         use std::os::unix::io::AsRawFd;
-        let me = unsafe { libc::geteuid() };
         let fd = stream.as_raw_fd();
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -401,9 +552,9 @@ mod imp {
                 )
             };
             if rc != 0 {
-                return false;
+                return None;
             }
-            cred.uid
+            Some(cred.uid)
         };
 
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -412,26 +563,20 @@ mod imp {
             let mut gid: libc::gid_t = 0;
             let rc = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
             if rc != 0 {
-                return false;
+                return None;
             }
-            uid
+            Some(uid)
         };
 
-        peer_uid == me
+        peer_uid
     }
 
     /// The accept loop. Returns when a `Shutdown` request unblocks it.
-    fn serve(
-        listener: UnixListener,
-        store: Store,
-        base: PathBuf,
-        idle: u64,
-        max: u64,
-        max_conns: usize,
-    ) {
+    fn serve(listener: UnixListener, store: Store, ctx: Arc<ServerCtx>, max_conns: usize) {
         let shutdown = Arc::new(AtomicBool::new(false));
         let active = Arc::new(AtomicUsize::new(0));
-        let sock = socket_path(&base);
+        let sock = socket_path(&ctx.base);
+        let me = unsafe { libc::geteuid() };
         install_signal_watcher(shutdown.clone(), sock.clone());
         for stream in listener.incoming() {
             if shutdown.load(Ordering::SeqCst) {
@@ -441,9 +586,11 @@ mod imp {
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            // Peer-UID bond: only serve connections from our own UID (#1).
-            if !peer_is_self(&s) {
-                continue; // drop — different UID
+            // Peer-UID bond: only serve connections from our own UID (#1). The
+            // UID is also stamped into the audit trail (N-1).
+            let puid = peer_uid(&s);
+            if puid != Some(me) {
+                continue; // drop — different UID or unknown
             }
             // Connection ceiling: refuse new work when too many handlers are
             // already live, instead of spawning unbounded threads.
@@ -457,22 +604,22 @@ mod imp {
                 continue; // drop s → closes the socket
             }
             active.fetch_add(1, Ordering::SeqCst);
-            let (st, bs, sd, sk, ac) = (
+            let (st, cx, sd, sk, ac) = (
                 store.clone(),
-                base.clone(),
+                ctx.clone(),
                 shutdown.clone(),
                 sock.clone(),
                 active.clone(),
             );
             std::thread::spawn(move || {
                 let _guard = ConnGuard(ac); // decrements the live count on exit/panic
-                serve_conn(s, st, bs, idle, max, sd, sk);
+                serve_conn(s, st, cx, puid, sd, sk);
             });
         }
         // Lock everything (zeroize keys) and clean up our files.
         lock_store(&store).clear();
         let _ = std::fs::remove_file(&sock);
-        let _ = std::fs::remove_file(pid_path(&base));
+        let _ = std::fs::remove_file(pid_path(&ctx.base));
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
@@ -565,6 +712,8 @@ mod imp {
         let cfg = SvaultConfig::load();
         let (idle, max) = (cfg.lock.idle_timeout_secs, cfg.lock.max_unlocked_secs);
         let max_conns = cfg.daemon.max_connections;
+        let judge = JudgeRuntime::from_config(&cfg.judge);
+        let judge_on = judge.is_some();
 
         // Bind under a tight umask so the socket is born 0600 — no TOCTOU window
         // between bind and chmod where it's group/world-accessible (#16).
@@ -579,10 +728,17 @@ mod imp {
         spawn_ticker(store.clone(), idle, max);
 
         eprintln!(
-            "svault daemon listening on {} (idle {idle}s, hard-max {max}s, max-conns {max_conns})",
-            sock.display()
+            "svault daemon listening on {} (idle {idle}s, hard-max {max}s, max-conns {max_conns}, judge {})",
+            sock.display(),
+            if judge_on { "on" } else { "off" }
         );
-        serve(listener, store, base, idle, max, max_conns);
+        let ctx = Arc::new(ServerCtx {
+            base,
+            idle,
+            max,
+            judge,
+        });
+        serve(listener, store, ctx, max_conns);
         Ok(())
     }
 
@@ -871,10 +1027,26 @@ mod imp {
         }
 
         fn start_test_daemon_capped(base: PathBuf, idle: u64, max: u64, max_conns: usize) {
+            start_test_daemon_judged(base, idle, max, max_conns, None);
+        }
+
+        fn start_test_daemon_judged(
+            base: PathBuf,
+            idle: u64,
+            max: u64,
+            max_conns: usize,
+            judge: Option<crate::judge::JudgeRuntime>,
+        ) {
             let sock = socket_path(&base);
             let listener = UnixListener::bind(&sock).unwrap();
             let store: Store = Arc::new(Mutex::new(HashMap::new()));
-            std::thread::spawn(move || serve(listener, store, base, idle, max, max_conns));
+            let ctx = Arc::new(ServerCtx {
+                base,
+                idle,
+                max,
+                judge,
+            });
+            std::thread::spawn(move || serve(listener, store, ctx, max_conns));
         }
 
         fn wait_up(base: &Path) {
@@ -885,6 +1057,195 @@ mod imp {
                 std::thread::sleep(Duration::from_millis(20));
             }
             panic!("daemon never came up");
+        }
+
+        // ── Gated (agent path) test scaffolding ────────────────────────────
+        use crate::policy::Tier;
+        const PASS: &str = "Str0ng!Pass#99";
+
+        /// A vault with one classified secret, so the daemon gate has a tier to
+        /// enforce. (No policy file exists in tests → caller auth via allow_agent.)
+        fn make_classified_vault(base: &Path, name: &str, secret: &str, scope: &str, tier: Tier) {
+            let dir = vault_dir(base, name);
+            let meta = VaultMeta::new(
+                name.to_string(),
+                "d".to_string(),
+                AccessConfig::default(),
+                VaultSettings::default(),
+            );
+            let v = Vault::init(&dir, PASS, meta).unwrap();
+            v.add_secret(secret, "s3cr3t").unwrap();
+            let mut m = v.meta.clone();
+            m.secrets.insert(
+                secret.to_string(),
+                crate::policy::SecretRule {
+                    scope: scope.to_string(),
+                    tier,
+                    require_reason: false,
+                    description: String::new(),
+                },
+            );
+            v.save_meta(&m).unwrap();
+        }
+
+        struct FakeJudge(std::result::Result<String, String>);
+        impl crate::judge::JudgeTransport for FakeJudge {
+            fn chat(&self, _m: &str, _s: &str, _u: &str) -> anyhow::Result<String> {
+                self.0.clone().map_err(|e| anyhow::anyhow!(e))
+            }
+        }
+
+        fn judge_rt(reply: std::result::Result<String, String>) -> crate::judge::JudgeRuntime {
+            crate::judge::JudgeRuntime {
+                model: "fake".into(),
+                allow_threshold: 60,
+                high_threshold: 80,
+                transport: Box::new(FakeJudge(reply)),
+            }
+        }
+
+        fn unlock(base: &Path, name: &str) {
+            assert!(matches!(
+                send(
+                    base,
+                    &Request::Unlock {
+                        vault: name.into(),
+                        key: key_hex(base, name, PASS),
+                    },
+                )
+                .unwrap(),
+                Response::Unlocked
+            ));
+        }
+
+        fn gated(base: &Path, name: &str, secret: &str, scope: &str, reason: &str) -> Response {
+            send(
+                base,
+                &Request::GetGated {
+                    vault: name.into(),
+                    secret: secret.into(),
+                    caller: "claude".into(),
+                    scope: scope.into(),
+                    reason: reason.into(),
+                },
+            )
+            .unwrap()
+        }
+
+        const PLAUSIBLE: &str = "run the nightly database migration job";
+
+        #[test]
+        fn gated_medium_allowed_by_judge_and_audited() {
+            let tmp = TempDir::new().unwrap();
+            let base = tmp.path().to_path_buf();
+            make_classified_vault(&base, "v", "API_KEY", "api", Tier::Medium);
+            start_test_daemon_judged(
+                base.clone(),
+                900,
+                28800,
+                TEST_MAX_CONNS,
+                Some(judge_rt(Ok(
+                    r#"{"decision":"allow","score":90,"reason":"plausible"}"#.into(),
+                ))),
+            );
+            wait_up(&base);
+            unlock(&base, "v");
+            match gated(&base, "v", "API_KEY", "api", PLAUSIBLE) {
+                Response::Granted { value, tier } => {
+                    assert_eq!(value, "s3cr3t");
+                    assert_eq!(tier, Tier::Medium);
+                }
+                other => panic!("expected Granted, got {other:?}"),
+            }
+            // The decision is audited with the agent source and a peer UID (N-1/N-5).
+            let entries = crate::audit::all(&vault_dir(&base, "v")).unwrap();
+            assert!(entries
+                .iter()
+                .any(|e| e.source == "agent" && e.decision == "allow" && e.peer_uid.is_some()));
+        }
+
+        #[test]
+        fn gated_medium_denied_by_judge() {
+            let tmp = TempDir::new().unwrap();
+            let base = tmp.path().to_path_buf();
+            make_classified_vault(&base, "v", "API_KEY", "api", Tier::Medium);
+            start_test_daemon_judged(
+                base.clone(),
+                900,
+                28800,
+                TEST_MAX_CONNS,
+                Some(judge_rt(Ok(
+                    r#"{"decision":"deny","score":5,"reason":"vague"}"#.into(),
+                ))),
+            );
+            wait_up(&base);
+            unlock(&base, "v");
+            assert!(matches!(
+                gated(&base, "v", "API_KEY", "api", PLAUSIBLE),
+                Response::Denied { .. }
+            ));
+        }
+
+        #[test]
+        fn gated_high_fails_closed_when_judge_unavailable() {
+            let tmp = TempDir::new().unwrap();
+            let base = tmp.path().to_path_buf();
+            make_classified_vault(&base, "v", "DB_PW", "database", Tier::High);
+            start_test_daemon_judged(
+                base.clone(),
+                900,
+                28800,
+                TEST_MAX_CONNS,
+                Some(judge_rt(Err("network down".into()))),
+            );
+            wait_up(&base);
+            unlock(&base, "v");
+            assert!(matches!(
+                gated(&base, "v", "DB_PW", "database", PLAUSIBLE),
+                Response::Denied { .. }
+            ));
+        }
+
+        #[test]
+        fn gated_high_is_human_only_without_judge() {
+            let tmp = TempDir::new().unwrap();
+            let base = tmp.path().to_path_buf();
+            make_classified_vault(&base, "v", "DB_PW", "database", Tier::High);
+            start_test_daemon(base.clone(), 900, 28800); // no judge
+            wait_up(&base);
+            unlock(&base, "v");
+            assert!(matches!(
+                gated(&base, "v", "DB_PW", "database", PLAUSIBLE),
+                Response::Denied { .. }
+            ));
+        }
+
+        #[test]
+        fn gated_medium_allowed_without_judge() {
+            let tmp = TempDir::new().unwrap();
+            let base = tmp.path().to_path_buf();
+            make_classified_vault(&base, "v", "API_KEY", "api", Tier::Medium);
+            start_test_daemon(base.clone(), 900, 28800); // no judge → allow + flag
+            wait_up(&base);
+            unlock(&base, "v");
+            assert!(matches!(
+                gated(&base, "v", "API_KEY", "api", PLAUSIBLE),
+                Response::Granted { .. }
+            ));
+        }
+
+        #[test]
+        fn gated_short_reason_is_denied() {
+            let tmp = TempDir::new().unwrap();
+            let base = tmp.path().to_path_buf();
+            make_classified_vault(&base, "v", "API_KEY", "api", Tier::Medium);
+            start_test_daemon(base.clone(), 900, 28800);
+            wait_up(&base);
+            unlock(&base, "v");
+            assert!(matches!(
+                gated(&base, "v", "API_KEY", "api", "fix"),
+                Response::Denied { .. }
+            ));
         }
 
         #[test]

@@ -3,6 +3,8 @@ mod client;
 mod config;
 mod crypto;
 mod daemon;
+mod gate;
+mod judge;
 mod meta;
 mod passphrase;
 mod policy;
@@ -64,6 +66,18 @@ enum Commands {
         /// Vault name. Omit to use the only vault or pick interactively.
         #[arg(long, short = 'v')]
         vault: Option<String>,
+        /// (add) Classify the secret's scope, e.g. `database`.
+        #[arg(long)]
+        scope: Option<String>,
+        /// (add) Sensitivity tier: low | medium | high.
+        #[arg(long)]
+        tier: Option<String>,
+        /// (add) Always run the AI judge for this secret, even at low tier.
+        #[arg(long)]
+        require_reason: bool,
+        /// (add) What this secret is for — given to the AI judge as context.
+        #[arg(long)]
+        description: Option<String>,
     },
     /// List all vaults in .svault/
     Vaults,
@@ -141,6 +155,36 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
+    /// AI judge: manage the OpenRouter key and test it.
+    ///
+    /// Actions: `set-key` (store the key as a 0600 file), `status` (show where
+    /// the key resolves from + model config), `remove-key` (delete the file),
+    /// `test` (dry-run a sample request against the model).
+    Judge {
+        /// set-key | status | remove-key | test
+        action: String,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long, default_value = "misc")]
+        scope: String,
+        #[arg(long, default_value = "SAMPLE_SECRET")]
+        secret: String,
+        #[arg(long, default_value = "tester")]
+        caller: String,
+        /// Treat the sample as this tier (affects thresholds): low | medium | high.
+        #[arg(long, default_value = "medium")]
+        tier: String,
+        /// (test) Sample secret purpose — context the judge weighs against the reason.
+        #[arg(long)]
+        description: Option<String>,
+        /// (test) Vault name the request is against (the model sees it; avoid
+        /// misleading names like "test" for production secrets).
+        #[arg(long, default_value = "demo-vault")]
+        vault: String,
+        /// (test) Sample vault purpose — overall context for the judge.
+        #[arg(long)]
+        vault_description: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -156,7 +200,19 @@ fn main() -> Result<()> {
             action,
             name,
             vault,
-        } => cmd_secret(&action, name.as_deref(), vault.as_deref()),
+            scope,
+            tier,
+            require_reason,
+            description,
+        } => cmd_secret(
+            &action,
+            name.as_deref(),
+            vault.as_deref(),
+            scope.as_deref(),
+            tier.as_deref(),
+            require_reason,
+            description.as_deref(),
+        ),
         Commands::Vaults => cmd_vaults(),
         Commands::Unlock { vault } => cmd_unlock(vault.as_deref()),
         Commands::Lock { all, vault } => cmd_lock(all, vault.as_deref()),
@@ -181,6 +237,29 @@ fn main() -> Result<()> {
         Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
         Commands::Import { file, name } => cmd_import(&file, name.as_deref()),
         Commands::Daemon { action, fix } => cmd_daemon(&action, fix),
+        Commands::Judge {
+            action,
+            reason,
+            scope,
+            secret,
+            caller,
+            tier,
+            description,
+            vault,
+            vault_description,
+        } => cmd_judge(
+            &action,
+            JudgeTestArgs {
+                reason: reason.as_deref(),
+                scope: &scope,
+                secret: &secret,
+                caller: &caller,
+                tier: &tier,
+                description: description.as_deref(),
+                vault: &vault,
+                vault_description: vault_description.as_deref(),
+            },
+        ),
     }
 }
 
@@ -275,6 +354,14 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
 
     let login_method = prompt_login_method(None)?;
 
+    // Default sensitivity for secrets added later, and whether the AI judge
+    // gates this vault's medium/high secrets (needs an OpenRouter key to act).
+    let default_tier = prompt_tier(policy::Tier::Low)?;
+    let judge_enabled = Confirm::new()
+        .with_prompt("  Use the AI judge for medium/high secrets in this vault?")
+        .default(false)
+        .interact()?;
+
     println!();
     // Hard entropy floor (finding #12): re-prompt until it clears, unless --force.
     let passphrase = loop {
@@ -322,6 +409,8 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
         },
     );
     meta.storage = storage.to_string();
+    meta.default_tier = default_tier;
+    meta.judge.enabled = Some(judge_enabled);
     let vault = Vault::init(&vault_dir, &passphrase, meta)?;
 
     // Generate a recovery code and wrap the vault key under it. Shown once.
@@ -616,7 +705,15 @@ fn cmd_status() -> Result<()> {
     Ok(())
 }
 
-fn cmd_secret(action: &str, name: Option<&str>, vault_name: Option<&str>) -> Result<()> {
+fn cmd_secret(
+    action: &str,
+    name: Option<&str>,
+    vault_name: Option<&str>,
+    scope_arg: Option<&str>,
+    tier_arg: Option<&str>,
+    require_reason: bool,
+    description_arg: Option<&str>,
+) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta_preview = VaultMeta::load_unverified(&vault_dir)?;
     let leaf = vault_leaf(&vault_dir);
@@ -664,11 +761,47 @@ fn cmd_secret(action: &str, name: Option<&str>, vault_name: Option<&str>) -> Res
             };
             let value = prompt_secret(format!("  Value for '{secret_name}'"))?;
             vault.add_secret(&secret_name, &value)?;
+
+            // Classify the secret in the signed meta so the policy gate can
+            // enforce it (#5). Flags drive non-interactive use; otherwise prompt.
+            let scope = match scope_arg {
+                Some(s) => s.to_string(),
+                None => Input::new()
+                    .with_prompt("  Scope (capability, e.g. database / api)")
+                    .with_initial_text("misc")
+                    .interact_text()?,
+            };
+            let tier = match tier_arg {
+                Some(t) => parse_tier(t),
+                None => prompt_tier(vault.meta.default_tier)?,
+            };
+            // Optional purpose note the AI judge uses to assess whether a
+            // request's reason fits the secret. Blank is fine.
+            let description = match description_arg {
+                Some(d) => d.trim().to_string(),
+                None => Input::new()
+                    .with_prompt("  Description (what it's for — optional, used by the AI judge)")
+                    .allow_empty(true)
+                    .interact_text()?,
+            };
+            let mut meta = vault.meta.clone();
+            meta.secrets.insert(
+                secret_name.clone(),
+                policy::SecretRule {
+                    scope,
+                    tier,
+                    require_reason,
+                    description,
+                },
+            );
+            vault.save_meta(&meta)?;
             usage::human(&vault_dir, "secret.add", Some(&secret_name));
             println!(
-                "{} Secret '{}' added",
+                "{} Secret '{}' added (scope={}, tier={})",
                 style("ok:").green().bold(),
-                secret_name
+                secret_name,
+                meta.secrets[&secret_name].scope,
+                tier
             );
         }
         "get" => {
@@ -795,14 +928,65 @@ fn cmd_get(
     vault_name: Option<&str>,
 ) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
-    let meta = VaultMeta::load_unverified(&vault_dir)?;
+    let meta_preview = VaultMeta::load_unverified(&vault_dir)?;
 
     let caller = caller_arg
         .map(|s| s.to_string())
         .or_else(|| std::env::var("SVAULT_CALLER").ok())
         .unwrap_or_else(|| "default".to_string());
+    let leaf = vault_leaf(&vault_dir);
 
-    let loaded = policy::load();
+    // Prefer the daemon: it is the enforced choke point — it evaluates policy,
+    // consults the AI judge, audits the decision (with the peer UID), and only
+    // then returns a value. The CLI just relays the verdict.
+    if let Some(outcome) = client::get_gated(&leaf, name, &caller, scope, reason) {
+        match outcome {
+            client::GatedOutcome::Granted(value, tier) => {
+                usage::agent(&vault_dir, &caller, "get.allow", Some(name));
+                eprintln!(
+                    "{} {} (caller={caller}, scope={scope}, tier={tier})",
+                    style("granted:").green().bold(),
+                    name
+                );
+                println!("{value}");
+                return Ok(());
+            }
+            client::GatedOutcome::Denied(why) => {
+                usage::agent(&vault_dir, &caller, "get.deny", Some(name));
+                deny_and_exit(&why, &caller, name, scope);
+            }
+            client::GatedOutcome::NotFound => {
+                eprintln!("{} Secret '{}' not found", style("error:").red(), name);
+                std::process::exit(1);
+            }
+            // Daemon up but vault locked — fall through to the local gate.
+            client::GatedOutcome::NotUnlocked => {}
+        }
+    }
+
+    // No daemon (or vault not unlocked there): run the SAME gate locally against
+    // the verified meta, then fetch from the session/prompt.
+    let vault = open_unlocked_or_prompt(&vault_dir, &meta_preview.name)?;
+    let meta = &vault.meta; // verified by open — #22
+    let policy_box;
+    let policy_opt = match policy::load() {
+        policy::PolicyLoad::Absent => None,
+        policy::PolicyLoad::Loaded(p) => {
+            policy_box = p;
+            Some(policy_box.as_ref())
+        }
+        policy::PolicyLoad::Error(msg) => {
+            let why = format!("policy file error (failing closed): {msg}");
+            audit::record(
+                &vault_dir,
+                &audit::Entry::now(&caller, name, scope, "low", "deny", &why, reason),
+            )?;
+            usage::agent(&vault_dir, &caller, "get.deny", Some(name));
+            deny_and_exit(&why, &caller, name, scope);
+        }
+    };
+
+    let judge = judge::JudgeRuntime::from_config(&config::SvaultConfig::load().judge);
     let req = policy::Request {
         vault: &meta.name,
         vault_dir: &vault_dir,
@@ -811,26 +995,20 @@ fn cmd_get(
         reason,
         caller: &caller,
     };
-    let decision = policy::evaluate(loaded.as_ref(), &meta, &req);
-
-    // Audit the decision either way — never log the secret value.
-    let (decision_str, rule) = match &decision {
-        policy::Decision::Allow(_) => ("allow", "ok".to_string()),
-        policy::Decision::Deny(_, why) => ("deny", why.clone()),
-    };
+    let verdict = gate::authorize(policy_opt, meta, &req, judge.as_ref());
+    let decision_str = if verdict.allowed() { "allow" } else { "deny" };
     audit::record(
         &vault_dir,
         &audit::Entry::now(
             &caller,
             name,
             scope,
-            &decision.tier().to_string(),
+            &verdict.tier().to_string(),
             decision_str,
-            &rule,
+            &verdict.note,
             reason,
         ),
     )?;
-    // Also record it on the unified usage timeline as an agent action.
     usage::agent(
         &vault_dir,
         &caller,
@@ -838,55 +1016,40 @@ fn cmd_get(
         Some(name),
     );
 
-    match decision {
-        policy::Decision::Deny(_, why) => {
-            eprintln!("{} {}", style("denied:").red().bold(), why);
+    if !verdict.allowed() {
+        let why = match verdict.decision {
+            policy::Decision::Deny(_, why) => why,
+            _ => verdict.note,
+        };
+        deny_and_exit(&why, &caller, name, scope);
+    }
+    let tier = verdict.tier();
+    match vault.get_secret(name)? {
+        Some(value) => {
             eprintln!(
-                "{}",
-                style(format!("  caller={caller} secret={name} scope={scope}")).dim()
+                "{} {} (caller={caller}, scope={scope}, tier={tier})",
+                style("granted:").green().bold(),
+                name
             );
+            println!("{}", *value);
+            Ok(())
+        }
+        None => {
+            eprintln!("{} Secret '{}' not found", style("error:").red(), name);
             std::process::exit(1);
         }
-        policy::Decision::Allow(tier) => {
-            let leaf = vault_leaf(&vault_dir);
-            // Prefer the daemon — the key is already in memory, so no prompt.
-            if let Some(outcome) = client::get(&leaf, name) {
-                match outcome {
-                    client::GetOutcome::Value(value) => {
-                        eprintln!(
-                            "{} {} (caller={caller}, scope={scope}, tier={tier})",
-                            style("granted:").green().bold(),
-                            name
-                        );
-                        println!("{value}");
-                        return Ok(());
-                    }
-                    client::GetOutcome::NotFound => {
-                        eprintln!("{} Secret '{}' not found", style("error:").red(), name);
-                        std::process::exit(1);
-                    }
-                    // Daemon up but vault locked — fall through to the prompt path.
-                    client::GetOutcome::NotUnlocked => {}
-                }
-            }
-            let vault = open_unlocked_or_prompt(&vault_dir, &meta.name)?;
-            match vault.get_secret(name)? {
-                Some(value) => {
-                    eprintln!(
-                        "{} {} (caller={caller}, scope={scope}, tier={tier})",
-                        style("granted:").green().bold(),
-                        name
-                    );
-                    println!("{}", *value);
-                    Ok(())
-                }
-                None => {
-                    eprintln!("{} Secret '{}' not found", style("error:").red(), name);
-                    std::process::exit(1);
-                }
-            }
-        }
     }
+}
+
+/// Print a denial to stderr and exit non-zero (the agent reads stdout for the
+/// value, so denials never pollute it).
+fn deny_and_exit(why: &str, caller: &str, name: &str, scope: &str) -> ! {
+    eprintln!("{} {}", style("denied:").red().bold(), why);
+    eprintln!(
+        "{}",
+        style(format!("  caller={caller} secret={name} scope={scope}")).dim()
+    );
+    std::process::exit(1);
 }
 
 /// `svault policy check <caller>` and `svault policy init`.
@@ -900,15 +1063,21 @@ fn cmd_policy(action: &str, caller: Option<&str>) -> Result<()> {
                 );
                 std::process::exit(1);
             };
-            let Some(policy) = policy::load() else {
-                println!(
-                    "{}",
-                    style("No svault.policy.yaml found — running in fallback mode (meta.yaml allow_agent / rate_limit).").dim()
-                );
-                println!("{}", style("Run 'svault policy init' to create one.").dim());
-                return Ok(());
-            };
-            cmd_policy_check(&policy, caller)
+            match policy::load() {
+                policy::PolicyLoad::Loaded(policy) => cmd_policy_check(&policy, caller),
+                policy::PolicyLoad::Absent => {
+                    println!(
+                        "{}",
+                        style("No svault.policy.yaml found — running in fallback mode (meta.yaml allow_agent / rate_limit).").dim()
+                    );
+                    println!("{}", style("Run 'svault policy init' to create one.").dim());
+                    Ok(())
+                }
+                policy::PolicyLoad::Error(msg) => {
+                    eprintln!("{} {}", style("error:").red(), msg);
+                    std::process::exit(1);
+                }
+            }
         }
         "init" => cmd_policy_init(),
         _ => {
@@ -948,8 +1117,17 @@ fn cmd_policy_check(policy: &policy::Policy, caller: &str) -> Result<()> {
     println!("  {:<14} {}", style("Rate limit").dim(), rule.rate_limit);
     println!();
 
-    let accessible = policy.accessible(caller);
-    if accessible.is_empty() {
+    // Classification now lives in each vault's signed meta.yaml, so enumerate
+    // across vaults using their metadata.
+    let mut rows: Vec<(String, String, String, policy::Tier)> = Vec::new();
+    for dir in list_vault_dirs() {
+        if let Ok(meta) = VaultMeta::load_unverified(&dir) {
+            for (secret, scope, tier) in policy.accessible(caller, &meta) {
+                rows.push((meta.name.clone(), secret, scope, tier));
+            }
+        }
+    }
+    if rows.is_empty() {
         println!(
             "{}",
             style("This caller cannot retrieve any classified secret.").dim()
@@ -963,7 +1141,7 @@ fn cmd_policy_check(policy: &policy::Policy, caller: &str) -> Result<()> {
             style("TIER").bold()
         );
         println!("{}", style("─".repeat(60)).dim());
-        for (vault, secret, scope, tier) in &accessible {
+        for (vault, secret, scope, tier) in &rows {
             println!(
                 "{:<18} {:<22} {:<12} {}",
                 style(vault).cyan(),
@@ -1009,27 +1187,17 @@ fn cmd_policy_init() -> Result<()> {
         std::process::exit(1);
     }
 
-    let mut out = String::from(
+    // Per-secret classification (scope/tier/require_reason) now lives in each
+    // vault's signed meta.yaml — set it with `svault secret add` or `svault
+    // settings`. The policy file holds only the caller definitions (who may
+    // request which scopes), which are non-secret and committable.
+    let out = String::from(
         "version: 1\n\n# Callers that may request secrets via 'svault get'.\n\
+         # Secret classification (scope/tier) lives in each vault's signed\n\
+         # meta.yaml — set it per-secret with 'svault secret add' / 'svault settings'.\n\
          callers:\n  claude-code:\n    scopes: [misc]\n    rate_limit: 20/hour\n\
-         \x20\x20default:\n    scopes: []\n    rate_limit: 5/hour\n\n\
-         # Per-vault secret classification. tier: low | medium | high.\nvaults:\n",
+         \x20\x20default:\n    scopes: []\n    rate_limit: 5/hour\n",
     );
-
-    let dirs = list_vault_dirs();
-    if dirs.is_empty() {
-        out.push_str("  # No vaults yet — add entries after 'svault create'.\n");
-    }
-    for dir in &dirs {
-        let Ok(meta) = VaultMeta::load_unverified(dir) else {
-            continue;
-        };
-        out.push_str(&format!("  {}:\n    secrets:\n", meta.name));
-        for n in unlocked_secret_names(dir) {
-            out.push_str(&format!("      {n}: {{ scope: misc, tier: low }}\n"));
-        }
-        out.push_str("      \"*\": { scope: misc, tier: low }\n");
-    }
 
     std::fs::write(path, out)?;
     println!(
@@ -1039,23 +1207,14 @@ fn cmd_policy_init() -> Result<()> {
     );
     println!(
         "{}",
-        style("  Edit scopes and tiers, then commit it — it holds no secrets.").dim()
+        style("  Edit the caller scopes, then commit it — it holds no secrets.").dim()
+    );
+    println!(
+        "{}",
+        style("  Classify secrets with 'svault secret add' (you'll be asked for scope/tier).")
+            .dim()
     );
     Ok(())
-}
-
-/// Best-effort secret-name listing for `policy init`: only when the vault is
-/// already unlocked (cached session), otherwise empty so we just emit "*".
-fn unlocked_secret_names(vault_dir: &Path) -> Vec<String> {
-    if !session::is_unlocked(vault_dir) {
-        return vec![];
-    }
-    let Some(key) = session::get_key(vault_dir) else {
-        return vec![];
-    };
-    Vault::open_with_key(vault_dir, VaultKey::from_bytes(key))
-        .and_then(|v| v.list_secret_names())
-        .unwrap_or_default()
 }
 
 // ── Recovery, export, import ────────────────────────────────────────────────
@@ -1409,4 +1568,223 @@ fn prompt_login_method(current: Option<LoginMethod>) -> Result<LoginMethod> {
         );
     }
     Ok(LoginMethod::Passphrase)
+}
+
+/// Parse a tier string leniently (unknown → low).
+fn parse_tier(s: &str) -> policy::Tier {
+    match s.trim().to_lowercase().as_str() {
+        "medium" | "med" => policy::Tier::Medium,
+        "high" => policy::Tier::High,
+        _ => policy::Tier::Low,
+    }
+}
+
+fn prompt_tier(default: policy::Tier) -> Result<policy::Tier> {
+    let choices = &[
+        "low — auto-allow",
+        "medium — AI-judged (fail-open if judge down)",
+        "high — AI-judged, fail-closed (human-only when judge off)",
+    ];
+    let default_idx = match default {
+        policy::Tier::Low => 0,
+        policy::Tier::Medium => 1,
+        policy::Tier::High => 2,
+    };
+    let idx = Select::new()
+        .with_prompt("  Sensitivity tier")
+        .items(choices)
+        .default(default_idx)
+        .interact()?;
+    Ok(match idx {
+        1 => policy::Tier::Medium,
+        2 => policy::Tier::High,
+        _ => policy::Tier::Low,
+    })
+}
+
+/// Sample request for `svault judge test` — everything the dry-run feeds the
+/// model. Bundled so the command functions stay under the argument limit.
+struct JudgeTestArgs<'a> {
+    reason: Option<&'a str>,
+    scope: &'a str,
+    secret: &'a str,
+    caller: &'a str,
+    tier: &'a str,
+    description: Option<&'a str>,
+    vault: &'a str,
+    vault_description: Option<&'a str>,
+}
+
+/// `svault judge <action>` — manage the OpenRouter key (`set-key` / `status` /
+/// `remove-key`) and dry-run the configured model with `test`.
+fn cmd_judge(action: &str, t: JudgeTestArgs) -> Result<()> {
+    match action {
+        "test" => cmd_judge_test(t),
+        "set-key" | "set" => cmd_judge_set_key(),
+        "status" | "key" | "key-status" => cmd_judge_status(),
+        "remove-key" | "remove" | "unset" => cmd_judge_remove_key(),
+        other => {
+            eprintln!(
+                "{} Unknown action '{}'. Use: set-key | status | remove-key | test",
+                style("error:").red(),
+                other
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `svault judge set-key` — prompt for the OpenRouter key (hidden) and store it
+/// as a `0600` file at `~/.config/svault/openrouter.key`. The key is never
+/// echoed and never written to config.
+fn cmd_judge_set_key() -> Result<()> {
+    use std::io::IsTerminal;
+    let cfg = config::SvaultConfig::load();
+    // Interactive at a TTY → hidden prompt. Piped (e.g. `echo $KEY | svault
+    // judge set-key`) → read the key from stdin so it stays out of the shell
+    // history / argv.
+    let key = if std::io::stdin().is_terminal() {
+        Password::new()
+            .with_prompt("  OpenRouter API key (sk-or-...)")
+            .interact()?
+    } else {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+        buf
+    };
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        eprintln!("{} empty key — nothing written", style("error:").red());
+        std::process::exit(1);
+    }
+    let path = config::set_openrouter_key(&cfg.judge, &key)?;
+    println!(
+        "{} stored OpenRouter key at {} (0600)",
+        style("ok:").green().bold(),
+        path.display()
+    );
+    if std::env::var(config::KEY_ENV).is_ok() {
+        println!(
+            "  note: ${} is also set and takes precedence over the file",
+            config::KEY_ENV
+        );
+    }
+    println!("  verify it with: svault judge test");
+    Ok(())
+}
+
+/// `svault judge status` — show where the key resolves from (without revealing
+/// it) plus the active model/threshold config.
+fn cmd_judge_status() -> Result<()> {
+    let cfg = config::SvaultConfig::load();
+    let j = &cfg.judge;
+    println!(
+        "{} enabled={} model={} (allow≥{}, high≥{}) timeout={}s",
+        style("judge:").bold().cyan(),
+        j.enabled,
+        j.model,
+        j.allow_threshold,
+        j.high_threshold,
+        j.timeout_secs
+    );
+    match config::key_source(j) {
+        config::KeySource::Env => println!(
+            "  key: from ${} (environment)",
+            style(config::KEY_ENV).green()
+        ),
+        config::KeySource::File(p) => {
+            println!("  key: {} ({})", style("present").green(), p.display())
+        }
+        config::KeySource::None => {
+            let path = config::key_file_path(j)
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "~/.config/svault/openrouter.key".to_string());
+            println!(
+                "  key: {} — run `svault judge set-key`",
+                style("none").red()
+            );
+            println!("       (would be stored at {path})");
+        }
+    }
+    Ok(())
+}
+
+/// `svault judge remove-key` — delete the stored key file.
+fn cmd_judge_remove_key() -> Result<()> {
+    let cfg = config::SvaultConfig::load();
+    match config::remove_openrouter_key(&cfg.judge)? {
+        Some(path) => println!(
+            "{} removed key file {}",
+            style("ok:").green().bold(),
+            path.display()
+        ),
+        None => println!("{} no key file to remove", style("note:").dim()),
+    }
+    if std::env::var(config::KEY_ENV).is_ok() {
+        println!(
+            "  note: ${} is still set in your environment",
+            config::KEY_ENV
+        );
+    }
+    Ok(())
+}
+
+/// `svault judge test` — dry-run the configured model/key against a sample
+/// request so you can verify OpenRouter setup without touching a real secret.
+fn cmd_judge_test(t: JudgeTestArgs) -> Result<()> {
+    let reason = t
+        .reason
+        .unwrap_or("run the nightly database migration to apply pending changes");
+    let cfg = config::SvaultConfig::load();
+    // Attempt regardless of the global on/off toggle — the point is to verify the
+    // model + key plumbing works.
+    let mut jcfg = cfg.judge.clone();
+    jcfg.enabled = true;
+    let Some(rt) = judge::JudgeRuntime::from_config(&jcfg) else {
+        eprintln!(
+            "{} No OpenRouter API key found.",
+            style("error:").red().bold()
+        );
+        eprintln!(
+            "  Run `svault judge set-key`, or set ${} in the environment.",
+            config::KEY_ENV
+        );
+        std::process::exit(1);
+    };
+    let tier_enum = parse_tier(t.tier);
+    println!(
+        "{} model={} tier={tier_enum} (allow≥{}, high≥{})",
+        style("judge:").bold().cyan(),
+        rt.model,
+        rt.allow_threshold,
+        rt.high_threshold
+    );
+    let model = rt.model.clone();
+    let ctx = judge::JudgeContext {
+        caller: t.caller,
+        scope: t.scope,
+        reason,
+        secret: t.secret,
+        vault_description: t.vault_description.unwrap_or(""),
+        secret_description: t.description.unwrap_or(""),
+        tier: tier_enum,
+        vault: t.vault,
+        recent: "no prior requests in the last hour",
+    };
+    match judge::evaluate(&rt, &model, &ctx) {
+        judge::JudgeVerdict::Allow { score, rationale } => {
+            println!(
+                "{} score {score} — {rationale}",
+                style("ALLOW").green().bold()
+            );
+        }
+        judge::JudgeVerdict::Deny { score, rationale } => {
+            println!("{} score {score} — {rationale}", style("DENY").red().bold());
+        }
+        judge::JudgeVerdict::Unavailable { err } => {
+            eprintln!("{} {err}", style("unavailable:").yellow().bold());
+            std::process::exit(1);
+        }
+    }
+    Ok(())
 }

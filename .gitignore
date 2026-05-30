@@ -12,5 +12,13 @@ target/
 *.svault-export.json
 *.svault-export
 
+# OpenRouter / AI-judge API keys — these belong in $SVAULT_OPENROUTER_KEY or a
+# 0600 file under ~/.config/svault/ (outside any repo). This is defence-in-depth
+# so a key file dropped into the tree by mistake is never committed.
+openrouter.key
+*.key
+*.apikey
+**/.config/svault/
+
 # OS
 .DS_Store
