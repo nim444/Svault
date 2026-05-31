@@ -26,7 +26,7 @@ The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` 
 | `v` | View the vault's activity timeline (human + agent usage) |
 | `e` | Export the selected vault to a timestamped `<name>-<YYYYMMDD-HHMMSS>.svault-export.json` in the current directory (repeated exports never overwrite); the status line shows the full path to the file |
 | `i` | Import a vault from a bundle file (prompts for the path) |
-| `r` | Recover the selected vault — enter the code, set a new passphrase |
+| `r` | Recover the selected vault — enter the code, re-attach it to your master |
 | `d` | Start the daemon if it's off, stop it if it's running (Unix); the outcome shows in the status line (no-op note on Windows) |
 | `?` | Show the help overlay |
 | `q` / `Esc` | Quit (asks for confirmation: `enter` quits, any other key stays) |
@@ -46,10 +46,12 @@ The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` 
 7. Auto-lock timer
 8. Default tier (low / medium / high) — applied to secrets you add later
 9. AI judge (on / off) — gate medium/high secrets for this vault
-10. Passphrase
-11. Confirm passphrase
+10. Master passphrase tail — depends on machine state:
+    - **first run** (no master yet): *Master passphrase* + *Confirm master passphrase* — you set the one secret that unlocks every vault
+    - **master set but locked**: a single *Master passphrase* field to open it
+    - **master already unlocked**: no passphrase field at all
 
-`←` / `→` cycle the pickers (allow-agent mode, default tier) and toggle auto-lock or the AI judge; `space` also cycles or toggles the focused picker; typing or pasting edits text fields; `Tab` and the arrows move between fields. A caret marks the field you're editing. Settings (`s`) edits the same access and auto-lock fields plus the default tier and the judge toggle. Storage is `local` and login is `passphrase` today; both appear as a static note rather than a selectable field, so the form never offers a choice that does nothing (remotes and extra login methods are on the [roadmap](roadmap.md)).
+`←` / `→` cycle the pickers (allow-agent mode, default tier) and toggle auto-lock or the AI judge; `space` also cycles or toggles the focused picker; typing or pasting edits text fields; `Tab` and the arrows move between fields. A caret marks the field you're editing. Settings (`s`) edits the same access and auto-lock fields plus the default tier and the judge toggle. There is **no per-vault passphrase** — every vault is unlocked by the one master passphrase (keyslot model). Storage is `local` today and appears as a static note rather than a selectable field, so the form never offers a choice that does nothing (remotes are on the [roadmap](roadmap.md)).
 
 After the vault is created, the **recovery code** is shown once on its own screen. It is not stored in plaintext and is never shown again — save it (password manager or offline paper), then press `y` to confirm and return to the vault list. See [Recovery](recovery.md).
 
@@ -80,7 +82,7 @@ This is backed by a per-vault `usage.log` (`.svault/<name>/usage.log`, JSON line
 
 ## Recover form
 
-`r` enters the recovery code (shown as typed, not masked, so you can spot a mistype while copying it) and a new passphrase. Submitting resets the passphrase; the recovery code stays the same.
+`r` enters the recovery code (shown as typed, not masked, so you can spot a mistype while copying it) and your master passphrase (on a fresh machine with no master yet, you set one with a confirmation). Submitting re-attaches the vault to the master — the recovered data key is wrapped under it; the recovery code stays the same.
 
 ## Secret browser
 

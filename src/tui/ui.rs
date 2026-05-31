@@ -167,7 +167,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 "↑/↓ field   enter next   esc cancel",
             ),
             Screen::Unlock(_) => (
-                "type passphrase   enter unlock   esc cancel",
+                "type master passphrase   enter unlock   esc cancel",
                 "enter unlock   esc cancel",
             ),
             Screen::Secrets(scr) => {
@@ -529,34 +529,47 @@ fn field_lines<'a>(fields: &'a [(&'a str, String)], focus: usize, caret: bool) -
 }
 
 fn draw_create(frame: &mut Frame, area: Rect, form: &CreateForm) {
-    // Order must match CreateField::ORDER.
-    let fields = [
-        ("Name", form.name.clone()),
-        ("Description", form.description.clone()),
-        (
-            "Allow agent",
-            allow_label(form.allow_mode, &form.allow_list),
-        ),
-        (
-            "Agent list",
-            if form.allow_list.is_empty() {
-                "—".into()
-            } else {
-                form.allow_list.clone()
-            },
-        ),
-        ("Rate limit", form.rate_limit.clone()),
-        ("Auto-lock", yes_no(form.autolock).to_string()),
-        ("Auto-lock timer", form.autolock_timer.clone()),
-        ("Default tier", tier_label(form.default_tier).to_string()),
-        ("AI judge", yes_no(form.judge).to_string()),
-        ("Passphrase", mask(&form.passphrase)),
-        ("Confirm passphrase", mask(&form.confirm)),
-    ];
+    use super::{CreateField, MasterStep};
+    // Built from the form's dynamic field order so the master tail (set / unlock
+    // / none) and the key logic can never drift apart.
+    let fields: Vec<(&str, String)> = form
+        .order
+        .iter()
+        .map(|f| match f {
+            CreateField::Name => ("Name", form.name.clone()),
+            CreateField::Description => ("Description", form.description.clone()),
+            CreateField::AllowMode => (
+                "Allow agent",
+                allow_label(form.allow_mode, &form.allow_list),
+            ),
+            CreateField::AllowList => (
+                "Agent list",
+                if form.allow_list.is_empty() {
+                    "—".into()
+                } else {
+                    form.allow_list.clone()
+                },
+            ),
+            CreateField::RateLimit => ("Rate limit", form.rate_limit.clone()),
+            CreateField::Autolock => ("Auto-lock", yes_no(form.autolock).to_string()),
+            CreateField::AutolockTimer => ("Auto-lock timer", form.autolock_timer.clone()),
+            CreateField::DefaultTier => ("Default tier", tier_label(form.default_tier).to_string()),
+            CreateField::Judge => ("AI judge", yes_no(form.judge).to_string()),
+            CreateField::MasterNew => ("Master passphrase", mask(&form.passphrase)),
+            CreateField::MasterConfirm => ("Confirm master passphrase", mask(&form.confirm)),
+            CreateField::MasterUnlock => ("Master passphrase", mask(&form.passphrase)),
+        })
+        .collect();
     let mut lines = field_lines(&fields, form.focus, form.focus_is_text());
     lines.push(Line::from(""));
+    let note = match form.master_step {
+        MasterStep::Set => "  First run: set a master passphrase — one secret unlocks every vault.",
+        MasterStep::Unlock => "  Enter your master passphrase to create this vault under it.",
+        MasterStep::Ready => "  Storage: local   Unlock: master passphrase",
+    };
+    lines.push(Line::from(Span::styled(note, Style::default().fg(DIM))));
     lines.push(Line::from(Span::styled(
-        "  Storage: local   Login: passphrase   (space/←→ toggles tier & judge)",
+        "  (space/←→ toggles tier & judge)",
         Style::default().fg(DIM),
     )));
     if let Some(err) = &form.error {
@@ -1153,7 +1166,7 @@ fn draw_unlock(frame: &mut Frame, area: Rect, form: &UnlockForm) {
     let mut lines = vec![
         Line::from(""),
         Line::from(vec![
-            Span::raw("  Passphrase for "),
+            Span::raw("  Master passphrase to unlock "),
             Span::styled(
                 form.name.clone(),
                 Style::default().fg(CYAN).add_modifier(Modifier::BOLD),

@@ -299,13 +299,13 @@ pub fn open_from_session() -> Option<Keyring> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
-
-    // The keyring path is relative to the CWD (.svault/), so tests that touch
-    // disk must not run concurrently. Serialize them and run each in a temp CWD.
-    static CWD_LOCK: Mutex<()> = Mutex::new(());
+    use crate::testlock::CWD_LOCK;
+    use std::sync::MutexGuard;
 
     fn in_temp_cwd() -> (MutexGuard<'static, ()>, tempfile::TempDir, PathBuf) {
+        // The keyring path is relative to the CWD (.svault/), so disk-touching
+        // tests must not run concurrently with any other chdir test — they all
+        // share the one process-wide CWD lock.
         let guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::TempDir::new().unwrap();
         let prev = std::env::current_dir().unwrap();

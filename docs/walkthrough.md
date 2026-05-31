@@ -28,11 +28,13 @@ svault create
 #   Rate limit:     20/hour
 #   Default tier:   medium
 #   Use AI judge:   yes
-#   Passphrase:     ********
+#   Master passphrase: ********   ← first run only; one secret unlocks every vault
 # → prints a one-time RECOVERY CODE; save it.
 ```
 
-The vault description is the overall context the judge sees. Storage is `local` today.
+The vault description is the overall context the judge sees. Storage is `local`
+today. There is no per-vault passphrase — the first `create` sets a **master
+passphrase** that unlocks every vault; later vaults reuse it.
 
 ## 3. Add secrets — classify them and say what they're for
 

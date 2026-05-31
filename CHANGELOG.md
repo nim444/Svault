@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-05-31
+
+The **unified-unlock** release. Until now every vault had its own passphrase — up
+to N secrets to type. 0.9.4 replaces the per-vault passphrases with a single
+**master passphrase** using a keyslot model: each vault gets a random data key
+(DEK) that encrypts it, and that DEK is wrapped under the master. Unlock once and
+every vault opens. This is the foundation for additional unlock methods (a YubiKey
+touch, the recovery code) — each is just another keyslot over the same key, so any
+one of them opens everything.
+
+The keyring (the optional store for the AI judge's config and API keys) still has
+its own passphrase in this release; bringing it under the master is the next step
+in the unified-unlock milestone.
+
+**No migration (pre-release):** the on-disk model changed. Delete any old
+`.svault/` and recreate your vaults — `svault master init`, then `svault create`.
+
+### Added
+- **Master passphrase** (`svault master init | rekey | status`): one secret that
+  unlocks every vault. `init` sets it (and, on first `svault create`, you are
+  prompted to set it inline); `rekey` changes it without re-encrypting any vault
+  (only the wrapped master key is rewritten); `status` shows whether it is set,
+  unlocked, and how many vaults are wrapped under it.
+- **Keyslot model** (`src/master.rs`): a random 32-byte master key (MK) is wrapped
+  under a passphrase-derived KEK in `.svault/master.enc`; each vault's random data
+  key is wrapped under MK in `<vault>/keyslot.enc`. Generalises the existing
+  `recovery.enc` wrap/unwrap.
+- **TUI master flow**: the create form sets the master passphrase on first run
+  (passphrase + confirm), prompts the existing master when one is set but locked,
+  or skips straight through when it is already unlocked; the unlock prompt is now
+  a master-passphrase prompt that unwraps the selected vault's key.
+
+### Changed
+- **`svault create` no longer asks for a per-vault passphrase.** A new vault gets
+  a random data key wrapped under the master; if no master exists yet, you set
+  one first.
+- **`svault unlock` (no vault) opens every vault at once** by unwrapping each
+  vault's key with the master — into the daemon's memory if it is running, else a
+  `0600` file session. With a vault name it unlocks just that one, still via the
+  master. `svault lock --all` now also clears the master session.
+- **`svault recover`** re-attaches a vault to the master: the recovery code
+  unwraps the (unchanged) data key, which is then wrapped under the current master
+  — no per-vault passphrase reset, no re-encryption.
+
+### Security
+- The master passphrase is the only thing a passphrase wraps; vault data keys are
+  random and never derived from it. Changing the master rewraps one small slot and
+  never touches vault ciphertext.
+- Same-UID trust model is unchanged: keyslots close the read-the-files path; they
+  are not a sandbox against a hostile same-UID process reading the unlocked
+  daemon's memory or a `0600` session.
+
 ## [0.9.3] - 2026-05-31
 
 The **encrypted-keyring and multiple-judges** release. 0.9.2 encrypted the policy,

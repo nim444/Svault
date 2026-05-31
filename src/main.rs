@@ -6,6 +6,7 @@ mod daemon;
 mod gate;
 mod judge;
 mod keyring;
+mod master;
 mod meta;
 mod passphrase;
 mod policy;
@@ -13,6 +14,8 @@ mod portable;
 mod recovery;
 mod secfile;
 mod session;
+#[cfg(test)]
+mod testlock;
 mod tui;
 mod usage;
 mod vault;
@@ -156,6 +159,18 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
+    /// Master passphrase — the single secret that unlocks every vault.
+    ///
+    /// Set it once (`init`); thereafter `svault unlock` opens all vaults with it
+    /// and `svault create` wraps each new vault under it (no per-vault
+    /// passphrase). Actions: `init`, `rekey` (change it), `status`.
+    Master {
+        /// init | rekey | status
+        action: String,
+        /// Skip the passphrase strength floor (for non-interactive / scripted use)
+        #[arg(long)]
+        force: bool,
+    },
     /// Encrypted keyring: the single store for judges, API keys, and operational
     /// config (replaces the old plaintext config.yaml + openrouter.key).
     ///
@@ -253,6 +268,7 @@ fn main() -> Result<()> {
         Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
         Commands::Import { file, name } => cmd_import(&file, name.as_deref()),
         Commands::Daemon { action, fix } => cmd_daemon(&action, fix),
+        Commands::Master { action, force } => cmd_master(&action, force),
         Commands::Keyring { action } => cmd_keyring(&action),
         Commands::Judge {
             action,
@@ -383,36 +399,10 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
         .default(false)
         .interact()?;
 
-    println!();
-    // Hard entropy floor (finding #12): re-prompt until it clears, unless --force.
-    let passphrase = loop {
-        let p = prompt_secret("  Passphrase")?;
-        match passphrase::meets_floor(&p) {
-            Ok(()) => break p,
-            Err(e) if force => {
-                println!("{} {} (--force)", style("warning:").yellow(), e);
-                break p;
-            }
-            Err(e) => eprintln!("{} {}", style("error:").red(), e),
-        }
-    };
-
-    if let Some(w) = passphrase::check(&passphrase) {
-        println!("{} {}", style("warning:").yellow(), w.0);
-        if !Confirm::new()
-            .with_prompt("  Continue anyway?")
-            .default(false)
-            .interact()?
-        {
-            return Ok(());
-        }
-    }
-
-    let confirm = prompt_secret("  Confirm passphrase")?;
-    if *passphrase != *confirm {
-        eprintln!("{} Passphrases do not match", style("error:").red());
-        std::process::exit(1);
-    }
+    // Unlock (or, on first run, set) the master passphrase — the single secret
+    // that unlocks every vault. The new vault gets a random data key wrapped
+    // under the master; it has no passphrase of its own.
+    let master = ensure_master_unlocked(force)?;
 
     println!("\n  Creating vault...");
 
@@ -437,7 +427,12 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
         ..policy::VaultPolicyData::default()
     };
     vault_policy.judge.enabled = Some(judge_enabled);
-    let vault = Vault::init(&vault_dir, &passphrase, meta, vault_policy)?;
+    // Random data key (DEK) encrypts this vault; wrap it under the master so the
+    // single master passphrase opens it, then cache its session.
+    let dek = master::new_dek();
+    let vault = Vault::init_with_key(&vault_dir, dek, meta, vault_policy)?;
+    master.wrap_dek(&vault_dir, vault.key())?;
+    session::unlock_with_key(&vault_dir, vault.key().bytes())?;
 
     // Generate a recovery code and wrap the vault key under it. Shown once.
     let recovery_code = recovery::generate_code();
@@ -623,74 +618,97 @@ fn cmd_settings(vault_name: Option<&str>) -> Result<()> {
 }
 
 fn cmd_unlock(vault_name: Option<&str>) -> Result<()> {
-    let vault_dir = resolve_vault_dir(vault_name)?;
-    let meta = VaultMeta::load_unverified(&vault_dir)?;
-    let leaf = vault_leaf(&vault_dir);
+    // The unified unlock: open the master once, then unwrap every vault's data
+    // key from its keyslot and cache it — daemon memory if the daemon is up
+    // (no file written), else a 0600 file session. With a vault name, unlock
+    // just that one — still via the master.
+    let targets: Vec<PathBuf> = match vault_name {
+        Some(_) => vec![resolve_vault_dir(vault_name)?],
+        None => {
+            let dirs = list_vault_dirs();
+            if dirs.is_empty() {
+                println!("{}", style("No vaults yet. Run 'svault create'.").dim());
+                return Ok(());
+            }
+            dirs
+        }
+    };
 
-    let daemon_has = client::unlocked_vaults().iter().any(|n| n == &leaf);
-    if daemon_has || session::is_unlocked(&vault_dir) {
-        println!(
-            "{} Vault '{}' is already unlocked",
-            style("ok:").green(),
-            meta.name
-        );
-        return Ok(());
+    let master = ensure_master_unlocked(false)?;
+
+    let mut unlocked = 0usize;
+    let mut already = 0usize;
+    for dir in &targets {
+        let name = VaultMeta::load_unverified(dir)
+            .map(|m| m.name)
+            .unwrap_or_else(|_| vault_leaf(dir));
+        let leaf = vault_leaf(dir);
+
+        if client::unlocked_vaults().iter().any(|n| n == &leaf) || session::is_unlocked(dir) {
+            already += 1;
+            continue;
+        }
+        if !master::vault_has_keyslot(dir) {
+            eprintln!(
+                "{} '{}' is not wrapped under the master (no keyslot) — skipping",
+                style("warning:").yellow(),
+                name
+            );
+            continue;
+        }
+        let dek = match master.unwrap_dek(dir) {
+            Ok(k) => k,
+            Err(e) => {
+                eprintln!("{} '{}': {}", style("error:").red(), name, e);
+                continue;
+            }
+        };
+        // Prefer the daemon (key in memory, no file); else a 0600 file session.
+        match client::unlock_with_key(&leaf, dek.bytes()) {
+            Some(Ok(())) => {}
+            Some(Err(e)) => {
+                eprintln!("{} '{}': {}", style("error:").red(), name, e);
+                continue;
+            }
+            None => session::unlock_with_key(dir, dek.bytes())?,
+        }
+        usage::human(dir, "unlock", None);
+        unlocked += 1;
     }
 
-    let passphrase = prompt_secret(format!("  Passphrase for '{}'", meta.name))?;
-
-    // Prefer the daemon: it validates the passphrase and holds the derived key
-    // in memory — no .session file is written.
-    if let Some(res) = client::unlock(&leaf, &passphrase) {
-        res.map_err(|e| {
-            eprintln!("{} {}", style("error:").red(), e);
-            std::process::exit(1);
-            #[allow(unreachable_code)]
-            e
-        })?;
-        usage::human(&vault_dir, "unlock", None);
+    if unlocked == 0 && already > 0 {
         println!(
-            "{} Vault '{}' unlocked",
+            "{} {} vault(s) already unlocked",
+            style("ok:").green(),
+            already
+        );
+    } else {
+        let tail = if already > 0 {
+            format!(" ({already} already open)")
+        } else {
+            String::new()
+        };
+        println!(
+            "{} Unlocked {} vault(s){}",
             style("ok:").green().bold(),
-            meta.name
+            unlocked,
+            tail
         );
         println!(
             "{}",
-            style("  Key held by the daemon (in memory, no file written). Run 'svault lock' to clear it.").dim()
+            style("  Run 'svault lock --all' to clear them and the master session.").dim()
         );
-        return Ok(());
     }
-
-    // No daemon — fall back to the file session, caching the derived key
-    // (never the passphrase) at mode 0600.
-    let vault = Vault::open(&vault_dir, &passphrase).map_err(|e| {
-        eprintln!("{} {}", style("error:").red(), e);
-        std::process::exit(1);
-        #[allow(unreachable_code)]
-        e
-    })?;
-
-    session::unlock_with_key(&vault_dir, vault.key().bytes())?;
-    usage::human(&vault_dir, "unlock", None);
-
-    println!(
-        "{} Vault '{}' unlocked",
-        style("ok:").green().bold(),
-        meta.name
-    );
-    println!(
-        "{}",
-        style("  Session active — derived key cached in .svault/<name>/.session (mode 0600, not the passphrase)").dim()
-    );
-    println!("{}", style("  Run 'svault lock' to clear it.").dim());
     Ok(())
 }
 
 fn cmd_lock(lock_all: bool, vault_name: Option<&str>) -> Result<()> {
     if lock_all {
-        // Lock both the daemon's in-memory keys and any file sessions.
+        // Lock the daemon's in-memory keys, any file sessions, and the master
+        // session — so re-unlocking re-prompts the master passphrase.
         let daemon_count = client::lock_all().unwrap_or(0);
         let file_count = session::lock_all(std::path::Path::new(SVAULT_DIR))?;
+        master::lock_session()?;
         let count = daemon_count + file_count;
         if count == 0 {
             println!("{}", style("All vaults already locked.").dim());
@@ -1277,43 +1295,23 @@ fn cmd_recover(vault_name: Option<&str>, force: bool) -> Result<()> {
 
     let code = prompt_secret(format!("  Recovery code for '{}'", meta.name))?;
 
-    // Confirm the code opens this vault before asking for a new passphrase.
-    recovery::unlock_with_code(&vault_dir, &code).unwrap_or_else(|e| {
+    // The code unwraps the vault's data key directly (it never changed).
+    let dek = recovery::unlock_with_code(&vault_dir, &code).unwrap_or_else(|e| {
         eprintln!("{} {}", style("error:").red(), e);
         std::process::exit(1);
     });
 
-    println!(
-        "{} Recovery code accepted — set a new passphrase.",
-        style("ok:").green()
-    );
-    let new_pass = loop {
-        let p = prompt_secret("  New passphrase")?;
-        match passphrase::meets_floor(&p) {
-            Ok(()) => break p,
-            Err(e) if force => {
-                println!("{} {} (--force)", style("warning:").yellow(), e);
-                break p;
-            }
-            Err(e) => eprintln!("{} {}", style("error:").red(), e),
-        }
-    };
-    if let Some(w) = passphrase::check(&new_pass) {
-        println!("{} {}", style("warning:").yellow(), w.0);
-    }
-    let confirm = prompt_secret("  Confirm passphrase")?;
-    if *new_pass != *confirm {
-        eprintln!("{} Passphrases do not match", style("error:").red());
-        std::process::exit(1);
-    }
-
-    recovery::recover_and_rekey(&vault_dir, &code, &new_pass)?;
+    println!("{} Recovery code accepted.", style("ok:").green());
+    // Re-attach the vault to the master: wrap its recovered data key under the
+    // current master passphrase (set one now if there isn't one). The data key
+    // and vault.enc are untouched — no re-encryption, no new per-vault secret.
+    let master = ensure_master_unlocked(force)?;
+    master.wrap_dek(&vault_dir, &dek)?;
+    session::unlock_with_key(&vault_dir, dek.bytes())?;
     usage::human(&vault_dir, "recover", None);
-    // Drop any stale cached session (it holds the old, now-invalid key).
-    session::lock(&vault_dir).ok();
 
     println!(
-        "{} Passphrase reset for '{}'. Recovery code unchanged.",
+        "{} Vault '{}' is back under your master passphrase. Recovery code unchanged.",
         style("ok:").green().bold(),
         meta.name
     );
@@ -1385,43 +1383,49 @@ fn cmd_import(file: &str, name: Option<&str>) -> Result<()> {
     });
     let dir = base.join(&target);
 
-    // If the name changed, meta.name still says the bundle's original name and
-    // is HMAC-signed — re-sign it with the vault key so the directory and
-    // metadata agree. That needs the passphrase.
-    if renamed {
-        let passphrase = Zeroizing::new(
-            Password::new()
-                .with_prompt(format!(
-                    "  Passphrase for '{}' (to finish importing as '{}')",
-                    bundle.name, target
-                ))
-                .interact()
-                .unwrap_or_else(|e| {
-                    let _ = std::fs::remove_dir_all(&dir);
-                    eprintln!("{} {}", style("error:").red(), e);
-                    std::process::exit(1);
-                }),
-        );
-        match Vault::open(&dir, &passphrase) {
-            Ok(vault) => {
-                let mut meta = vault.meta.clone();
-                meta.name = target.clone();
-                if let Err(e) = vault.save_meta(&meta) {
-                    let _ = std::fs::remove_dir_all(&dir);
-                    eprintln!("{} could not finalize rename: {}", style("error:").red(), e);
-                    std::process::exit(1);
-                }
-            }
-            Err(_) => {
-                // Don't leave a half-imported vault whose name doesn't match.
+    // An imported vault is keyed by a random data key (no per-vault passphrase),
+    // and its machine-specific keyslot is *not* bundled — only `recovery.enc` is.
+    // So the recovery code is the way in. If the name changed we need the key to
+    // re-sign meta.name; either way we attach the vault to this machine's master
+    // so it opens with the master passphrase afterwards.
+    let attach = renamed || recovery::exists(&dir);
+    if attach {
+        if !recovery::exists(&dir) {
+            let _ = std::fs::remove_dir_all(&dir);
+            eprintln!(
+                "{} bundle has no recovery file — cannot bring '{}' under your master",
+                style("error:").red(),
+                target
+            );
+            std::process::exit(1);
+        }
+        let code = prompt_secret(format!(
+            "  Recovery code for '{}' (to attach it to your master)",
+            bundle.name
+        ))?;
+        let dek = recovery::unlock_with_code(&dir, &code).unwrap_or_else(|e| {
+            if renamed {
                 let _ = std::fs::remove_dir_all(&dir);
-                eprintln!(
-                    "{} wrong passphrase — import cancelled. Re-run to try again.",
-                    style("error:").red()
-                );
+            }
+            eprintln!("{} {}", style("error:").red(), e);
+            std::process::exit(1);
+        });
+        let vault = Vault::open_with_key(&dir, dek).unwrap_or_else(|e| {
+            eprintln!("{} {}", style("error:").red(), e);
+            std::process::exit(1);
+        });
+        if renamed {
+            let mut meta = vault.meta.clone();
+            meta.name = target.clone();
+            if let Err(e) = vault.save_meta(&meta) {
+                let _ = std::fs::remove_dir_all(&dir);
+                eprintln!("{} could not finalize rename: {}", style("error:").red(), e);
                 std::process::exit(1);
             }
         }
+        let master = ensure_master_unlocked(false)?;
+        master.wrap_dek(&dir, vault.key())?;
+        session::unlock_with_key(&dir, vault.key().bytes()).ok();
     }
 
     usage::human(&dir, "import", None);
@@ -1433,10 +1437,11 @@ fn cmd_import(file: &str, name: Option<&str>) -> Result<()> {
         SVAULT_DIR,
         target
     );
-    if !renamed {
+    if !attach {
         println!(
             "{}",
-            style("  Unlock it with its original passphrase (or 'svault recover').").dim()
+            style("  Run 'svault recover' with its recovery code to open it under your master.")
+                .dim()
         );
     }
     Ok(())
@@ -1506,6 +1511,26 @@ fn open_unlocked_or_prompt(vault_dir: &Path, vault_name: &str) -> Result<Vault> 
             let _ = session::lock(vault_dir); // stale/invalid cached key — drop it
         }
     }
+    // Unified unlock: unwrap this vault's data key via the master passphrase
+    // (prompting, or setting it on first run). No per-vault passphrase exists.
+    if master::vault_has_keyslot(vault_dir) {
+        let master = ensure_master_unlocked(false)?;
+        let dek = master.unwrap_dek(vault_dir).map_err(|e| {
+            eprintln!("{} {}", style("error:").red(), e);
+            std::process::exit(1);
+            #[allow(unreachable_code)]
+            e
+        })?;
+        session::unlock_with_key(vault_dir, dek.bytes()).ok();
+        return Vault::open_with_key(vault_dir, dek).map_err(|e| {
+            eprintln!("{} {}", style("error:").red(), e);
+            std::process::exit(1);
+            #[allow(unreachable_code)]
+            e
+        });
+    }
+    // Legacy fallback: a vault that still has its own passphrase (no keyslot).
+    let _ = vault_name;
     let passphrase = prompt_secret(format!("  Passphrase for '{vault_name}'"))?;
     Vault::open(vault_dir, &passphrase).map_err(|e| {
         eprintln!("{} {}", style("error:").red(), e);
@@ -1672,6 +1697,163 @@ fn unlock_keyring_interactive() -> Result<keyring::Keyring> {
     let kr = keyring::Keyring::open(&pass)?;
     keyring::unlock_session(kr.key().bytes())?;
     Ok(kr)
+}
+
+/// Prompt for a brand-new passphrase: enforce the entropy floor (unless
+/// `--force`), warn on weak-but-allowed input, and confirm. Shared by master
+/// init/rekey. Exits on a confirm mismatch.
+fn prompt_new_passphrase(label: &str, force: bool) -> Result<Zeroizing<String>> {
+    let passphrase = loop {
+        let p = prompt_secret(label.to_string())?;
+        match passphrase::meets_floor(&p) {
+            Ok(()) => break p,
+            Err(e) if force => {
+                println!("{} {} (--force)", style("warning:").yellow(), e);
+                break p;
+            }
+            Err(e) => eprintln!("{} {}", style("error:").red(), e),
+        }
+    };
+    if let Some(w) = passphrase::check(&passphrase) {
+        println!("{} {}", style("warning:").yellow(), w.0);
+    }
+    let confirm = prompt_secret(format!("{} (confirm)", label.trim()))?;
+    if *passphrase != *confirm {
+        eprintln!("{} passphrases do not match", style("error:").red());
+        std::process::exit(1);
+    }
+    Ok(passphrase)
+}
+
+/// Return an unlocked master, prompting as needed: reuse the cached session,
+/// else prompt the existing master passphrase, else (first run on this machine)
+/// set a new one. The single place the "first time → set a passphrase" flow
+/// lives, shared by `create` and `unlock`.
+fn ensure_master_unlocked(force: bool) -> Result<master::Master> {
+    if let Some(m) = master::open_from_session() {
+        return Ok(m);
+    }
+    if master::exists() {
+        let passphrase = prompt_secret("  Master passphrase")?;
+        let m = master::Master::open(&passphrase).map_err(|e| {
+            eprintln!("{} {}", style("error:").red(), e);
+            std::process::exit(1);
+            #[allow(unreachable_code)]
+            e
+        })?;
+        master::unlock_session(m.key_bytes())?;
+        return Ok(m);
+    }
+    println!();
+    println!(
+        "{}",
+        style("  No master passphrase yet — let's set one. It unlocks every vault.").cyan()
+    );
+    let passphrase = prompt_new_passphrase("  Master passphrase", force)?;
+    let m = master::Master::init(&passphrase)?;
+    master::unlock_session(m.key_bytes())?;
+    Ok(m)
+}
+
+/// `svault master <action>` — the single passphrase that unlocks every vault.
+fn cmd_master(action: &str, force: bool) -> Result<()> {
+    match action {
+        "init" => cmd_master_init(force),
+        "rekey" => cmd_master_rekey(force),
+        "status" => cmd_master_status(),
+        other => {
+            eprintln!(
+                "{} unknown master action '{}' — use init | rekey | status",
+                style("error:").red(),
+                other
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_master_init(force: bool) -> Result<()> {
+    if master::exists() {
+        println!(
+            "{} a master passphrase is already set — use 'svault master rekey' to change it",
+            style("ok:").green()
+        );
+        return Ok(());
+    }
+    println!(
+        "{}",
+        style("Set your master passphrase — one secret unlocks every vault.").bold()
+    );
+    let passphrase = prompt_new_passphrase("  Master passphrase", force)?;
+    let m = master::Master::init(&passphrase)?;
+    master::unlock_session(m.key_bytes())?;
+    println!(
+        "{} Master passphrase set. 'svault unlock' now opens all vaults with it.",
+        style("ok:").green().bold()
+    );
+    Ok(())
+}
+
+fn cmd_master_rekey(force: bool) -> Result<()> {
+    if !master::exists() {
+        eprintln!(
+            "{} no master passphrase set yet — run 'svault master init'",
+            style("error:").red()
+        );
+        std::process::exit(1);
+    }
+    let m = match master::open_from_session() {
+        Some(m) => m,
+        None => {
+            let current = prompt_secret("  Current master passphrase")?;
+            master::Master::open(&current).map_err(|e| {
+                eprintln!("{} {}", style("error:").red(), e);
+                std::process::exit(1);
+                #[allow(unreachable_code)]
+                e
+            })?
+        }
+    };
+    let new = prompt_new_passphrase("  New master passphrase", force)?;
+    m.rekey(&new)?;
+    master::unlock_session(m.key_bytes())?;
+    println!(
+        "{} Master passphrase changed. Every vault stays accessible (the data keys never moved).",
+        style("ok:").green().bold()
+    );
+    Ok(())
+}
+
+fn cmd_master_status() -> Result<()> {
+    if !master::exists() {
+        println!(
+            "{}",
+            style(
+                "· no master passphrase set — run 'svault master init' (or just 'svault create')"
+            )
+            .dim()
+        );
+        return Ok(());
+    }
+    let dirs = list_vault_dirs();
+    let wrapped = dirs.iter().filter(|d| master::vault_has_keyslot(d)).count();
+    println!("  {:<14} {}", style("Master").dim(), style("set").green());
+    println!(
+        "  {:<14} {}",
+        style("Session").dim(),
+        if master::is_unlocked() {
+            style("unlocked").green()
+        } else {
+            style("locked").yellow()
+        }
+    );
+    println!(
+        "  {:<14} {} of {} vault(s) wrapped under the master",
+        style("Vaults").dim(),
+        wrapped,
+        dirs.len()
+    );
+    Ok(())
 }
 
 /// `svault keyring <action>` — lifecycle of the encrypted keyring.

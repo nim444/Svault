@@ -41,24 +41,16 @@ mod imp {
         daemon::is_running(&base())
     }
 
-    /// Cache a vault's key in the daemon. `None` = no daemon (fall back).
-    ///
-    /// The key is derived (and the passphrase validated) **client-side** by
-    /// opening the vault here; only the 32-byte derived key crosses the socket,
-    /// never the passphrase (finding #3). A wrong passphrase fails locally and
-    /// never reaches the daemon.
-    pub fn unlock(vault: &str, passphrase: &str) -> Option<Result<()>> {
+    /// Cache an already-unwrapped vault key (the unified-unlock path). The DEK
+    /// was unwrapped from the vault's keyslot under the master key, so there is
+    /// no passphrase to validate — only the 32-byte key crosses the socket.
+    pub fn unlock_with_key(vault: &str, key: &[u8; 32]) -> Option<Result<()>> {
         if !available() {
             return None;
         }
-        let dir = base().join(vault);
-        let key_hex = match crate::vault::Vault::open(&dir, passphrase) {
-            Ok(v) => hex::encode(v.key().bytes()),
-            Err(e) => return Some(Err(e)),
-        };
         let req = Request::Unlock {
             vault: vault.to_string(),
-            key: key_hex,
+            key: hex::encode(key),
         };
         Some(match daemon::send(&base(), &req) {
             Ok(Response::Unlocked) => Ok(()),
@@ -158,7 +150,7 @@ mod imp {
     use super::{GatedOutcome, GetOutcome};
     use anyhow::Result;
 
-    pub fn unlock(_vault: &str, _passphrase: &str) -> Option<Result<()>> {
+    pub fn unlock_with_key(_vault: &str, _key: &[u8; 32]) -> Option<Result<()>> {
         None
     }
     pub fn lock(_vault: &str) -> Option<usize> {
@@ -184,4 +176,4 @@ mod imp {
     }
 }
 
-pub use imp::{get, get_gated, lock, lock_all, unlock, unlocked_vaults};
+pub use imp::{get, get_gated, lock, lock_all, unlock_with_key, unlocked_vaults};
