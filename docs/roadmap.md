@@ -1,11 +1,12 @@
 # Roadmap
 
-Svault is an AI-aware secret manager built CLI-first. The path to a stable
-release is deliberately sequenced: the command-line tool is fully hardened and
-independently reviewed **before** any GUI or AI-platform surface is added. A
-secret manager has to be trustworthy as a CLI first; a GUI and platform
-integrations only widen the attack surface, so they come after the core is
-proven.
+Svault is an AI-aware secret manager built CLI-first. The core is hardened and
+proven as a command-line tool before any wider surface is added — a secret
+manager has to be trustworthy at its base first. The remaining pre-1.0 work makes
+that proven core **agent-ready**: a single way to unlock, conditional access,
+anomaly defence that escalates to a human, and a local MCP surface. Each reuses
+the existing daemon choke point rather than introducing a new trust model. A
+desktop GUI and remote/cloud surfaces come only after 1.0.
 
 For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 (stack, step checklists, design notes), see [PLAN.md](../PLAN.md).
@@ -15,10 +16,12 @@ For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 | Foundation (0.1 – 0.8) | Shipped | Encrypted local vaults, interactive TUI, Unix daemon, and a multi-release security-hardening track |
 | Enforced policy + AI judge (0.9.0 – 0.9.1) | Shipped | The behavioural gate: daemon-enforced policy, peer-UID-stamped audit, and an AI judge for medium/high secrets — driven from both CLI and TUI |
 | Everything-encrypted-at-rest (0.9.2 – 0.9.3) | Shipped | The entire policy surface and all global config moved into encrypted stores; no plaintext config or key files remain |
-| Stable release (1.0.0) | Next | Final independent security review + distribution channels, then the first stable release |
+| Unified unlock (0.9.4 – 0.9.5) | Next | One master passphrase opens every vault and the keyring; a YubiKey touch as an equally-easy alternative — both as keyslots over a random data key |
+| Conditional access + escalation (0.9.6) | Planned | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
+| Agent surface — MCP (0.9.7) | Planned | A local MCP server over the existing daemon socket, `svault install`, and an agent-readable capability descriptor |
+| Stable release (1.0.0) | Target | Final independent security review of the full agent-ready surface + distribution channels, then the first stable release |
 | Desktop GUI (2.0.0) | Planned | Tauri vault manager + system tray |
-| AI-platform access (3.0.0) | Planned | MCP integration across Claude Code, Cursor, Copilot, VS Code, and Aider |
-| Cloud (optional) | Planned | Anomaly scoring via Claude Haiku — free tier + premium plans |
+| Remote / cloud (3.0.0+) | Planned | Remote MCP with OAuth, more platforms, and optional anomaly scoring via Claude Haiku |
 
 The project is intentionally staying on the 0.9.x line. **1.0.0 is reserved for
 when everything is finished and independently reviewed** — it is the target, not
@@ -89,30 +92,92 @@ read-the-files reconnaissance path entirely:
 - **Multiple named judges** — the judge is a registry, not a single global
   setting (`svault judge add | edit | remove | list | set-default | set-key`).
   Each judge has its own model, thresholds, free-text criteria, and encrypted
-  API key. A vault is assigned a judge by name (stored in its encrypted policy)
-  and falls back to the keyring default.
+  API key, and is fully managed from the TUI judge screen as well. A vault is
+  assigned a judge by name (stored in its encrypted policy) and falls back to the
+  keyring default.
 
 **Honest boundary:** the at-rest encryption closes the read-the-files
 reconnaissance path. It is **not** a sandbox against a hostile same-UID process
 that reads the unlocked daemon's memory directly — that remains inherent to the
 documented same-UID trust model.
 
-## Next — 1.0.0 (stable release)
+## Next — the agent-ready path (remaining 0.9.x)
+
+These releases turn the proven core into something that sits safely in front of
+day-to-day AI agents. They all extend existing primitives — the keyslot pattern
+already in `recovery.rs`, the encrypted policy in `vault.enc`, and the
+peer-UID-bonded daemon socket — rather than adding a new trust model.
+
+### Unified unlock — one master, or a YubiKey touch (0.9.4 – 0.9.5)
+
+Today each vault has its own passphrase and the keyring has another. That is too
+many secrets to type. The fix is the **keyslot model** (the same idea as LUKS or
+1Password):
+
+- Each store (every vault, the keyring) gets a **random data key** that encrypts
+  its contents. That data key is wrapped in one or more **keyslots** — a master
+  passphrase, a YubiKey, and the existing recovery code. Per-vault passphrases go
+  away.
+- **Any one slot opens the store.** Type the master passphrase **or** touch a
+  YubiKey — either is sufficient, not a two-step 2FA. `svault unlock` opens every
+  store at once; `svault lock` clears them.
+- New surface: `svault master init | rekey | status`, `svault master
+  enroll-yubikey`, and `svault master enroll-recovery`. Adding a YubiKey is just
+  adding a slot — no data is re-encrypted. Both the CLI and the TUI drive it.
+- The master passphrase and recovery slots are hardware-free and fully CI-tested.
+  The YubiKey slot (HMAC-SHA1 challenge-response, KeePassXC-style) is built behind
+  a trait with a fake responder for CI, and verified on real hardware before it
+  ships.
+
+### Conditional access + anomaly escalation (0.9.6)
+
+- **Conditional access** — a secret can carry conditions in its encrypted policy:
+  allowed time windows (e.g. only Fri 10:00–12:00 while CI runs) and required
+  caller(s). Outside the window the agent gets the same generic denial; it cannot
+  read the window to wait for it.
+- **Seal and escalate** — repeated denials, bursts, or out-of-window probing
+  against a medium/high secret **seal** it and raise an escalation that only a
+  human can clear (`svault approve`, a TUI pending-approvals view, and later a
+  notify channel). An agent can never unlock a vault or clear an escalation —
+  those are human-only by design, so a brute-force pattern is stopped and handed
+  to a person rather than ground down into a leak.
+
+### Agent surface — MCP (0.9.7)
+
+- `svault mcp` runs a local MCP server that is a thin client of the daemon over
+  the existing peer-UID-bonded `0600` socket. **MCP auth is same-UID plus the
+  daemon's unlocked state** — the server never sees the master passphrase or any
+  key. The human unlocks once; every `svault_get_secret(name, scope, reason,
+  caller)` call then runs through the same policy + judge gate, audited with the
+  peer UID and `source = mcp`. A locked or sealed vault returns "needs human
+  unlock / escalated" — the agent cannot open it.
+- `svault install` auto-detects the platform and writes its MCP config. **Claude
+  Code** also gets a PreToolUse hook (block direct `.env` reads) and a PostToolUse
+  hook (scan output for leaked credentials); **Cursor, Copilot, VS Code, Aider**
+  get the MCP server.
+- **Agent capability descriptor** (inspired by WorkOS `auth.md`) — a way for an
+  agent to learn *how to request* a secret (which fields to send, that high-tier
+  is human-only, how to ask for escalation) **without** revealing the decision
+  criteria (tiers, thresholds, judge criteria, and time windows stay encrypted).
+  Advertise the interface, never the policy an agent could game.
+
+## Target — 1.0.0 (stable release)
 
 1.0.0 is gated on two things, in this order:
 
-1. **A final independent security review of the enforced engine** — the explicit
-   gate. This includes adversarially testing the AI judge (prompt injection via
-   the `reason` field) and a decision on caller authorization, which is still
-   self-asserted (audit is peer-UID-stamped, so attribution is already honest):
-   accept that as the documented boundary, or add an OS-bound caller identity.
+1. **A final independent security review** of the full agent-ready surface — the
+   enforced engine (including adversarial judge testing for prompt injection via
+   the `reason` field, and the caller-authorization decision: self-asserted today
+   with peer-UID-stamped audit — accept as a documented boundary or add an
+   OS-bound caller identity), plus the new keyslot unlock model, the seal/escalate
+   path, and the MCP surface.
 2. **Distribution channels** — an install script, a Homebrew tap, and a Docker
    image (see below).
 
 A small backlog of accepted, non-blocking items remains: a Windows owner-only
 DACL, a tamper-evident audit sink, and tunable Argon2id parameters.
 
-## Planned
+## Planned (post-1.0)
 
 ### 2.0.0 — Desktop GUI (Tauri)
 
@@ -122,22 +187,15 @@ DACL, a tamper-evident audit sink, and tunable Argon2id parameters.
 - System tray icon and notifications; a lightweight single binary that works
   offline.
 
-### 3.0.0 — AI-platform access (MCP)
+### 3.0.0+ — Remote / cloud
 
-- `svault mcp` — an MCP server exposing `svault_get_secret(name, scope, reason)`.
-- `svault install` — auto-detect the platform and write its MCP config.
-- **Claude Code** — MCP server plus a PreToolUse hook (blocks direct `.env`
-  reads) and a PostToolUse hook (scans output for leaked credentials).
-- **Cursor, Copilot, VS Code, Aider** — MCP server.
-
-### Cloud tier (optional)
-
-The per-vault usage log (human and agent activity, no secret values) is the
-local foundation this builds on:
-
-- `api/score` — Claude Haiku scores request justifications for anomaly detection.
-- A personal plan with scored requests per month, and a team plan with a shared
-  audit dashboard and Slack alerts.
+- **Remote MCP with OAuth** — the fuller `auth.md` / MCP-OAuth story, so an agent
+  on another machine can be authenticated and authorized, not just a same-UID
+  local process.
+- **Cloud anomaly scoring (optional)** — the per-vault usage log (human and agent
+  activity, no secret values) is the local foundation; `api/score` has Claude
+  Haiku score request justifications, with a personal plan and a team plan
+  (shared audit dashboard, Slack alerts).
 
 ## Distribution
 
@@ -178,7 +236,8 @@ tabbed Install block (brew / curl / cargo / docker).
 
 ## Not planned (yet)
 
-- Additional unlock methods — YubiKey (HMAC-SHA1), TOTP, and Touch ID / Face ID.
+- TOTP and Touch ID / Face ID unlock (the keyslot model could host them later,
+  but they are not on the path to 1.0).
 - External backends (Vaultwarden, Infisical, AWS Secrets Manager).
 - Secret rotation.
 - Linux biometric support (needs libpam + libfprint).
