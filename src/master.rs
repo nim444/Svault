@@ -35,6 +35,9 @@ const MASTER_FILE: &str = "master.enc";
 const MASTER_SESSION: &str = ".master.session";
 /// Per-vault keyslot wrapping that vault's DEK under the master key.
 pub const VAULT_KEYSLOT: &str = "keyslot.enc";
+/// Keyslot wrapping the keyring's DEK under the master key. The keyring lives at
+/// `.svault/keyring.enc` (not in a vault subdir), so its slot needs its own name.
+pub const KEYRING_KEYSLOT: &str = "keyring.keyslot.enc";
 
 fn master_path() -> PathBuf {
     PathBuf::from(SVAULT_DIR).join(MASTER_FILE)
@@ -48,6 +51,10 @@ fn keyslot_path(vault_dir: &Path) -> PathBuf {
     vault_dir.join(VAULT_KEYSLOT)
 }
 
+fn keyring_keyslot_path() -> PathBuf {
+    PathBuf::from(SVAULT_DIR).join(KEYRING_KEYSLOT)
+}
+
 /// True once a master passphrase has been set on this machine.
 pub fn exists() -> bool {
     master_path().exists()
@@ -56,6 +63,11 @@ pub fn exists() -> bool {
 /// True if the given vault is wrapped under the master key (has a keyslot).
 pub fn vault_has_keyslot(vault_dir: &Path) -> bool {
     keyslot_path(vault_dir).exists()
+}
+
+/// True if the keyring is wrapped under the master key (has a keyslot).
+pub fn keyring_has_keyslot() -> bool {
+    keyring_keyslot_path().exists()
 }
 
 /// An open master: the master key (MK) held in memory, used to wrap/unwrap the
@@ -124,25 +136,51 @@ impl Master {
 
     /// Wrap a vault's data key under MK and write `<vault_dir>/keyslot.enc`.
     pub fn wrap_dek(&self, vault_dir: &Path, dek: &VaultKey) -> Result<()> {
+        self.wrap_dek_at(&keyslot_path(vault_dir), dek)
+    }
+
+    /// Unwrap a vault's data key from its keyslot using MK.
+    pub fn unwrap_dek(&self, vault_dir: &Path) -> Result<VaultKey> {
+        self.unwrap_dek_at(
+            &keyslot_path(vault_dir),
+            "vault is not wrapped under the master key (no keyslot.enc)",
+        )
+    }
+
+    /// Wrap the keyring's data key under MK and write `.svault/keyring.keyslot.enc`.
+    pub fn wrap_keyring_dek(&self, dek: &VaultKey) -> Result<()> {
+        self.wrap_dek_at(&keyring_keyslot_path(), dek)
+    }
+
+    /// Unwrap the keyring's data key from its keyslot using MK.
+    pub fn unwrap_keyring_dek(&self) -> Result<VaultKey> {
+        self.unwrap_dek_at(
+            &keyring_keyslot_path(),
+            "keyring is not wrapped under the master key (no keyring.keyslot.enc)",
+        )
+    }
+
+    /// Wrap a DEK under MK and write the keyslot at `path`.
+    fn wrap_dek_at(&self, path: &Path, dek: &VaultKey) -> Result<()> {
         let mut salt = [0u8; SALT_SIZE];
         rand::thread_rng().fill_bytes(&mut salt);
         // MK is 32 random bytes already — high entropy, so AES-GCM under MK
         // directly is enough (no second Argon2 pass). The salt is stored only to
         // keep the on-disk shape identical to the other keyslots.
         let blob = crypto::encrypt(&self.mk, &salt, dek.bytes())?;
-        crate::secfile::write_owner_only(&keyslot_path(vault_dir), &blob)?;
+        crate::secfile::write_owner_only(path, &blob)?;
         Ok(())
     }
 
-    /// Unwrap a vault's data key from its keyslot using MK.
-    pub fn unwrap_dek(&self, vault_dir: &Path) -> Result<VaultKey> {
-        let blob = std::fs::read(keyslot_path(vault_dir))
-            .map_err(|_| anyhow!("vault is not wrapped under the master key (no keyslot.enc)"))?;
+    /// Unwrap a DEK from the keyslot at `path` using MK. `missing` is the error
+    /// shown when the slot file does not exist.
+    fn unwrap_dek_at(&self, path: &Path, missing: &str) -> Result<VaultKey> {
+        let blob = std::fs::read(path).map_err(|_| anyhow!("{missing}"))?;
         let dek_bytes = crypto::decrypt(&self.mk, &blob)
-            .map_err(|_| anyhow!("could not unwrap the vault key with this master"))?;
+            .map_err(|_| anyhow!("could not unwrap the data key with this master"))?;
         let dek_bytes: [u8; 32] = dek_bytes
             .try_into()
-            .map_err(|_| anyhow!("keyslot.enc holds an unexpected key length"))?;
+            .map_err(|_| anyhow!("keyslot holds an unexpected key length"))?;
         Ok(VaultKey::from_bytes(dek_bytes))
     }
 }
@@ -247,6 +285,23 @@ mod tests {
         assert!(vault_has_keyslot(&vault_dir));
 
         let unwrapped = m.unwrap_dek(&vault_dir).unwrap();
+        assert_eq!(unwrapped.bytes(), &dek_bytes);
+
+        std::env::set_current_dir(prev).unwrap();
+    }
+
+    #[test]
+    fn keyring_dek_wraps_under_master_and_unwraps_back() {
+        let (_g, _tmp, prev) = in_temp_cwd();
+        let m = Master::init("Master!Pass#KR").unwrap();
+        crate::secfile::create_dir_owner_only(&PathBuf::from(SVAULT_DIR)).unwrap();
+
+        let dek = new_dek();
+        let dek_bytes = *dek.bytes();
+        m.wrap_keyring_dek(&dek).unwrap();
+        assert!(keyring_has_keyslot());
+
+        let unwrapped = m.unwrap_keyring_dek().unwrap();
         assert_eq!(unwrapped.bytes(), &dek_bytes);
 
         std::env::set_current_dir(prev).unwrap();

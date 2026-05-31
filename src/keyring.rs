@@ -2,18 +2,24 @@
 //!
 //! Everything that used to sit in the plaintext `.svault/config.yaml` and the
 //! plaintext `~/.config/svault/openrouter.key` lives here instead, AES-256-GCM
-//! encrypted at rest under its own passphrase (Argon2id, like a vault):
+//! encrypted at rest:
 //!
 //! - the **judge registry** — multiple named judges, each with its own model,
 //!   thresholds, free-text *criteria*, and **API key**;
 //! - the global judge on/off switch and the default judge;
 //! - operational knobs (lock timers, daemon max-connections, backend).
 //!
+//! Since 0.9.5 the keyring is a keyslot-backed store exactly like a vault: it has
+//! its own random 32-byte **data key (DEK)** that encrypts `keyring.enc`, and the
+//! DEK is wrapped under the master key in `.svault/keyring.keyslot.enc` (see
+//! [`crate::master`]). There is no separate keyring passphrase — the **master
+//! passphrase opens the keyring along with every vault**. Unlocking the master
+//! unwraps the DEK and caches it in a `0600` session (exactly like a vault); the
+//! daemon reads that session. Until unlocked the judge is off and the static tier
+//! rules apply.
+//!
 //! A same-UID agent can no longer read thresholds/criteria to tune a passing
-//! request, nor steal the API key from a plaintext file. The keyring is unlocked
-//! once per session (a `0600` session caches its derived key, exactly like a
-//! vault) and held in the daemon's memory; until unlocked the judge is off and
-//! the static tier rules apply.
+//! request, nor steal the API key from a plaintext file.
 //!
 //! Honest boundary: the keyring is exactly as protected as a vault — it closes
 //! the read-at-rest path, but is not a sandbox against a hostile same-UID
@@ -183,9 +189,11 @@ pub struct Keyring {
 }
 
 impl Keyring {
-    /// Create a fresh, empty keyring encrypted under `passphrase`. Errors if one
-    /// already exists (callers should check [`exists`] first).
-    pub fn init(passphrase: &str) -> Result<Self> {
+    /// Create a fresh, empty keyring encrypted under a random data key (DEK).
+    /// The caller wraps the DEK under the master (see
+    /// [`crate::master::Master::wrap_keyring_dek`]). Errors if one already exists
+    /// (callers should check [`exists`] first).
+    pub fn init_with_key(dek: VaultKey) -> Result<Self> {
         let path = keyring_path();
         if path.exists() {
             return Err(anyhow!("a keyring already exists at {}", path.display()));
@@ -195,27 +203,14 @@ impl Keyring {
                 crate::secfile::create_dir_owner_only(parent)?;
             }
         }
+        // The DEK is used directly; the salt is random filler kept only so the
+        // on-disk shape matches the rest of the format (decrypt ignores it).
         let mut salt = [0u8; SALT_SIZE];
         rand::thread_rng().fill_bytes(&mut salt);
-        let key = VaultKey::derive(passphrase, &salt)?;
         let data = KeyringData::default();
-        let blob = encrypt_data(&key, &salt, &data)?;
+        let blob = encrypt_data(&dek, &salt, &data)?;
         crate::secfile::write_owner_only(&path, &blob)?;
-        Ok(Self { data, key })
-    }
-
-    /// Open the keyring with its passphrase. Wrong passphrase → GCM tag fails.
-    pub fn open(passphrase: &str) -> Result<Self> {
-        let encrypted = std::fs::read(keyring_path())
-            .map_err(|_| anyhow!("no keyring yet — run 'svault keyring init'"))?;
-        if encrypted.len() < SALT_SIZE {
-            return Err(anyhow!("keyring.enc is too short — may be corrupted"));
-        }
-        let salt = &encrypted[..SALT_SIZE];
-        let key = VaultKey::derive(passphrase, salt)?;
-        let data =
-            decode_data(&key, &encrypted).map_err(|_| anyhow!("wrong keyring passphrase"))?;
-        Ok(Self { data, key })
+        Ok(Self { data, key: dek })
     }
 
     /// Open with an already-derived key (the daemon / session path).
@@ -242,17 +237,6 @@ impl Keyring {
             .expect("slice length checked against SALT_SIZE above");
         let blob = encrypt_data(&self.key, &salt, &self.data)?;
         crate::secfile::write_owner_only(&path, &blob)?;
-        Ok(())
-    }
-
-    /// Re-encrypt the keyring under a new passphrase (fresh salt + key).
-    pub fn rekey(&mut self, new_passphrase: &str) -> Result<()> {
-        let mut salt = [0u8; SALT_SIZE];
-        rand::thread_rng().fill_bytes(&mut salt);
-        let new_key = VaultKey::derive(new_passphrase, &salt)?;
-        let blob = encrypt_data(&new_key, &salt, &self.data)?;
-        crate::secfile::write_owner_only(&keyring_path(), &blob)?;
-        self.key = new_key;
         Ok(())
     }
 }
@@ -323,20 +307,22 @@ mod tests {
     }
 
     #[test]
-    fn init_open_roundtrips_and_wrong_passphrase_rejected() {
+    fn init_open_roundtrips_and_wrong_key_rejected() {
         let (_g, _tmp, prev) = in_temp_cwd();
 
-        let mut kr = Keyring::init("Keyring!Pass#1").unwrap();
+        let dek = crate::master::new_dek();
+        let dek_bytes = *dek.bytes();
+        let mut kr = Keyring::init_with_key(dek).unwrap();
         kr.data.judge_enabled = true;
         kr.data.default_judge = Some("strict".into());
         kr.data.judges.insert("strict".into(), sample_judge());
         kr.save().unwrap();
 
-        // Wrong passphrase is rejected.
-        assert!(Keyring::open("nope").is_err());
+        // A wrong key is rejected (the GCM tag fails).
+        assert!(Keyring::open_with_key(VaultKey::from_bytes([0u8; 32])).is_err());
 
-        // Right passphrase reads everything back.
-        let reopened = Keyring::open("Keyring!Pass#1").unwrap();
+        // The right key reads everything back.
+        let reopened = Keyring::open_with_key(VaultKey::from_bytes(dek_bytes)).unwrap();
         assert!(reopened.data.judge_enabled);
         assert_eq!(reopened.data.default_judge.as_deref(), Some("strict"));
         let j = reopened.data.judges.get("strict").unwrap();
@@ -350,7 +336,7 @@ mod tests {
     fn nothing_sensitive_is_readable_at_rest() {
         let (_g, _tmp, prev) = in_temp_cwd();
 
-        let mut kr = Keyring::init("Keyring!Pass#2").unwrap();
+        let mut kr = Keyring::init_with_key(crate::master::new_dek()).unwrap();
         kr.data.judges.insert("j".into(), sample_judge());
         kr.save().unwrap();
 
@@ -372,16 +358,26 @@ mod tests {
     }
 
     #[test]
-    fn rekey_changes_passphrase_keeps_data() {
+    fn keyring_stays_readable_after_master_rekey() {
         let (_g, _tmp, prev) = in_temp_cwd();
 
-        let mut kr = Keyring::init("Old!Keyring#1").unwrap();
+        // A keyring under a DEK that is wrapped under the master.
+        let m = crate::master::Master::init("Old!Master#1").unwrap();
+        let dek = crate::master::new_dek();
+        let dek_bytes = *dek.bytes();
+        let mut kr = Keyring::init_with_key(dek).unwrap();
         kr.data.judges.insert("j".into(), sample_judge());
         kr.save().unwrap();
-        kr.rekey("New!Keyring#2").unwrap();
+        m.wrap_keyring_dek(&VaultKey::from_bytes(dek_bytes))
+            .unwrap();
 
-        assert!(Keyring::open("Old!Keyring#1").is_err());
-        let r = Keyring::open("New!Keyring#2").unwrap();
+        // Changing the master passphrase never moves the DEK, so the same DEK
+        // still opens the keyring afterwards.
+        m.rekey("New!Master#2").unwrap();
+        let reopened = crate::master::Master::open("New!Master#2").unwrap();
+        let recovered = reopened.unwrap_keyring_dek().unwrap();
+        assert_eq!(recovered.bytes(), &dek_bytes);
+        let r = Keyring::open_with_key(recovered).unwrap();
         assert!(r.data.judges.contains_key("j"));
 
         std::env::set_current_dir(prev).unwrap();

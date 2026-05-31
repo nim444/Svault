@@ -622,11 +622,17 @@ fn cmd_unlock(vault_name: Option<&str>) -> Result<()> {
     // key from its keyslot and cache it — daemon memory if the daemon is up
     // (no file written), else a 0600 file session. With a vault name, unlock
     // just that one — still via the master.
+    // A keyring (with a master keyslot) is unlockable even with no vaults yet.
+    let keyring_unlockable = vault_name.is_none()
+        && keyring::exists()
+        && master::keyring_has_keyslot()
+        && !keyring::is_unlocked();
+
     let targets: Vec<PathBuf> = match vault_name {
         Some(_) => vec![resolve_vault_dir(vault_name)?],
         None => {
             let dirs = list_vault_dirs();
-            if dirs.is_empty() {
+            if dirs.is_empty() && !keyring_unlockable {
                 println!("{}", style("No vaults yet. Run 'svault create'.").dim());
                 return Ok(());
             }
@@ -676,11 +682,31 @@ fn cmd_unlock(vault_name: Option<&str>) -> Result<()> {
         unlocked += 1;
     }
 
+    // A full unlock also opens the keyring (judges + their keys) under the same
+    // master — so the AI judge is live without a second prompt.
+    let mut keyring_unlocked = false;
+    if keyring_unlockable {
+        match master.unwrap_keyring_dek() {
+            Ok(dek) => {
+                keyring::unlock_session(dek.bytes())?;
+                println!("{} keyring unlocked", style("ok:").green());
+                keyring_unlocked = true;
+            }
+            Err(e) => eprintln!("{} keyring: {}", style("warning:").yellow(), e),
+        }
+    }
+
     if unlocked == 0 && already > 0 {
         println!(
             "{} {} vault(s) already unlocked",
             style("ok:").green(),
             already
+        );
+    } else if targets.is_empty() && keyring_unlocked {
+        // Keyring-only unlock (no vaults yet) — the keyring line above says it all.
+        println!(
+            "{}",
+            style("  Run 'svault lock --all' to clear it and the master session.").dim()
         );
     } else {
         let tail = if already > 0 {
@@ -709,6 +735,7 @@ fn cmd_lock(lock_all: bool, vault_name: Option<&str>) -> Result<()> {
         let daemon_count = client::lock_all().unwrap_or(0);
         let file_count = session::lock_all(std::path::Path::new(SVAULT_DIR))?;
         master::lock_session()?;
+        keyring::lock_session()?;
         let count = daemon_count + file_count;
         if count == 0 {
             println!("{}", style("All vaults already locked.").dim());
@@ -1684,7 +1711,7 @@ struct JudgeTestArgs<'a> {
 }
 
 /// Open the keyring for a management command: reuse the cached session if it's
-/// unlocked, else prompt for the keyring passphrase and cache a session (so the
+/// unlocked, else unlock it via the master passphrase and cache a session (so the
 /// keyring is unlocked for the rest of this session, and the daemon sees it).
 fn unlock_keyring_interactive() -> Result<keyring::Keyring> {
     if !keyring::exists() {
@@ -1693,10 +1720,13 @@ fn unlock_keyring_interactive() -> Result<keyring::Keyring> {
     if let Some(kr) = keyring::open_from_session() {
         return Ok(kr);
     }
-    let pass = prompt_secret("  Keyring passphrase")?;
-    let kr = keyring::Keyring::open(&pass)?;
-    keyring::unlock_session(kr.key().bytes())?;
-    Ok(kr)
+    if !master::keyring_has_keyslot() {
+        anyhow::bail!("the keyring has no master keyslot — wipe .svault/ and re-init");
+    }
+    let master = ensure_master_unlocked(false)?;
+    let dek = master.unwrap_keyring_dek()?;
+    keyring::unlock_session(dek.bytes())?;
+    keyring::open_from_session().ok_or_else(|| anyhow::anyhow!("could not open the keyring"))
 }
 
 /// Prompt for a brand-new passphrase: enforce the entropy floor (unless
@@ -1862,11 +1892,17 @@ fn cmd_keyring(action: &str) -> Result<()> {
         "init" => cmd_keyring_init(),
         "unlock" => cmd_keyring_unlock(),
         "lock" => cmd_keyring_lock(),
-        "rekey" => cmd_keyring_rekey(),
+        "rekey" => {
+            println!(
+                "{} the keyring is opened by your master passphrase — change it with 'svault master rekey'",
+                style("note:").cyan()
+            );
+            Ok(())
+        }
         "status" => cmd_keyring_status(),
         other => {
             eprintln!(
-                "{} Unknown action '{}'. Use: init | unlock | lock | rekey | status",
+                "{} Unknown action '{}'. Use: init | unlock | lock | status",
                 style("error:").red(),
                 other
             );
@@ -1881,23 +1917,14 @@ fn cmd_keyring_init() -> Result<()> {
         std::process::exit(1);
     }
     println!("  The keyring holds your AI judges, their API keys, and operational");
-    println!("  config — AES-256-GCM encrypted under this passphrase, never plaintext.");
-    let passphrase = loop {
-        let p = prompt_secret("  Keyring passphrase")?;
-        match passphrase::meets_floor(&p) {
-            Ok(()) => break p,
-            Err(e) => eprintln!("{} {}", style("error:").red(), e),
-        }
-    };
-    let confirm = prompt_secret("  Confirm passphrase")?;
-    if *passphrase != *confirm {
-        eprintln!("{} passphrases do not match", style("error:").red());
-        std::process::exit(1);
-    }
-    let kr = keyring::Keyring::init(&passphrase)?;
+    println!("  config — AES-256-GCM encrypted at rest, opened by your master passphrase.");
+    let master = ensure_master_unlocked(false)?;
+    let dek = master::new_dek();
+    let kr = keyring::Keyring::init_with_key(dek)?;
+    master.wrap_keyring_dek(kr.key())?;
     keyring::unlock_session(kr.key().bytes())?;
     println!(
-        "{} keyring created and unlocked",
+        "{} keyring created and unlocked under your master passphrase",
         style("ok:").green().bold()
     );
     println!("  add a judge:   svault judge add <name>");
@@ -1913,9 +1940,16 @@ fn cmd_keyring_unlock() -> Result<()> {
         );
         std::process::exit(1);
     }
-    let pass = prompt_secret("  Keyring passphrase")?;
-    let kr = keyring::Keyring::open(&pass)?;
-    keyring::unlock_session(kr.key().bytes())?;
+    if !master::keyring_has_keyslot() {
+        eprintln!(
+            "{} the keyring predates the master and has no keyslot — wipe .svault/ and re-init",
+            style("error:").red()
+        );
+        std::process::exit(1);
+    }
+    let master = ensure_master_unlocked(false)?;
+    let dek = master.unwrap_keyring_dek()?;
+    keyring::unlock_session(dek.bytes())?;
     println!("{} keyring unlocked", style("ok:").green().bold());
     Ok(())
 }
@@ -1923,31 +1957,6 @@ fn cmd_keyring_unlock() -> Result<()> {
 fn cmd_keyring_lock() -> Result<()> {
     keyring::lock_session()?;
     println!("{} keyring locked", style("ok:").green().bold());
-    Ok(())
-}
-
-fn cmd_keyring_rekey() -> Result<()> {
-    if !keyring::exists() {
-        eprintln!("{} no keyring to rekey", style("error:").red());
-        std::process::exit(1);
-    }
-    let old = prompt_secret("  Current keyring passphrase")?;
-    let mut kr = keyring::Keyring::open(&old)?;
-    let new = loop {
-        let p = prompt_secret("  New keyring passphrase")?;
-        match passphrase::meets_floor(&p) {
-            Ok(()) => break p,
-            Err(e) => eprintln!("{} {}", style("error:").red(), e),
-        }
-    };
-    let confirm = prompt_secret("  Confirm new passphrase")?;
-    if *new != *confirm {
-        eprintln!("{} passphrases do not match", style("error:").red());
-        std::process::exit(1);
-    }
-    kr.rekey(&new)?;
-    keyring::unlock_session(kr.key().bytes())?;
-    println!("{} keyring passphrase changed", style("ok:").green().bold());
     Ok(())
 }
 

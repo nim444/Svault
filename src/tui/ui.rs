@@ -716,7 +716,7 @@ fn draw_judge(frame: &mut Frame, area: Rect, form: &JudgeForm) {
             Style::default().fg(theme::WARN),
         )));
         lines.push(Line::from(Span::styled(
-            "  Press enter to create it (its own passphrase encrypts your judges + keys).",
+            "  Press enter to create it — your master passphrase encrypts your judges + keys.",
             Style::default().fg(DIM),
         )));
     } else if !form.unlocked {
@@ -825,7 +825,7 @@ fn draw_judge(frame: &mut Frame, area: Rect, form: &JudgeForm) {
     // Sub-mode overlay on top.
     match &form.entry {
         Some(JudgeEntry::Passphrase(b)) => {
-            draw_masked_popup(frame, area, " Unlock keyring ", "  Keyring passphrase", b)
+            draw_masked_popup(frame, area, " Unlock keyring ", "  Master passphrase", b)
         }
         Some(JudgeEntry::Key { judge, buf }) => draw_masked_popup(
             frame,
@@ -905,7 +905,7 @@ fn draw_judge_init(frame: &mut Frame, area: Rect, init: &InitForm) {
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  Its own passphrase encrypts every judge and API key.",
+            "  No master passphrase yet — set one. It unlocks the keyring and every vault.",
             Style::default().fg(DIM),
         )),
         Line::from(""),
@@ -927,7 +927,7 @@ fn draw_judge_init(frame: &mut Frame, area: Rect, init: &InitForm) {
     frame.render_widget(Clear, popup);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Create keyring ")
+        .title(" Set master passphrase ")
         .border_style(Style::default().fg(CYAN));
     frame.render_widget(
         Paragraph::new(lines)

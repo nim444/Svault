@@ -80,13 +80,13 @@ vault's `allow_agent` / `rate_limit`.
 ### 3. Turn on the AI judge (optional, for medium/high)
 
 There is no plaintext config and no key file. Judges live in the AES-256-GCM
-**encrypted keyring** (`.svault/keyring.enc`) under its own passphrase. You can
-define **multiple named judges**, each with its own model, thresholds, free-text
-**criteria**, and API key. Create the keyring, add a judge, enable the judge
-globally, then unlock — no secret is touched:
+**encrypted keyring** (`.svault/keyring.enc`), opened by your **master passphrase**
+(no separate keyring passphrase). You can define **multiple named judges**, each
+with its own model, thresholds, free-text **criteria**, and API key. Create the
+keyring, add a judge, enable the judge globally, then unlock — no secret is touched:
 
 ```bash
-svault keyring init          # set the keyring passphrase (one-time)
+svault keyring init          # create the keyring under your master (one-time)
 svault judge add strict      # prompts: model, thresholds, criteria, then the key (hidden)
 svault judge enable          # flip the global on/off switch (on)
 svault keyring unlock        # caches a 0600 session key so the judge is live this session
