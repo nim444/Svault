@@ -152,10 +152,12 @@ code. CLI + TUI, plus 5 keyslot unit tests. Generalises `recovery.rs`'s
 wrap/unwrap and reuses the existing `0600` session caching (which already holds a
 raw key, not the passphrase).
 
-*Next (0.9.5 — YubiKey slot):* `svault master enroll-yubikey` adds a YubiKey
-keyslot over the same MK (HMAC-SHA1 challenge-response, KeePassXC-style) — purely
-additive, no data re-encrypted. Built behind a trait with a fake responder for CI
-and verified on real hardware before it ships.
+*Next (0.9.5):* two additive pieces over the same MK — (1) bring the **keyring**
+(the optional AI-judge config store, which still has its own passphrase in 0.9.4)
+under the master, so there is truly one secret to type; and (2) a **YubiKey
+keyslot** (`svault master enroll-yubikey`, HMAC-SHA1 challenge-response,
+KeePassXC-style) — no data re-encrypted, built behind a trait with a fake
+responder for CI and verified on real hardware before it ships.
 
 **Conditional access + anomaly escalation (0.9.6).** Add **conditions** to a
 secret's encrypted policy — allowed time windows (e.g. only Fri 10:00–12:00 while

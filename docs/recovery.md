@@ -56,7 +56,7 @@ svault import <FILE> [--name NEW]     # restore; --name to import under a chosen
 
 A bundle is still a **full backup** (it carries the wrapped recovery key), so it shouldn't be committed to a repo. On export, Svault automatically adds `*.svault-export.json` to a `.gitignore` in the output directory (appending to an existing one, never overwriting) so you can't push a bundle by mistake.
 
-`import` verifies the checksum, then recreates `.svault/<name>/`. The restored vault opens with its original passphrase — or with `svault recover` if the bundle carried a `recovery.enc`.
+`import` verifies the checksum, then recreates `.svault/<name>/`. Because a vault's keyslot is specific to the machine that made it, the bundle carries `recovery.enc` (not `keyslot.enc`), so `import` asks for the **recovery code** to bring the vault under *this* machine's master passphrase. After that it opens like any other vault with your master.
 
 If a vault of that name already exists (e.g. you're re-importing your own backup onto the same machine), import **doesn't error** — it picks a free name by appending a suffix (`TUI-Vault` → `TUI-Vault-2`), or you can pass `--name <NEW>` to choose one. Because the vault name is part of the HMAC-signed `meta.yaml`, importing under a different name re-signs it, so Svault asks for the passphrase once to finish. (A clean import under the original name needs no passphrase.)
 

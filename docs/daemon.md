@@ -37,7 +37,7 @@ If no daemon is running, every command behaves exactly as before (file session).
 
 You can also control it from the [interactive TUI](tui.md): the header shows a `daemon running` / `daemon off` indicator, and pressing `d` on the vault list starts it if it's off or stops it if it's running.
 
-> **Note:** the daemon accelerates the **read** path (`unlock`, `get`, `secret get`, `lock`, `status`). Mutations — `secret add`, `secret list`, `secret remove` — still prompt for the passphrase, because the daemon deliberately holds only the key, not the passphrase, and does not expose write operations over the socket.
+> **Note:** the daemon accelerates the **read** path (`unlock`, `get`, `secret get`, `lock`, `status`). Mutations — `secret add`, `secret list`, `secret remove` — still prompt for the master passphrase (to unwrap the vault's data key), because the daemon deliberately holds only the key, not the passphrase, and does not expose write operations over the socket.
 
 ## Auto-lock
 

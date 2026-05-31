@@ -34,6 +34,11 @@ and (on first run) setting the master passphrase — it no longer asks for a
 per-vault passphrase. `--force` skips the passphrase strength floor for scripted
 use. On success it prints a one-time recovery code (see [Recovery](recovery.md)).
 
+> The **keyring** — the optional store for the AI judge's config and API keys —
+> still has its own passphrase (`svault keyring init | unlock`) in this release;
+> bringing it under the master is the next step. Most setups never need it unless
+> they enable the AI judge.
+
 ## Secrets
 
 ```bash
@@ -266,15 +271,15 @@ $ svault secret get DATABASE_URL -v billing-api   # same passphrase still works
 
 ## 5. Recover a vault after losing the passphrase
 
-Use the recovery code you saved at create time. It resets the passphrase; the
+Use the recovery code you saved at create time. It unwraps the vault's data key
+and re-attaches the vault to your master passphrase — no re-encryption, and the
 recovery code itself stays the same.
 
 ```bash
 $ svault recover billing-api
-  Recovery code: ____  (paste the code you saved)
-  New passphrase: ____
-  Confirm:        ____
-ok: passphrase reset for 'billing-api'. Recovery code unchanged.
+  Recovery code: ____   (paste the code you saved)
+  Master passphrase: ____   (set one if this machine has none yet)
+ok: 'billing-api' is back under your master passphrase. Recovery code unchanged.
 ```
 
 ## 6. Tighten access on an existing vault

@@ -129,10 +129,12 @@ no longer asks for a per-vault passphrase; `unlock` opens every vault at once;
 recovery code. Both the CLI and the TUI drive it. Generalises the wrap/unwrap
 already in `recovery.rs`.
 
-**Next (0.9.5 — YubiKey slot):** `svault master enroll-yubikey` adds a YubiKey
-keyslot over the same master key (HMAC-SHA1 challenge-response, KeePassXC-style) —
-purely additive, no data re-encrypted. Built behind a trait with a fake responder
-for CI and verified on real hardware before it ships.
+**Next (0.9.5):** two additive pieces over the same master key — (1) bring the
+**keyring** (the optional AI-judge config store, which still has its own
+passphrase) under the master, so there is truly one secret; and (2) a **YubiKey
+keyslot** via `svault master enroll-yubikey` (HMAC-SHA1 challenge-response,
+KeePassXC-style) — no data re-encrypted, built behind a trait with a fake
+responder for CI and verified on real hardware before it ships.
 
 ### Conditional access + anomaly escalation (0.9.6)
 

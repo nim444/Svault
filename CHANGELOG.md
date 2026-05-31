@@ -9,13 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.4] - 2026-05-31
 
-The **unified-unlock** release. Until now every vault had its own passphrase and
-the keyring had a separate one — up to N+1 secrets to type. 0.9.4 replaces that
-with a single **master passphrase** using a keyslot model: each store gets a
-random data key (DEK) that encrypts it, and that DEK is wrapped under the master.
-Unlock once and every vault opens. This is the foundation for additional unlock
-methods (a YubiKey touch, the recovery code) — each is just another keyslot over
-the same key, so any one of them opens everything.
+The **unified-unlock** release. Until now every vault had its own passphrase — up
+to N secrets to type. 0.9.4 replaces the per-vault passphrases with a single
+**master passphrase** using a keyslot model: each vault gets a random data key
+(DEK) that encrypts it, and that DEK is wrapped under the master. Unlock once and
+every vault opens. This is the foundation for additional unlock methods (a YubiKey
+touch, the recovery code) — each is just another keyslot over the same key, so any
+one of them opens everything.
+
+The keyring (the optional store for the AI judge's config and API keys) still has
+its own passphrase in this release; bringing it under the master is the next step
+in the unified-unlock milestone.
 
 **No migration (pre-release):** the on-disk model changed. Delete any old
 `.svault/` and recreate your vaults — `svault master init`, then `svault create`.
