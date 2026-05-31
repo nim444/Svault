@@ -390,20 +390,110 @@ impl ClassifyForm {
     }
 }
 
-/// One judge as shown in the manager list.
+/// One judge as shown in the manager list (and its detail view).
 pub struct JudgeRow {
     pub name: String,
     pub model: String,
+    pub base_url: String,
+    pub timeout_secs: u64,
     pub allow: u8,
     pub high: u8,
+    pub criteria: String,
     pub has_key: bool,
 }
 
-/// A masked sub-mode in the judge screen: unlocking the keyring, or typing a
-/// judge's API key.
+/// Create a brand-new keyring from the TUI (own passphrase + confirm).
+pub struct InitForm {
+    pub pass: String,
+    pub confirm: String,
+    pub focus: usize, // 0 passphrase · 1 confirm
+    pub error: Option<String>,
+}
+
+impl InitForm {
+    fn new() -> Self {
+        Self {
+            pass: String::new(),
+            confirm: String::new(),
+            focus: 0,
+            error: None,
+        }
+    }
+}
+
+/// Add or edit one judge's fields. `original` is `None` when adding, or the
+/// prior name when editing (rename-safe). The API key is set separately (`k`),
+/// so it is preserved across an edit.
+pub struct JudgeEditForm {
+    pub original: Option<String>,
+    pub name: String,
+    pub model: String,
+    pub base_url: String,
+    pub timeout: String,
+    pub allow: String,
+    pub high: String,
+    pub criteria: String,
+    pub focus: usize, // 0 name · 1 model · 2 url · 3 timeout · 4 allow · 5 high · 6 criteria
+    pub error: Option<String>,
+}
+
+impl JudgeEditForm {
+    const FIELDS: usize = 7;
+
+    fn add() -> Self {
+        let d = crate::keyring::JudgeDef::default();
+        Self {
+            original: None,
+            name: String::new(),
+            model: d.model,
+            base_url: d.base_url,
+            timeout: d.timeout_secs.to_string(),
+            allow: d.allow_threshold.to_string(),
+            high: d.high_threshold.to_string(),
+            criteria: String::new(),
+            focus: 0,
+            error: None,
+        }
+    }
+
+    fn edit(name: &str, d: &crate::keyring::JudgeDef) -> Self {
+        Self {
+            original: Some(name.to_string()),
+            name: name.to_string(),
+            model: d.model.clone(),
+            base_url: d.base_url.clone(),
+            timeout: d.timeout_secs.to_string(),
+            allow: d.allow_threshold.to_string(),
+            high: d.high_threshold.to_string(),
+            criteria: d.criteria.clone(),
+            focus: 0,
+            error: None,
+        }
+    }
+
+    /// The string field currently under the cursor.
+    fn field_mut(&mut self) -> Option<&mut String> {
+        match self.focus {
+            0 => Some(&mut self.name),
+            1 => Some(&mut self.model),
+            2 => Some(&mut self.base_url),
+            3 => Some(&mut self.timeout),
+            4 => Some(&mut self.allow),
+            5 => Some(&mut self.high),
+            6 => Some(&mut self.criteria),
+            _ => None,
+        }
+    }
+}
+
+/// A sub-mode overlaid on the judge screen: unlocking or creating the keyring,
+/// typing a judge's API key, adding/editing a judge, or viewing one's detail.
 pub enum JudgeEntry {
     Passphrase(String),
+    Init(InitForm),
     Key { judge: String, buf: String },
+    Edit(JudgeEditForm),
+    View(String),
 }
 
 /// The AI-judge manager (`shift-J`), backed by the encrypted [`crate::keyring`].
@@ -438,8 +528,11 @@ impl JudgeForm {
                     .map(|(n, d)| JudgeRow {
                         name: n.clone(),
                         model: d.model.clone(),
+                        base_url: d.base_url.clone(),
+                        timeout_secs: d.timeout_secs,
                         allow: d.allow_threshold,
                         high: d.high_threshold,
+                        criteria: d.criteria.clone(),
                         has_key: !d.api_key.trim().is_empty(),
                     })
                     .collect();
@@ -643,7 +736,19 @@ impl App {
             Screen::Judge(form) => match form.entry.as_mut() {
                 Some(JudgeEntry::Passphrase(buf)) => buf.push_str(&text),
                 Some(JudgeEntry::Key { buf, .. }) => buf.push_str(&text),
-                None => {}
+                Some(JudgeEntry::Init(init)) => {
+                    if init.focus == 0 {
+                        init.pass.push_str(&text);
+                    } else {
+                        init.confirm.push_str(&text);
+                    }
+                }
+                Some(JudgeEntry::Edit(ed)) => {
+                    if let Some(f) = ed.field_mut() {
+                        f.push_str(&text);
+                    }
+                }
+                Some(JudgeEntry::View(_)) | None => {}
             },
             _ => {}
         }
@@ -1845,67 +1950,44 @@ impl App {
     // ── Judge management screen ─────────────────────────────────────────────────
 
     fn key_judge(&mut self, mut form: JudgeForm, key: KeyEvent) -> Result<()> {
-        // Masked sub-mode: unlocking the keyring, or typing a judge's API key.
+        // Overlaid sub-mode: unlock/create keyring, key entry, add/edit, view.
         if let Some(entry) = form.entry.take() {
-            match entry {
-                JudgeEntry::Passphrase(mut buf) => match key.code {
-                    KeyCode::Esc => {
-                        self.screen = Screen::List;
-                        return Ok(());
-                    }
-                    KeyCode::Backspace => {
-                        buf.pop();
-                        form.entry = Some(JudgeEntry::Passphrase(buf));
-                    }
-                    KeyCode::Char(c) => {
-                        buf.push(c);
-                        form.entry = Some(JudgeEntry::Passphrase(buf));
-                    }
-                    KeyCode::Enter => match crate::keyring::Keyring::open(&buf) {
-                        Ok(kr) => {
-                            let _ = crate::keyring::unlock_session(kr.key().bytes());
-                            form = JudgeForm::load();
-                            self.set_status(MsgKind::Ok, "Keyring unlocked");
+            return match entry {
+                JudgeEntry::Passphrase(buf) => self.key_judge_passphrase(form, buf, key),
+                JudgeEntry::Init(init) => self.key_judge_init(form, init, key),
+                JudgeEntry::Key { judge, buf } => self.key_judge_key(form, judge, buf, key),
+                JudgeEntry::Edit(ed) => self.key_judge_edit(form, ed, key),
+                JudgeEntry::View(name) => {
+                    // `e` jumps to the editor; any other key closes the view.
+                    if key.code == KeyCode::Char('e') {
+                        if let Some(ed) = crate::keyring::open_from_session().and_then(|kr| {
+                            kr.data
+                                .judges
+                                .get(&name)
+                                .map(|d| JudgeEditForm::edit(&name, d))
+                        }) {
+                            form.entry = Some(JudgeEntry::Edit(ed));
                         }
-                        Err(_) => form.error = Some("wrong keyring passphrase".into()),
-                    },
-                    _ => form.entry = Some(JudgeEntry::Passphrase(buf)),
-                },
-                JudgeEntry::Key { judge, mut buf } => match key.code {
-                    KeyCode::Esc => {}
-                    KeyCode::Backspace => {
-                        buf.pop();
-                        form.entry = Some(JudgeEntry::Key { judge, buf });
                     }
-                    KeyCode::Char(c) => {
-                        buf.push(c);
-                        form.entry = Some(JudgeEntry::Key { judge, buf });
-                    }
-                    KeyCode::Enter => self.set_judge_key(&mut form, &judge, &buf),
-                    _ => form.entry = Some(JudgeEntry::Key { judge, buf }),
-                },
-            }
-            self.screen = Screen::Judge(form);
-            return Ok(());
+                    self.screen = Screen::Judge(form);
+                    Ok(())
+                }
+            };
         }
 
         if key.code == KeyCode::Esc {
             self.screen = Screen::List;
             return Ok(());
         }
-        // Locked: Enter starts the unlock prompt (if a keyring exists); other
-        // keys do nothing until it's unlocked.
+        // Locked: Enter unlocks an existing keyring, or creates one if none yet.
         if !form.unlocked {
             if key.code == KeyCode::Enter {
-                if form.created {
-                    form.entry = Some(JudgeEntry::Passphrase(String::new()));
-                    form.error = None;
+                form.entry = Some(if form.created {
+                    JudgeEntry::Passphrase(String::new())
                 } else {
-                    self.set_status(
-                        MsgKind::Info,
-                        "No keyring yet — create it with: svault keyring init",
-                    );
-                }
+                    JudgeEntry::Init(InitForm::new())
+                });
+                form.error = None;
             }
             self.screen = Screen::Judge(form);
             return Ok(());
@@ -1925,7 +2007,31 @@ impl App {
             {
                 self.toggle_judge_enabled(&mut form);
             }
-            KeyCode::Enter | KeyCode::Char('k') if form.selected_judge().is_some() => {
+            KeyCode::Char('a') => {
+                form.entry = Some(JudgeEntry::Edit(JudgeEditForm::add()));
+                form.error = None;
+            }
+            KeyCode::Char('e') if form.selected_judge().is_some() => {
+                let name = form.selected_judge().unwrap().name.clone();
+                match crate::keyring::open_from_session().and_then(|kr| {
+                    kr.data
+                        .judges
+                        .get(&name)
+                        .map(|d| JudgeEditForm::edit(&name, d))
+                }) {
+                    Some(ed) => {
+                        form.entry = Some(JudgeEntry::Edit(ed));
+                        form.error = None;
+                    }
+                    None => form.error = Some("keyring is locked".into()),
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('v') if form.selected_judge().is_some() => {
+                let name = form.selected_judge().unwrap().name.clone();
+                form.entry = Some(JudgeEntry::View(name));
+                form.error = None;
+            }
+            KeyCode::Char('k') if form.selected_judge().is_some() => {
                 let name = form.selected_judge().unwrap().name.clone();
                 form.entry = Some(JudgeEntry::Key {
                     judge: name,
@@ -1945,11 +2051,270 @@ impl App {
                 let name = form.selected_judge().unwrap().name.clone();
                 self.remove_judge(&mut form, &name);
             }
-            KeyCode::Char('a') => self.set_status(
-                MsgKind::Info,
-                "Add/edit a judge (model, criteria, thresholds) with: svault judge add <name>",
-            ),
             _ => {}
+        }
+        self.screen = Screen::Judge(form);
+        Ok(())
+    }
+
+    /// Unlock an existing keyring from a typed passphrase.
+    fn key_judge_passphrase(
+        &mut self,
+        mut form: JudgeForm,
+        mut buf: String,
+        key: KeyEvent,
+    ) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.screen = Screen::List;
+                return Ok(());
+            }
+            KeyCode::Backspace => {
+                buf.pop();
+                form.entry = Some(JudgeEntry::Passphrase(buf));
+            }
+            KeyCode::Char(c) => {
+                buf.push(c);
+                form.entry = Some(JudgeEntry::Passphrase(buf));
+            }
+            KeyCode::Enter => match crate::keyring::Keyring::open(&buf) {
+                Ok(kr) => {
+                    let _ = crate::keyring::unlock_session(kr.key().bytes());
+                    form = JudgeForm::load();
+                    self.set_status(MsgKind::Ok, "Keyring unlocked");
+                }
+                Err(_) => form.error = Some("wrong keyring passphrase".into()),
+            },
+            _ => form.entry = Some(JudgeEntry::Passphrase(buf)),
+        }
+        self.screen = Screen::Judge(form);
+        Ok(())
+    }
+
+    /// Create a brand-new keyring (passphrase + confirm) without leaving the TUI.
+    fn key_judge_init(
+        &mut self,
+        mut form: JudgeForm,
+        mut init: InitForm,
+        key: KeyEvent,
+    ) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.screen = Screen::List;
+                return Ok(());
+            }
+            KeyCode::Tab | KeyCode::Down | KeyCode::Up | KeyCode::BackTab => {
+                init.focus ^= 1;
+            }
+            KeyCode::Backspace => {
+                if init.focus == 0 {
+                    init.pass.pop();
+                } else {
+                    init.confirm.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if init.focus == 0 {
+                    init.pass.push(c);
+                } else {
+                    init.confirm.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                if init.focus == 0 {
+                    init.focus = 1;
+                } else {
+                    return self.submit_keyring_init(form, init);
+                }
+            }
+            _ => {}
+        }
+        form.entry = Some(JudgeEntry::Init(init));
+        self.screen = Screen::Judge(form);
+        Ok(())
+    }
+
+    fn submit_keyring_init(&mut self, mut form: JudgeForm, mut init: InitForm) -> Result<()> {
+        if let Err(e) = crate::passphrase::meets_floor(&init.pass) {
+            init.error = Some(e);
+            init.focus = 0;
+        } else if init.pass != init.confirm {
+            init.error = Some("passphrases do not match".into());
+            init.focus = 1;
+        } else {
+            match crate::keyring::Keyring::init(&init.pass) {
+                Ok(kr) => {
+                    let _ = crate::keyring::unlock_session(kr.key().bytes());
+                    form = JudgeForm::load();
+                    self.set_status(MsgKind::Ok, "Keyring created and unlocked");
+                    self.screen = Screen::Judge(form);
+                    return Ok(());
+                }
+                Err(e) => init.error = Some(format!("could not create keyring: {e}")),
+            }
+        }
+        form.entry = Some(JudgeEntry::Init(init));
+        self.screen = Screen::Judge(form);
+        Ok(())
+    }
+
+    /// Type (or clear) the selected judge's API key.
+    fn key_judge_key(
+        &mut self,
+        mut form: JudgeForm,
+        judge: String,
+        mut buf: String,
+        key: KeyEvent,
+    ) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {}
+            KeyCode::Backspace => {
+                buf.pop();
+                form.entry = Some(JudgeEntry::Key { judge, buf });
+            }
+            KeyCode::Char(c) => {
+                buf.push(c);
+                form.entry = Some(JudgeEntry::Key { judge, buf });
+            }
+            KeyCode::Enter => self.set_judge_key(&mut form, &judge, &buf),
+            _ => form.entry = Some(JudgeEntry::Key { judge, buf }),
+        }
+        self.screen = Screen::Judge(form);
+        Ok(())
+    }
+
+    /// Add or edit a judge's fields. Enter saves; Esc cancels.
+    fn key_judge_edit(
+        &mut self,
+        mut form: JudgeForm,
+        mut ed: JudgeEditForm,
+        key: KeyEvent,
+    ) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.screen = Screen::Judge(form);
+                return Ok(());
+            }
+            KeyCode::Enter => return self.submit_judge_edit(form, ed),
+            KeyCode::Tab | KeyCode::Down => ed.focus = (ed.focus + 1) % JudgeEditForm::FIELDS,
+            KeyCode::BackTab | KeyCode::Up => {
+                ed.focus = (ed.focus + JudgeEditForm::FIELDS - 1) % JudgeEditForm::FIELDS
+            }
+            KeyCode::Backspace => {
+                if let Some(f) = ed.field_mut() {
+                    f.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Some(f) = ed.field_mut() {
+                    f.push(c);
+                }
+            }
+            _ => {}
+        }
+        form.entry = Some(JudgeEntry::Edit(ed));
+        self.screen = Screen::Judge(form);
+        Ok(())
+    }
+
+    /// Validate and persist an add/edit. On error, the entry stays open with the
+    /// message; on success the registry is reloaded and the saved judge focused.
+    fn submit_judge_edit(&mut self, mut form: JudgeForm, mut ed: JudgeEditForm) -> Result<()> {
+        macro_rules! reject {
+            ($focus:expr, $msg:expr) => {{
+                ed.error = Some($msg);
+                ed.focus = $focus;
+                form.entry = Some(JudgeEntry::Edit(ed));
+                self.screen = Screen::Judge(form);
+                return Ok(());
+            }};
+        }
+
+        let name = ed.name.trim().to_string();
+        if name.is_empty() {
+            reject!(0, "name is required".into());
+        }
+        if ed.model.trim().is_empty() {
+            reject!(1, "model is required".into());
+        }
+        let timeout = match ed.timeout.trim().parse::<u64>() {
+            Ok(v) if v > 0 => v,
+            _ => reject!(3, "timeout must be a positive number of seconds".into()),
+        };
+        let allow = match ed.allow.trim().parse::<u8>() {
+            Ok(v) if v <= 100 => v,
+            _ => reject!(4, "allow threshold must be 0–100".into()),
+        };
+        let high = match ed.high.trim().parse::<u8>() {
+            Ok(v) if v <= 100 => v,
+            _ => reject!(5, "high threshold must be 0–100".into()),
+        };
+
+        let Some(mut kr) = crate::keyring::open_from_session() else {
+            form.error = Some("keyring is locked".into());
+            self.screen = Screen::Judge(form);
+            return Ok(());
+        };
+
+        let collides = match &ed.original {
+            Some(orig) => orig != &name && kr.data.judges.contains_key(&name),
+            None => kr.data.judges.contains_key(&name),
+        };
+        if collides {
+            reject!(0, format!("a judge named '{name}' already exists"));
+        }
+
+        // Preserve the existing key across an edit (it is set separately).
+        let prior_key = ed
+            .original
+            .as_ref()
+            .and_then(|o| kr.data.judges.get(o))
+            .map(|d| d.api_key.clone())
+            .unwrap_or_default();
+
+        // On rename, drop the old entry and carry the default pointer over.
+        if let Some(orig) = &ed.original {
+            if orig != &name {
+                kr.data.judges.remove(orig);
+                if kr.data.default_judge.as_deref() == Some(orig.as_str()) {
+                    kr.data.default_judge = Some(name.clone());
+                }
+            }
+        }
+
+        let adding = ed.original.is_none();
+        let first = kr.data.judges.is_empty();
+        kr.data.judges.insert(
+            name.clone(),
+            crate::keyring::JudgeDef {
+                model: ed.model.trim().to_string(),
+                base_url: ed.base_url.trim().to_string(),
+                timeout_secs: timeout,
+                allow_threshold: allow,
+                high_threshold: high,
+                criteria: ed.criteria.clone(),
+                api_key: prior_key,
+            },
+        );
+        if first {
+            kr.data.default_judge = Some(name.clone());
+        }
+
+        match kr.save() {
+            Ok(()) => {
+                log_judge(if adding { "judge.add" } else { "judge.edit" }, Some(&name));
+                form = JudgeForm::load();
+                if let Some(pos) = form.judges.iter().position(|j| j.name == name) {
+                    form.focus = pos + 1;
+                }
+                let msg = if adding {
+                    format!("Judge '{name}' added — press k to set its API key")
+                } else {
+                    format!("Judge '{name}' updated")
+                };
+                self.set_status(MsgKind::Ok, msg);
+            }
+            Err(e) => reject!(ed.focus, format!("could not save: {e}")),
         }
         self.screen = Screen::Judge(form);
         Ok(())
@@ -2376,6 +2741,64 @@ mod tests {
             matches!(app.screen, Screen::List),
             "esc returns to the list"
         );
+    }
+
+    #[test]
+    fn judge_screen_without_keyring_offers_init() {
+        // No keyring on disk: Enter opens the create-keyring prompt, not unlock.
+        let form = JudgeForm {
+            created: false,
+            unlocked: false,
+            enabled: false,
+            default_judge: None,
+            judges: Vec::new(),
+            focus: 0,
+            error: None,
+            test_result: None,
+            entry: None,
+        };
+        let mut app = bare_app(Screen::Judge(form));
+        press(&mut app, KeyCode::Enter);
+        let Screen::Judge(f) = &app.screen else {
+            panic!("expected judge screen")
+        };
+        assert!(
+            matches!(f.entry, Some(JudgeEntry::Init(_))),
+            "enter with no keyring opens the create prompt"
+        );
+    }
+
+    #[test]
+    fn judge_add_form_types_into_focused_field_and_tabs() {
+        // An add form: typing fills the name, Tab advances to the model field.
+        let mut form = JudgeForm {
+            created: true,
+            unlocked: true,
+            enabled: false,
+            default_judge: None,
+            judges: Vec::new(),
+            focus: 0,
+            error: None,
+            test_result: None,
+            entry: Some(JudgeEntry::Edit(JudgeEditForm::add())),
+        };
+        // Sanity: the picker defaults the model so the form is usable as-is.
+        if let Some(JudgeEntry::Edit(ed)) = &form.entry {
+            assert!(!ed.model.is_empty());
+        }
+        form.focus = 0;
+        let mut app = bare_app(Screen::Judge(form));
+        press(&mut app, KeyCode::Char('p'));
+        press(&mut app, KeyCode::Char('g'));
+        press(&mut app, KeyCode::Tab);
+        let Screen::Judge(f) = &app.screen else {
+            panic!("expected judge screen")
+        };
+        let Some(JudgeEntry::Edit(ed)) = &f.entry else {
+            panic!("expected an open edit form")
+        };
+        assert_eq!(ed.name, "pg", "chars land in the focused name field");
+        assert_eq!(ed.focus, 1, "tab advances to the model field");
     }
 
     #[test]
