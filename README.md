@@ -43,6 +43,7 @@ flowchart LR
 | [Command reference](docs/commands.md) | Every subcommand and flag |
 | [End-to-end walkthrough](docs/walkthrough.md) | Full flow: create → classify → judge → gated `get`, with real model output |
 | [Policy engine](docs/policy-engine.md) | The agent path — `svault get`, scopes, tiers, audit |
+| [MCP server](docs/mcp.md) | `svault mcp` — gated secret access for AI agents (Claude Code, Cursor) |
 | [Recovery & portability](docs/recovery.md) | Recovery code for a lost passphrase, export/import bundles |
 | [Daemon](docs/daemon.md) | Optional Unix daemon — keys in memory, auto-lock, `daemon start/stop/status/doctor` |
 | [Storage backends](docs/storage-backends.md) | Local today; cloud / self-hosted / S3 placeholders |
@@ -236,8 +237,8 @@ flowchart TD
 | **Everything encrypted at rest** | Shipped | The whole policy surface in `vault.enc` and all global config + the judge registry (multiple named judges, with API keys) in `keyring.enc` — nothing abusable in plaintext; per-vault judge assignment; generic caller-facing denials |
 | **Unified unlock** | Shipped (0.9.4 – 0.9.5) | One master passphrase wraps a random data key per store (keyslot model); per-vault passphrases removed (0.9.4) and the keyring brought under the master too (0.9.5); `svault master init / rekey / status` |
 | **Layered source** | Shipped (0.9.6) | Source split into a frontend-agnostic `core` plus `cli` / `tui` / `daemon` frontends (a library crate), with `mcp` / `gui` placeholders — structural only, so future frontends reuse `core` |
-| **Conditional access + escalation** | Next (0.9.7) | Time-window / caller conditions in the encrypted policy; brute-force / anomaly seals a secret and escalates to a human (agents never self-clear) |
-| **Local MCP** | Planned (0.9.8) | `svault mcp` over the daemon socket (auth = same-UID + daemon-unlocked), `svault install`, and an agent capability descriptor that advertises the request interface, not the decision criteria |
+| **Local MCP** | Shipped (0.9.7) | `svault mcp` — a local stdio MCP server exposing gated `svault_get_secret` / `svault_list_vaults` to AI agents; serves only unlocked state, never the passphrase, with a capability descriptor that advertises the request interface, not the decision criteria |
+| **Conditional access + escalation** | Next (0.9.8) | Time-window / caller conditions in the encrypted policy; brute-force / anomaly seals a secret and escalates to a human (agents never self-clear) |
 | **1.0.0** | Target | A final independent review of the full agent-ready surface and install channels (script, Homebrew, Docker), then the first stable release |
 | **YubiKey keyslot** | Post-1.0 | A YubiKey HMAC-SHA1 touch as an alternative unlock — another keyslot over the same master key (passphrase or touch, not 2FA); postponed past 1.0 |
 | **2.0.0** | Planned | Desktop GUI (Tauri) + system tray |

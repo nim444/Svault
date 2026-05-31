@@ -167,7 +167,22 @@ placeholders. Lets the planned MCP and GUI surfaces reuse `core` without touchin
 the CLI or TUI. (The YubiKey keyslot that previously held the 0.9.6 slot is
 postponed to post-1.0 — see [Deferred / not planned](#deferred--not-planned).)
 
-**Conditional access + anomaly escalation (0.9.7).** Add **conditions** to a
+**Agent surface — MCP (0.9.7, shipped).** `svault mcp` runs a local MCP server
+(stdio JSON-RPC) that is a thin frontend over the existing gate (`core::gate`),
+**never seeing the master passphrase** — it serves only already-unlocked state
+(the daemon's keys, or the `0600` session key). The human unlocks once; each
+`svault_get_secret(name, scope, reason, caller)` call runs through the same policy
++ judge gate via the shared `core::gate::gated_get`, audited with `source = mcp`;
+a locked vault returns "a human must run `svault unlock`" and high-tier stays
+human-only. Tools: `svault_get_secret` and `svault_list_vaults`. The `initialize`
+**capability descriptor** (inspired by WorkOS `auth.md`) advertises *how to
+request* a secret — the fields to send, that high-tier may be human-only —
+**without** revealing the decision criteria (tiers, thresholds, judge prompts stay
+encrypted, server-side). See `docs/mcp.md`. *Still planned:* `svault install`
+auto-config (plus Claude Code `.env`-read / credential-scan hooks) and a
+`svault_list_secrets` tool.
+
+**Conditional access + anomaly escalation (0.9.8).** Add **conditions** to a
 secret's encrypted policy — allowed time windows (e.g. only Fri 10:00–12:00 while
 CI runs) and required caller(s) — evaluated early in the existing `reason → scope
 → tier → rate/burst → judge` pipeline; outside the window the agent gets the same
@@ -176,21 +191,6 @@ out-of-window probing against a medium/high secret seal it (lockout state in the
 encrypted policy) and raise an escalation only a human can clear (`svault
 approve`, a TUI pending-approvals view, later a notify channel). An agent can
 never unlock a vault or clear an escalation — human-only by design.
-
-**Agent surface — MCP (0.9.8).** `svault mcp` runs a local MCP server that is a
-thin client of the daemon over the existing peer-UID-bonded `0600` socket — **MCP
-auth is same-UID plus the daemon's unlocked state**, and the server never sees
-the master passphrase or any key. The human unlocks once; each
-`svault_get_secret(name, scope, reason, caller)` call runs through the same
-policy + judge gate, audited with the peer UID and `source = mcp`; a locked or
-sealed vault returns "needs human unlock / escalated". `svault install`
-auto-detects the platform and writes its MCP config (Claude Code also gets a
-PreToolUse hook blocking direct `.env` reads and a PostToolUse hook scanning
-output for leaked credentials). An **agent capability descriptor** (inspired by
-WorkOS `auth.md`) advertises *how to request* a secret — the fields to send, that
-high-tier is human-only, how to ask for escalation — **without** revealing the
-decision criteria (tiers, thresholds, judge criteria, time windows stay
-encrypted).
 
 ### 2. Final independent security review — gate on the 1.0 label
 

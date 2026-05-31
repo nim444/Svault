@@ -86,7 +86,7 @@ src/
   daemon/           Unix unlock daemon (mod.rs) + its client (client.rs)
   tui/              interactive Ratatui terminal UI (mod, ui, theme)
   cli/              the `svault` command-line frontend; exposes cli::run()
-  mcp/              placeholder for a future MCP-server frontend
+  mcp/              the local MCP server (`svault mcp`) — gated access for AI agents
   gui/              placeholder for a future GUI frontend
 ```
 

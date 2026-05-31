@@ -12,8 +12,13 @@
 
 use std::path::Path;
 
+use anyhow::Result;
+use zeroize::Zeroizing;
+
 use crate::core::judge::{self, JudgeContext, JudgeRuntime, JudgeVerdict};
 use crate::core::policy::{self, Decision, Tier, VaultPolicyData};
+use crate::core::vault::Vault;
+use crate::core::{audit, keyring, usage};
 
 const HIGH_HUMAN_ONLY: &str =
     "high-sensitivity secret — a human must retrieve it via 'svault secret get'";
@@ -127,6 +132,82 @@ pub fn authorize(
                 }
             }
         }
+    }
+}
+
+/// Structured outcome of a gated agent request against an already-unlocked vault.
+/// `Denied` carries no reason — the caller only ever gets [`GENERIC_DENY`]; the
+/// real rationale lives in the audit log.
+pub enum GatedGet {
+    Granted {
+        value: Zeroizing<String>,
+        tier: Tier,
+    },
+    Denied,
+    NotFound,
+}
+
+/// Run the full agent gate against an already-open, **unlocked** vault: resolve
+/// the vault's judge from the keyring, [`authorize`], record the audit entry
+/// (with the full reason) and a usage event (tagged with the process surface —
+/// `cli` / `mcp`), then fetch the value on allow. Does no prompting, printing, or
+/// process exit, so both the CLI local-fallback path and the MCP server can share
+/// one enforcement path.
+pub fn gated_get(
+    vault: &Vault,
+    vault_dir: &Path,
+    caller: &str,
+    secret: &str,
+    scope: &str,
+    reason: &str,
+) -> Result<GatedGet> {
+    // The vault's assigned judge (or the keyring default); None when the keyring
+    // is locked, the judge is off, or it has no key — the gate then applies the
+    // static tier rules.
+    let judge = keyring::open_from_session().and_then(|kr| {
+        kr.data
+            .resolve_judge(vault.policy.judge.judge.as_deref())
+            .and_then(|(_n, def)| JudgeRuntime::from_def(def))
+    });
+    let req = policy::Request {
+        vault: &vault.meta.name,
+        vault_description: &vault.meta.description,
+        vault_dir,
+        secret,
+        scope,
+        reason,
+        caller,
+    };
+    let verdict = authorize(&vault.policy, &req, judge.as_ref());
+    let decision_str = if verdict.allowed() { "allow" } else { "deny" };
+    // Audit keeps the full reason; the caller only ever sees a generic denial.
+    audit::record(
+        vault_dir,
+        &audit::Entry::now(
+            caller,
+            secret,
+            scope,
+            &verdict.tier().to_string(),
+            decision_str,
+            &verdict.note,
+            reason,
+        ),
+    )?;
+    usage::agent(
+        vault_dir,
+        caller,
+        &format!("get.{decision_str}"),
+        Some(secret),
+    );
+    if !verdict.allowed() {
+        return Ok(GatedGet::Denied);
+    }
+    match vault.get_secret(secret)? {
+        Some(value) => Ok(GatedGet::Granted {
+            value,
+            tier: verdict.tier(),
+        }),
+        None => Ok(GatedGet::NotFound),
     }
 }
 

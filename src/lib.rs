@@ -8,12 +8,12 @@
 //! - [`daemon`] — the Unix unlock daemon and its client.
 //! - [`tui`] — the interactive terminal UI.
 //! - [`cli`] — the `svault` command-line interface (entry point: [`cli::run`]).
-//! - [`mcp`] — placeholder for a future Model Context Protocol server frontend.
+//! - [`mcp`] — the local Model Context Protocol server (`svault mcp`), a stdio
+//!   JSON-RPC frontend that exposes gated secret access to AI agents.
 //! - [`gui`] — placeholder for a future graphical frontend.
 //!
 //! The `svault` binary ([`main`](../main/index.html)) is a thin wrapper over
-//! [`cli::run`]. Future frontends (`mcp`, `gui`) reuse [`core`] without touching
-//! the CLI or TUI.
+//! [`cli::run`]. Each frontend reuses [`core`] without touching the others.
 //!
 //! Note: the [`core`] module deliberately shadows the std `core` crate; the
 //! source uses `std` throughout, so this is safe. Reach the std crate with

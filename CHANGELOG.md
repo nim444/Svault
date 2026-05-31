@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-06-01
+
+The **MCP** release. `svault mcp` runs a local [Model Context Protocol] server
+that exposes Svault's gated secret access to MCP-aware agents (Claude Code,
+Cursor, VS Code, …) over stdio. It is a thin frontend over the existing gate — the
+human unlocks once, and every agent request runs through the same policy + AI-judge
+enforcement as `svault get`, audited with `source = mcp`. The server never sees the
+master passphrase; a locked vault tells the agent a human must unlock it, and
+high-sensitivity secrets stay human-only. Denials are generic, so an agent can't
+probe its way in.
+
+[Model Context Protocol]: https://modelcontextprotocol.io
+
+### Added
+- **`svault mcp`** — a stdio JSON-RPC 2.0 MCP server (`src/mcp/`). Tools:
+  `svault_get_secret` (the gated agent path — `name` / `scope` / `reason`, plus
+  optional `vault` / `caller`) and `svault_list_vaults` (names + lock state). The
+  `initialize` response carries a **capability descriptor** that tells agents how
+  to request a secret without revealing the decision criteria (tiers, thresholds,
+  and judge prompts stay server-side and encrypted).
+- New [docs/mcp.md](docs/mcp.md): security model, tools, wiring into Claude Code /
+  Cursor, and a raw transcript.
+
+### Changed
+- The gated agent path is now one shared core function, `core::gate::gated_get`
+  (authorize → audit → usage → fetch, no prompting/printing), used by both the CLI
+  local fallback and the MCP server so they enforce identically.
+
 ## [0.9.6] - 2026-06-01
 
 The **layered source** release. Everything used to live flat in `src/` with all
