@@ -100,9 +100,9 @@ svault judge test [--judge <name>] --reason "run the nightly migration" --scope 
 The judge acts only when the keyring is **unlocked**, it's **enabled globally**
 (`svault judge enable`, or the TUI `shift-J` screen), **and** the resolved judge
 has a key; a per-vault `judge.enabled = false` can still opt one vault out. From
-the TUI (`shift-J` on the vault list) you can unlock the keyring, toggle the
-global switch, set the default, set/clear a judge's key, test, and remove a judge;
-adding or editing a judge's model/criteria/thresholds is done via the CLI.
+the TUI (`shift-J` on the vault list) you can create or unlock the keyring, toggle
+the global switch, add/edit/view judges, set the default, set/clear a judge's key,
+test, and remove a judge — the full lifecycle, equivalent to these commands.
 
 `judge test` builds a sample request and asks the live model (the default judge,
 or `--judge <name>`) — nothing is read or written. Pass a realistic `--vault`

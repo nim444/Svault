@@ -22,7 +22,7 @@ The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` 
 | `u` | Unlock the selected vault |
 | `l` | Lock the selected vault (wipes the cached session) |
 | `s` | Edit the selected vault's settings |
-| `shift-J` | Manage the AI judges — unlock the keyring, global on/off, set default, set/clear a judge's key, test, remove (see below) |
+| `shift-J` | Manage the AI judges — create/unlock the keyring, global on/off, add/edit/view judges, set default, set/clear a judge's key, test, remove (see below) |
 | `v` | View the vault's activity timeline (human + agent usage) |
 | `e` | Export the selected vault to a timestamped `<name>-<YYYYMMDD-HHMMSS>.svault-export.json` in the current directory (repeated exports never overwrite); the status line shows the full path to the file |
 | `i` | Import a vault from a bundle file (prompts for the path) |
@@ -57,17 +57,20 @@ After the vault is created, the **recovery code** is shown once on its own scree
 
 `shift-J` (on the vault list) opens the judge manager, backed by the encrypted [keyring](architecture.md) (`.svault/keyring.enc`). It manages the **registry of named judges** that gate medium/high secrets — the same store the `svault keyring` and `svault judge` commands use.
 
-If no keyring exists yet, the screen says so and points you at `svault keyring init` (creating one is a CLI-only step). If the keyring is **locked**, press `Enter` for a masked passphrase prompt to unlock it (a `0600` session caches the key, so the daemon and the rest of the session see it too). Until it is unlocked the judge stays off and the static tier rules apply.
+If no keyring exists yet, press `Enter` to **create** it: a masked prompt takes a passphrase and confirmation (the same strength floor as a vault), then creates and unlocks it in place — no need to drop to `svault keyring init`. If the keyring already exists but is **locked**, `Enter` opens a masked passphrase prompt to unlock it (a `0600` session caches the key, so the daemon and the rest of the session see it too). Until it is unlocked the judge stays off and the static tier rules apply.
 
 Once unlocked, the screen shows the global on/off switch, the default judge, and a table of every judge (**NAME · MODEL · ALLOW · HIGH · KEY**, with `*` marking the default and `KEY` reading `set` or `env/none`). The selectable rows are the global **Enabled** row plus one per judge:
 
 - `space` / `←` `→` on the **Enabled** row toggles the global judge on/off. It only acts when this is on **and** the keyring is unlocked **and** the resolved judge has a key; a per-vault judge toggle (in Create / Settings) can still opt an individual vault out.
+- `a` — **add** a judge: opens a multi-field form (name, model, base URL, timeout, allow/high thresholds, and free-text **criteria**). Saving validates the fields and stores the judge; set its key afterwards with `k`. The first judge added becomes the default.
+- `e` — **edit** the selected judge in the same form (renaming is safe and carries the default pointer and the stored key over).
+- `v` / `Enter` — **view** the selected judge's full detail, including its criteria.
 - `d` — make the selected judge the **default** (used by vaults with no explicit assignment).
 - `k` — open a masked entry to **set or clear** the selected judge's OpenRouter key (encrypted in the keyring; blank clears it, falling back to `$SVAULT_OPENROUTER_KEY`).
 - `t` — **test** the selected judge: dry-runs a sample request against the live model and shows the verdict + score inline, without touching a real secret.
 - `x` — **remove** the selected judge.
 
-`↑` / `↓` move between rows; `Esc` goes back. **Adding or editing** a judge's model, thresholds, and free-text **criteria** is done at the CLI with `svault judge add <name>` / `svault judge edit <name>`, where multi-field entry lives. The global switch is also available on the CLI as `svault judge enable` / `disable`. Toggling the switch, setting or clearing a key, setting the default, and removing a judge are all recorded to the activity timeline (see below).
+`↑` / `↓` move between rows; `Esc` goes back. The whole judge lifecycle is now available here, equivalent to the `svault keyring` / `svault judge` commands (which remain for scripting; the global switch is also `svault judge enable` / `disable`). Toggling the switch, adding or editing a judge, setting or clearing a key, setting the default, and removing a judge are all recorded to the activity timeline (see below).
 
 ## Activity timeline
 

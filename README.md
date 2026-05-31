@@ -94,7 +94,7 @@ Run `svault` with no subcommand to open the full-screen terminal UI:
 svault
 ```
 
-Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s` edit settings, `shift-J` manage the AI judge (unlock the keyring, toggle the global on/off switch, set the default judge, set/clear a judge's API key, live test, remove a judge), and — once a vault is unlocked — `a` add, `c` classify (tier/scope/reason/description), view, and `d` delete secrets, with each secret's classification shown inline. Adding or editing a judge's model/criteria/thresholds is done from the CLI (`svault judge add|edit <name>`). The TUI reuses the cached session key, so an unlocked vault is never re-prompted. Every subcommand still works for scripting.
+Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s` edit settings, `shift-J` manage the AI judges (create or unlock the keyring, toggle the global on/off switch, add/edit/view judges with their model/thresholds/criteria, set the default judge, set/clear a judge's API key, live test, remove a judge), and — once a vault is unlocked — `a` add, `c` classify (tier/scope/reason/description), view, and `d` delete secrets, with each secret's classification shown inline. The TUI reuses the cached session key, so an unlocked vault is never re-prompted. Every subcommand still works for scripting.
 
 **Full keybindings → [docs/tui.md](docs/tui.md)**
 

@@ -32,7 +32,7 @@ reading the unlocked daemon's memory or the `0600` session.
 
 ### Changed
 - **No plaintext config or key files.** `.svault/config.yaml` and `~/.config/svault/openrouter.key` are removed; their contents (lock timers, daemon max-connections, backend, judge settings, API keys) live encrypted in the keyring. The daemon starts on built-in defaults and adopts the keyring's operational settings once it is unlocked (lock/connection/backend changes take effect on the next daemon start; the judge activates as soon as the keyring is unlocked).
-- The TUI `shift-J` screen is now a **judge manager** backed by the keyring: unlock, toggle the global switch, set the default, set/clear a judge's key, test, and remove. Adding/editing a judge's model/criteria/thresholds is done with `svault judge add|edit <name>` (multi-field entry lives at the CLI).
+- The TUI `shift-J` screen is now a full **judge manager** backed by the keyring: create the keyring (passphrase + confirm) when none exists, unlock it, toggle the global switch, **add** and **edit** judges with a multi-field form (name, model, base URL, timeout, allow/high thresholds, criteria), **view** a judge's detail, set the default, set/clear a judge's key, test, and remove. Equivalent to the `svault keyring` / `svault judge` commands, without leaving the TUI.
 - `$SVAULT_OPENROUTER_KEY` remains as an explicit, opt-in per-judge fallback when a judge has no stored key (an env var, never a file).
 
 ### Security
