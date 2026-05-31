@@ -16,7 +16,7 @@ pub enum GetOutcome {
 /// Result of a gated (agent-path) request to the daemon.
 pub enum GatedOutcome {
     /// Policy + judge allowed it; carries the value and tier.
-    Granted(String, crate::policy::Tier),
+    Granted(String, crate::core::policy::Tier),
     /// Policy or the AI judge denied it.
     Denied(String),
     /// Daemon up but the vault isn't unlocked — caller should fall back.

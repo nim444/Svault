@@ -11,8 +11,8 @@ use ratatui::{
 
 use super::theme;
 use super::{
-    tier_label, App, ClassifyForm, CreateForm, InitForm, JudgeEditForm, JudgeEntry, JudgeForm,
-    MsgKind, Screen, SecretAddForm, SecretScreen, SettingsForm, UnlockForm,
+    judge_name_label, tier_label, App, ClassifyForm, CreateForm, InitForm, JudgeEditForm,
+    JudgeEntry, JudgeForm, MsgKind, Screen, SecretAddForm, SecretScreen, SettingsForm, UnlockForm,
 };
 
 const CYAN: Color = theme::ACCENT;
@@ -427,7 +427,7 @@ fn draw_activity(frame: &mut Frame, area: Rect, scr: &mut super::ActivityScreen)
                 })
                 .unwrap_or_else(|| e.ts.chars().take(16).collect());
             // Agents stand out in yellow; humans in the accent color.
-            let actor_style = if e.actor == crate::usage::AGENT {
+            let actor_style = if e.actor == crate::core::usage::AGENT {
                 Style::default().fg(theme::WARN)
             } else {
                 Style::default().fg(theme::ACCENT)
@@ -555,6 +555,7 @@ fn draw_create(frame: &mut Frame, area: Rect, form: &CreateForm) {
             CreateField::AutolockTimer => ("Auto-lock timer", form.autolock_timer.clone()),
             CreateField::DefaultTier => ("Default tier", tier_label(form.default_tier).to_string()),
             CreateField::Judge => ("AI judge", yes_no(form.judge).to_string()),
+            CreateField::JudgeName => ("Assigned judge", judge_name_label(&form.judge_name)),
             CreateField::MasterNew => ("Master passphrase", mask(&form.passphrase)),
             CreateField::MasterConfirm => ("Confirm master passphrase", mask(&form.confirm)),
             CreateField::MasterUnlock => ("Master passphrase", mask(&form.passphrase)),
@@ -569,7 +570,7 @@ fn draw_create(frame: &mut Frame, area: Rect, form: &CreateForm) {
     };
     lines.push(Line::from(Span::styled(note, Style::default().fg(DIM))));
     lines.push(Line::from(Span::styled(
-        "  (space/←→ toggles tier & judge)",
+        "  (space/←→ cycles tier, judge & assigned judge)",
         Style::default().fg(DIM),
     )));
     if let Some(err) = &form.error {
@@ -611,11 +612,12 @@ fn draw_settings(frame: &mut Frame, area: Rect, form: &SettingsForm) {
         ("Auto-lock timer", form.autolock_timer.clone()),
         ("Default tier", tier_label(form.default_tier).to_string()),
         ("AI judge", yes_no(form.judge).to_string()),
+        ("Assigned judge", judge_name_label(&form.judge_name)),
     ];
     let mut lines = field_lines(&fields, form.focus, form.focus_is_text());
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Login: passphrase   (space/←→ toggles tier & judge)",
+        "  Login: passphrase   (space/←→ cycles tier, judge & assigned judge)",
         Style::default().fg(DIM),
     )));
     if let Some(err) = &form.error {
@@ -730,6 +732,12 @@ fn draw_judge(frame: &mut Frame, area: Rect, form: &JudgeForm) {
             Style::default().fg(DIM),
         )));
     } else {
+        // A judge can authenticate with its own stored key or, failing that, the
+        // opt-in $SVAULT_OPENROUTER_KEY env override. Knowing whether that env is
+        // set lets us label "no stored key" honestly instead of cryptic "env/none".
+        let env_present = std::env::var(crate::core::keyring::KEY_ENV)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
         let sel = |i: usize| if form.focus == i { ">" } else { " " };
         lines.push(Line::from(vec![
             Span::raw(format!(" {} ", sel(0))),
@@ -746,6 +754,20 @@ fn draw_judge(frame: &mut Frame, area: Rect, form: &JudgeForm) {
             ),
             Style::default().fg(DIM),
         )));
+        // The common confusing case: the judge is ON but the judge that would run
+        // has no usable key, so every medium/high gate silently fails. Call it out.
+        let default_has_key = form
+            .default_judge
+            .as_ref()
+            .and_then(|dn| form.judges.iter().find(|j| &j.name == dn))
+            .map(|j| j.has_key)
+            .unwrap_or(false);
+        if form.enabled && !default_has_key && !env_present {
+            lines.push(Line::from(Span::styled(
+                "      ! judge is ON but has no API key — set one with k, or export $SVAULT_OPENROUTER_KEY (else medium/high requests fail)",
+                Style::default().fg(theme::WARN),
+            )));
+        }
         lines.push(Line::from(""));
         if form.judges.is_empty() {
             lines.push(Line::from(Span::styled(
@@ -768,24 +790,44 @@ fn draw_judge(frame: &mut Frame, area: Rect, form: &JudgeForm) {
                 } else {
                     " "
                 };
-                let key = if j.has_key { "set" } else { "env/none" };
-                let style = if focused {
+                // Key state, color-coded: stored key (ok), env fallback (warn), or
+                // nothing (err) — so a keyless judge stands out at a glance.
+                let (key_label, key_color) = if j.has_key {
+                    ("key set", theme::OK)
+                } else if env_present {
+                    ("env key", theme::WARN)
+                } else {
+                    ("no key", theme::ERR)
+                };
+                let row_style = if focused {
                     Style::default()
                         .fg(theme::ACCENT)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
-                lines.push(Line::from(Span::styled(
-                    format!(
-                        " {}{}{:<15} {:<24} {:>6} {:>5}  {}",
-                        mark, def, j.name, j.model, j.allow, j.high, key
+                let key_style = if focused {
+                    Style::default().fg(key_color).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(key_color)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(
+                            " {}{}{:<15} {:<24} {:>6} {:>5}  ",
+                            mark, def, j.name, j.model, j.allow, j.high
+                        ),
+                        row_style,
                     ),
-                    style,
-                )));
+                    Span::styled(key_label, key_style),
+                ]));
             }
         }
         lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  key: 'key set' = stored · 'env key' = $SVAULT_OPENROUTER_KEY · 'no key' = none (press k to set)",
+            Style::default().fg(DIM),
+        )));
         lines.push(Line::from(Span::styled(
             "  space on/off   a add   e edit   v view   k key   d default   t test   x remove",
             Style::default().fg(DIM),
@@ -959,7 +1001,7 @@ fn draw_judge_edit(frame: &mut Frame, area: Rect, ed: &JudgeEditForm) {
             Style::default().fg(DIM),
         )),
         Line::from(Span::styled(
-            "  Set the API key with k after saving.",
+            "  API key: set it with k after saving, or export $SVAULT_OPENROUTER_KEY.",
             Style::default().fg(DIM),
         )),
         Line::from(""),
@@ -1010,10 +1052,20 @@ fn draw_judge_view(frame: &mut Frame, area: Rect, form: &JudgeForm, name: &str) 
         lines.push(field("timeout", format!("{}s", j.timeout_secs)));
         lines.push(field("allow ≥", j.allow.to_string()));
         lines.push(field("high ≥", j.high.to_string()));
-        lines.push(field(
-            "api key",
-            if j.has_key { "set" } else { "env / none" }.to_string(),
-        ));
+        let env_present = std::env::var(crate::core::keyring::KEY_ENV)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        let key_desc = if j.has_key {
+            "set (stored, encrypted)".to_string()
+        } else if env_present {
+            format!("from ${} (env)", crate::core::keyring::KEY_ENV)
+        } else {
+            format!(
+                "not set — press k, or export ${}",
+                crate::core::keyring::KEY_ENV
+            )
+        };
+        lines.push(field("api key", key_desc));
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "  criteria",
@@ -1251,11 +1303,13 @@ fn draw_secrets(frame: &mut Frame, area: Rect, scr: &mut SecretScreen) {
             .map(|n| {
                 let rule = scr.classifications.get(n);
                 let (tier, tier_style) = match rule.map(|r| r.tier) {
-                    Some(crate::policy::Tier::High) => ("high", Style::default().fg(theme::ERR)),
-                    Some(crate::policy::Tier::Medium) => {
+                    Some(crate::core::policy::Tier::High) => {
+                        ("high", Style::default().fg(theme::ERR))
+                    }
+                    Some(crate::core::policy::Tier::Medium) => {
                         ("medium", Style::default().fg(theme::WARN))
                     }
-                    Some(crate::policy::Tier::Low) => ("low", Style::default().fg(theme::OK)),
+                    Some(crate::core::policy::Tier::Low) => ("low", Style::default().fg(theme::OK)),
                     None => ("unset", Style::default().fg(theme::MUTED)),
                 };
                 let scope = rule

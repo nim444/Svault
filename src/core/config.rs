@@ -2,7 +2,7 @@
 //!
 //! These used to live in a plaintext `.svault/config.yaml`. As of 0.9.3 there
 //! is no plaintext config file: these structs are carried inside the encrypted
-//! [`crate::keyring`] (alongside the judge registry and API keys) so nothing
+//! [`crate::core::keyring`] (alongside the judge registry and API keys) so nothing
 //! abusable is readable at rest. The type definitions stay here; the keyring
 //! owns their storage and the daemon reads them at start.
 #![allow(dead_code)]

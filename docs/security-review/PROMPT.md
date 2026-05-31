@@ -47,8 +47,8 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 2. **Do not reference or critique** any previous security reviews, findings, or opinions from other AI models. Your review must stand completely on its own.
 3. Perform real technical work:
    - Explore the full source code, with particular focus on:
-     - The new daemon implementation (`src/daemon.rs`)
-     - The client routing layer (`src/client.rs`)
+     - The daemon implementation (`src/daemon/mod.rs`)
+     - The client routing layer (`src/daemon/client.rs`)
      - How the daemon interacts with the rest of the system
      - Changes to security model, session handling, and threat assumptions
    - Review the CI/CD and release workflows.
@@ -119,7 +119,7 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 
 ## References
 
-- Link to key files in the repo you analyzed (especially `src/daemon.rs`, `src/client.rs`, `src/policy.rs`, `src/secfile.rs`, `src/session.rs`, `docs/security.md`, `docs/daemon.md`, the release/lint workflows, and the prior findings registers under `docs/security-review/findings/`)
+- Link to key files in the repo you analyzed (especially `src/daemon/mod.rs`, `src/daemon/client.rs`, `src/core/policy.rs`, `src/core/secfile.rs`, `src/core/session.rs`, `docs/security.md`, `docs/daemon.md`, the release/lint workflows, and the prior findings registers under `docs/security-review/findings/`)
 - Any external resources you consulted
 
 Be professional, direct, evidence-based, and balanced. Quote specific code paths or design decisions when they are relevant to your conclusions. Avoid hype or unnecessary negativity.

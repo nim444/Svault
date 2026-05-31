@@ -11,8 +11,8 @@ svault master init [--force]       # set the master passphrase (prints a one-tim
 svault master rekey [--force]      # change the master passphrase (no vault is re-encrypted)
 svault master recover [--force]    # reset a forgotten master passphrase with the recovery code
 svault master status               # is the master set / unlocked, how many vaults wrapped
-svault create [--force]            # create an encrypted vault (name, description, agents, rate limit, auto-lock)
-svault settings [VAULT]            # view or change a vault's settings
+svault create [--force]            # create an encrypted vault (name, description, agents, rate limit, auto-lock, AI judge + assigned judge)
+svault settings [VAULT]            # view or change a vault's settings (incl. AI judge on/off + assigned judge)
 svault unlock   [VAULT]            # unlock — no VAULT opens every vault via the master; VAULT opens just one
 svault lock     [VAULT]            # clear a vault's cached key
 svault lock     --all              # lock every vault and the master session
@@ -115,7 +115,9 @@ its own model, base URL, timeout, `allow_threshold`/`high_threshold`, free-text
 **criteria** (injected into that judge's prompt), and API key (encrypted in the
 keyring; an empty key falls back to the opt-in `$SVAULT_OPENROUTER_KEY` env var,
 never a file). A vault is **assigned** a judge by name (stored encrypted in the
-vault policy); if unassigned it uses the keyring's default judge.
+vault policy); if unassigned it uses the keyring's default judge. Assign one with
+`svault settings <vault>` (the **Assigned judge** prompt) or `svault create`, or
+the same picker in the TUI Create / Settings forms.
 
 ```bash
 svault judge add <name>          # create a judge (prompts for model, thresholds, criteria, key)
@@ -303,7 +305,8 @@ ok: 'billing-api' is back under your master passphrase. Recovery code unchanged.
 $ svault settings billing-api
   # set Allow-agent to "list" and enter: claude, cursor
   # set Rate limit to 5/hour
-  # saving re-signs meta.yaml
+  # turn the AI judge on and pick its Assigned judge (default, or a named judge)
+  # saving re-signs meta.yaml and re-encrypts the policy
 ```
 
 ## 7. Keep keys in memory with the daemon (Unix)

@@ -15,16 +15,16 @@ use ratatui::widgets::TableState;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::crypto::VaultKey;
-use crate::meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
-use crate::policy::SecretRule;
-use crate::session;
-use crate::vault::{list_vault_dirs, Vault, SVAULT_DIR};
+use crate::core::crypto::VaultKey;
+use crate::core::meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
+use crate::core::policy::SecretRule;
+use crate::core::session;
+use crate::core::vault::{list_vault_dirs, Vault, SVAULT_DIR};
 
 /// Enter the alternate screen, run the event loop, restore the terminal.
 pub fn run() -> Result<()> {
     // Everything recorded from here on is a TUI action.
-    crate::usage::set_source(crate::usage::Source::Tui);
+    crate::core::usage::set_source(crate::core::usage::Source::Tui);
     let mut terminal = ratatui::init();
     // Bracketed paste lets us receive a whole pasted string (passphrases,
     // recovery codes, bundle paths) as one event instead of key-by-key.
@@ -118,6 +118,8 @@ pub enum CreateField {
     AutolockTimer,
     DefaultTier,
     Judge,
+    /// Which keyring judge gates this vault (default = keyring default).
+    JudgeName,
     /// First-time master passphrase (set-on-create) + its confirmation.
     MasterNew,
     MasterConfirm,
@@ -146,6 +148,10 @@ pub struct CreateForm {
     pub autolock_timer: String,
     pub default_tier: usize, // 0 low · 1 medium · 2 high
     pub judge: bool,
+    /// Which keyring judge gates this vault. `None` = the keyring default judge.
+    pub judge_name: Option<String>,
+    /// Names of judges available to pick from (empty if the keyring is locked).
+    pub judge_choices: Vec<String>,
     pub passphrase: String,
     pub confirm: String,
     pub focus: usize,
@@ -162,9 +168,9 @@ impl CreateForm {
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
             .unwrap_or_else(|| "my-vault".to_string());
-        let master_step = if crate::master::is_unlocked() {
+        let master_step = if crate::core::master::is_unlocked() {
             MasterStep::Ready
-        } else if crate::master::exists() {
+        } else if crate::core::master::exists() {
             MasterStep::Unlock
         } else {
             MasterStep::Set
@@ -180,6 +186,8 @@ impl CreateForm {
             autolock_timer: "1d".to_string(),
             default_tier: 0,
             judge: false,
+            judge_name: None,
+            judge_choices: available_judge_names(),
             passphrase: String::new(),
             confirm: String::new(),
             focus: 0,
@@ -202,6 +210,7 @@ impl CreateForm {
             CreateField::AutolockTimer,
             CreateField::DefaultTier,
             CreateField::Judge,
+            CreateField::JudgeName,
         ];
         match step {
             MasterStep::Ready => {}
@@ -230,6 +239,7 @@ impl CreateForm {
                 | CreateField::Autolock
                 | CreateField::DefaultTier
                 | CreateField::Judge
+                | CreateField::JudgeName
         )
     }
 
@@ -259,10 +269,11 @@ pub enum SettingsField {
     AutolockTimer,
     DefaultTier,
     Judge,
+    JudgeName,
 }
 
 impl SettingsField {
-    pub const ORDER: [SettingsField; 8] = [
+    pub const ORDER: [SettingsField; 9] = [
         SettingsField::Description,
         SettingsField::AllowMode,
         SettingsField::AllowList,
@@ -271,6 +282,7 @@ impl SettingsField {
         SettingsField::AutolockTimer,
         SettingsField::DefaultTier,
         SettingsField::Judge,
+        SettingsField::JudgeName,
     ];
 }
 
@@ -285,6 +297,10 @@ pub struct SettingsForm {
     pub autolock_timer: String,
     pub default_tier: usize,
     pub judge: bool,
+    /// Which keyring judge gates this vault. `None` = the keyring default judge.
+    pub judge_name: Option<String>,
+    /// Names of judges available to pick from (empty if the keyring is locked).
+    pub judge_choices: Vec<String>,
     pub focus: usize,
     pub error: Option<String>,
 }
@@ -295,7 +311,7 @@ impl SettingsForm {
     fn from_meta(
         vault_dir: PathBuf,
         meta: VaultMeta,
-        policy: &crate::policy::VaultPolicyData,
+        policy: &crate::core::policy::VaultPolicyData,
     ) -> Self {
         let (allow_mode, allow_list) = match &policy.access.allow_agent {
             AllowAgent::Bool(true) => (0, String::new()),
@@ -313,6 +329,8 @@ impl SettingsForm {
             autolock_timer: meta.settings.autolock_timer,
             default_tier: tier_idx(policy.default_tier),
             judge: policy.judge.enabled.unwrap_or(false),
+            judge_name: policy.judge.judge.clone(),
+            judge_choices: available_judge_names(),
             focus: 0,
             error: None,
         }
@@ -329,6 +347,7 @@ impl SettingsForm {
                 | SettingsField::Autolock
                 | SettingsField::DefaultTier
                 | SettingsField::Judge
+                | SettingsField::JudgeName
         )
     }
 
@@ -477,7 +496,7 @@ impl JudgeEditForm {
     const FIELDS: usize = 7;
 
     fn add() -> Self {
-        let d = crate::keyring::JudgeDef::default();
+        let d = crate::core::keyring::JudgeDef::default();
         Self {
             original: None,
             name: String::new(),
@@ -492,7 +511,7 @@ impl JudgeEditForm {
         }
     }
 
-    fn edit(name: &str, d: &crate::keyring::JudgeDef) -> Self {
+    fn edit(name: &str, d: &crate::core::keyring::JudgeDef) -> Self {
         Self {
             original: Some(name.to_string()),
             name: name.to_string(),
@@ -542,7 +561,7 @@ fn keyring_done_msg(created: bool) -> &'static str {
     }
 }
 
-/// The AI-judge manager (`shift-J`), backed by the encrypted [`crate::keyring`].
+/// The AI-judge manager (`shift-J`), backed by the encrypted [`crate::core::keyring`].
 /// Shows the global on/off switch, the default judge, and the registry, and
 /// supports the common actions: unlock, toggle, set default, set/clear a judge's
 /// key, test, remove. Adding or editing a judge's model/criteria/thresholds is
@@ -564,8 +583,8 @@ pub struct JudgeForm {
 impl JudgeForm {
     /// Build the snapshot from the keyring session (if it's unlocked).
     fn load() -> Self {
-        let created = crate::keyring::exists();
-        match crate::keyring::open_from_session() {
+        let created = crate::core::keyring::exists();
+        match crate::core::keyring::open_from_session() {
             Some(kr) => {
                 let judges = kr
                     .data
@@ -653,7 +672,7 @@ impl RecoverForm {
 /// A read-only view of a vault's recent usage events (human + agent activity).
 pub struct ActivityScreen {
     pub name: String,
-    pub events: Vec<crate::usage::Event>,
+    pub events: Vec<crate::core::usage::Event>,
     pub state: TableState,
 }
 
@@ -947,8 +966,8 @@ impl App {
         let Some(v) = self.selected_vault() else {
             return;
         };
-        let mut events = crate::usage::recent(&v.dir, 200);
-        events.extend(crate::usage::recent(Path::new(SVAULT_DIR), 200));
+        let mut events = crate::core::usage::recent(&v.dir, 200);
+        events.extend(crate::core::usage::recent(Path::new(SVAULT_DIR), 200));
         // RFC 3339 UTC timestamps sort correctly lexicographically; newest first.
         events.sort_by(|a, b| b.ts.cmp(&a.ts));
         events.truncate(200);
@@ -1004,15 +1023,15 @@ impl App {
                 let result = std::fs::read_to_string(path)
                     .map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))
                     .and_then(|raw| {
-                        let bundle = crate::portable::parse_bundle(&raw)?;
-                        let target = crate::portable::unique_vault_name(base, &bundle.name);
-                        crate::portable::import_bundle_as(&raw, base, &target)?;
+                        let bundle = crate::core::portable::parse_bundle(&raw)?;
+                        let target = crate::core::portable::unique_vault_name(base, &bundle.name);
+                        crate::core::portable::import_bundle_as(&raw, base, &target)?;
                         Ok((bundle.name, target))
                     });
                 match result {
                     Ok((orig, target)) => {
                         let dir = base.join(&target);
-                        crate::usage::human(&dir, "import", None);
+                        crate::core::usage::human(&dir, "import", None);
                         if target == orig {
                             self.refresh_vaults();
                             self.set_status(MsgKind::Ok, format!("Imported '{target}'"));
@@ -1087,7 +1106,7 @@ impl App {
     fn submit_recover(&mut self, mut form: RecoverForm) {
         // The recovery code unwraps the vault's data key directly (it never
         // changed). We then re-attach the vault to the master.
-        let dek = match crate::recovery::unlock_with_code(&form.vault_dir, &form.code) {
+        let dek = match crate::core::recovery::unlock_with_code(&form.vault_dir, &form.code) {
             Ok(k) => k,
             Err(e) => {
                 form.error = Some(format!("{e}"));
@@ -1099,9 +1118,9 @@ impl App {
         };
         // The passphrase fields set the master on first run, or open the
         // existing one to wrap the recovered key under it.
-        let setting = !crate::master::exists();
+        let setting = !crate::core::master::exists();
         if setting {
-            if let Err(e) = crate::passphrase::meets_floor(&form.new_pass) {
+            if let Err(e) = crate::core::passphrase::meets_floor(&form.new_pass) {
                 form.error = Some(e);
                 form.new_pass.clear();
                 form.confirm.clear();
@@ -1119,7 +1138,7 @@ impl App {
             }
         }
         let master = if setting {
-            match crate::master::Master::init(&form.new_pass) {
+            match crate::core::master::Master::init(&form.new_pass) {
                 Ok(m) => m,
                 Err(e) => {
                     form.error = Some(format!("{e}"));
@@ -1128,7 +1147,7 @@ impl App {
                 }
             }
         } else {
-            match crate::master::Master::open(&form.new_pass) {
+            match crate::core::master::Master::open(&form.new_pass) {
                 Ok(m) => m,
                 Err(_) => {
                     form.error = Some("Wrong master passphrase".into());
@@ -1140,7 +1159,7 @@ impl App {
                 }
             }
         };
-        let _ = crate::master::unlock_session(master.key_bytes());
+        let _ = crate::core::master::unlock_session(master.key_bytes());
         // Open with the recovered key so a renamed import can re-sign meta.name
         // to match its directory (a no-op for a normal recover), then wrap the
         // key under the master and cache the session.
@@ -1169,7 +1188,7 @@ impl App {
             return;
         }
         let _ = session::unlock_with_key(&form.vault_dir, vault.key().bytes());
-        crate::usage::human(&form.vault_dir, "recover", None);
+        crate::core::usage::human(&form.vault_dir, "recover", None);
         self.refresh_vaults();
         self.set_status(
             MsgKind::Ok,
@@ -1224,22 +1243,22 @@ impl App {
                 return;
             }
         };
-        match crate::portable::build_bundle(&v.dir, &meta.name, &meta.storage) {
+        match crate::core::portable::build_bundle(&v.dir, &meta.name, &meta.storage) {
             Ok(json) => {
                 let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
                 let out = format!("{}-{}.svault-export.json", meta.name, ts);
                 // The bundle wraps the vault key — write it owner-only, matching
                 // the CLI export path. A default-umask write would be world-readable.
-                match crate::secfile::write_owner_only(Path::new(&out), json.as_bytes()) {
+                match crate::core::secfile::write_owner_only(Path::new(&out), json.as_bytes()) {
                     Ok(_) => {
                         // Keep the bundle out of git so it can't be pushed by mistake.
-                        crate::portable::ensure_export_gitignored(Path::new("."));
+                        crate::core::portable::ensure_export_gitignored(Path::new("."));
                         // Show the absolute path so the file is easy to find — a
                         // bare filename leaves the user guessing which directory.
                         let shown = std::fs::canonicalize(&out)
                             .map(|p| p.display().to_string())
                             .unwrap_or(out);
-                        crate::usage::human(&v.dir, "export", None);
+                        crate::core::usage::human(&v.dir, "export", None);
                         self.set_status(MsgKind::Ok, format!("Exported '{}' to {shown}", v.name))
                     }
                     Err(e) => self.set_status(MsgKind::Error, format!("Export failed: {e}")),
@@ -1254,7 +1273,7 @@ impl App {
         let Some(v) = self.selected_vault() else {
             return;
         };
-        if !crate::recovery::exists(&v.dir) {
+        if !crate::core::recovery::exists(&v.dir) {
             self.set_status(
                 MsgKind::Error,
                 format!("Vault '{}' has no recovery file", v.name),
@@ -1305,7 +1324,7 @@ impl App {
             return Ok(());
         }
         session::lock(&v.dir)?;
-        crate::usage::human(&v.dir, "lock", None);
+        crate::core::usage::human(&v.dir, "lock", None);
         self.set_status(MsgKind::Ok, format!("Vault '{}' locked", v.name));
         self.refresh_vaults();
         Ok(())
@@ -1433,6 +1452,8 @@ impl App {
                     form.autolock = !form.autolock; // space toggles auto-lock
                 } else if c == ' ' && form.current() == CreateField::Judge {
                     form.judge = !form.judge;
+                } else if c == ' ' && form.current() == CreateField::JudgeName {
+                    form.judge_name = cycle_judge_name(&form.judge_name, &form.judge_choices, true);
                 } else if c == ' ' && form.current() == CreateField::DefaultTier {
                     form.default_tier = cycle(form.default_tier, 3, true);
                 } else if let Some(s) = form.text_field() {
@@ -1469,7 +1490,7 @@ impl App {
         // Resolve the master passphrase that wraps this vault's data key:
         // reuse the session, prompt the existing master, or set one on first run.
         let master = match form.master_step {
-            MasterStep::Ready => match crate::master::open_from_session() {
+            MasterStep::Ready => match crate::core::master::open_from_session() {
                 Some(m) => m,
                 None => {
                     form.error = Some("master session expired — reopen the create screen".into());
@@ -1483,9 +1504,9 @@ impl App {
                     self.screen = Screen::Create(form);
                     return Ok(());
                 }
-                match crate::master::Master::open(&form.passphrase) {
+                match crate::core::master::Master::open(&form.passphrase) {
                     Ok(m) => {
-                        let _ = crate::master::unlock_session(m.key_bytes());
+                        let _ = crate::core::master::unlock_session(m.key_bytes());
                         m
                     }
                     Err(_) => {
@@ -1502,7 +1523,7 @@ impl App {
                     self.screen = Screen::Create(form);
                     return Ok(());
                 }
-                if let Err(e) = crate::passphrase::meets_floor(&form.passphrase) {
+                if let Err(e) = crate::core::passphrase::meets_floor(&form.passphrase) {
                     form.error = Some(e);
                     self.screen = Screen::Create(form);
                     return Ok(());
@@ -1512,9 +1533,9 @@ impl App {
                     self.screen = Screen::Create(form);
                     return Ok(());
                 }
-                match crate::master::Master::init(&form.passphrase) {
+                match crate::core::master::Master::init(&form.passphrase) {
                     Ok(m) => {
-                        let _ = crate::master::unlock_session(m.key_bytes());
+                        let _ = crate::core::master::unlock_session(m.key_bytes());
                         m
                     }
                     Err(e) => {
@@ -1544,19 +1565,20 @@ impl App {
         );
         // The access rules, default tier, and judge override are encrypted in
         // the vault payload, not the plaintext meta.yaml.
-        let mut vault_policy = crate::policy::VaultPolicyData {
+        let mut vault_policy = crate::core::policy::VaultPolicyData {
             access: AccessConfig {
                 allow_agent,
                 rate_limit: form.rate_limit.clone(),
             },
             default_tier: tier_at(form.default_tier),
-            ..crate::policy::VaultPolicyData::default()
+            ..crate::core::policy::VaultPolicyData::default()
         };
         vault_policy.judge.enabled = Some(form.judge);
+        vault_policy.judge.judge = form.judge_name.clone();
 
         // Random data key encrypts the vault; wrap it under the master so the
         // single master passphrase opens it.
-        let dek = crate::master::new_dek();
+        let dek = crate::core::master::new_dek();
         match Vault::init_with_key(&vault_dir, dek, meta, vault_policy) {
             Ok(vault) => {
                 if let Err(e) = master.wrap_dek(&vault_dir, vault.key()) {
@@ -1578,8 +1600,8 @@ impl App {
                         ),
                     }
                 }
-                let code = crate::recovery::generate_code();
-                if let Err(e) = crate::recovery::write(&vault_dir, vault.key(), &code) {
+                let code = crate::core::recovery::generate_code();
+                if let Err(e) = crate::core::recovery::write(&vault_dir, vault.key(), &code) {
                     self.refresh_vaults();
                     self.set_status(
                         MsgKind::Warn,
@@ -1591,7 +1613,7 @@ impl App {
                     return Ok(());
                 }
                 codes.push((format!("Vault '{name}'"), code));
-                crate::usage::human(&vault_dir, "vault.create", None);
+                crate::core::usage::human(&vault_dir, "vault.create", None);
                 self.refresh_vaults();
                 self.set_status(MsgKind::Ok, format!("Vault '{name}' created"));
                 self.screen = Screen::RecoveryCode(RecoveryShow {
@@ -1637,6 +1659,8 @@ impl App {
                     form.autolock = !form.autolock;
                 } else if c == ' ' && form.current() == SettingsField::Judge {
                     form.judge = !form.judge;
+                } else if c == ' ' && form.current() == SettingsField::JudgeName {
+                    form.judge_name = cycle_judge_name(&form.judge_name, &form.judge_choices, true);
                 } else if c == ' ' && form.current() == SettingsField::DefaultTier {
                     form.default_tier = cycle(form.default_tier, 3, true);
                 } else if let Some(s) = form.text_field() {
@@ -1686,13 +1710,14 @@ impl App {
         vault_policy.access.rate_limit = form.rate_limit.clone();
         vault_policy.default_tier = tier_at(form.default_tier);
         vault_policy.judge.enabled = Some(form.judge);
+        vault_policy.judge.judge = form.judge_name.clone();
 
         match vault
             .save_meta(&meta)
             .and_then(|_| vault.save_policy(&vault_policy))
         {
             Ok(_) => {
-                crate::usage::human(&form.vault_dir, "settings.update", None);
+                crate::core::usage::human(&form.vault_dir, "settings.update", None);
                 self.refresh_vaults();
                 self.set_status(MsgKind::Ok, format!("Settings for '{}' saved", form.name));
                 self.screen = Screen::List;
@@ -1718,7 +1743,7 @@ impl App {
             }
             KeyCode::Enter => match self.unlock_via_master(&form.vault_dir, &form.passphrase) {
                 Ok(vault) => {
-                    crate::usage::human(&form.vault_dir, "unlock", None);
+                    crate::core::usage::human(&form.vault_dir, "unlock", None);
                     self.refresh_vaults();
                     self.set_status(MsgKind::Ok, format!("Vault '{}' unlocked", form.name));
                     match form.pending {
@@ -1758,18 +1783,18 @@ impl App {
         vault_dir: &Path,
         passphrase: &str,
     ) -> std::result::Result<Vault, String> {
-        let master = if crate::master::exists() {
-            crate::master::Master::open(passphrase)
+        let master = if crate::core::master::exists() {
+            crate::core::master::Master::open(passphrase)
                 .map_err(|_| "Wrong master passphrase".to_string())?
         } else {
             // No master yet (e.g. a legacy/imported vault on a fresh machine):
             // set one now from the typed passphrase.
-            crate::passphrase::meets_floor(passphrase)?;
-            crate::master::Master::init(passphrase).map_err(|e| format!("{e}"))?
+            crate::core::passphrase::meets_floor(passphrase)?;
+            crate::core::master::Master::init(passphrase).map_err(|e| format!("{e}"))?
         };
-        let _ = crate::master::unlock_session(master.key_bytes());
+        let _ = crate::core::master::unlock_session(master.key_bytes());
 
-        if !crate::master::vault_has_keyslot(vault_dir) {
+        if !crate::core::master::vault_has_keyslot(vault_dir) {
             return Err("vault is not wrapped under the master (no keyslot)".to_string());
         }
         let dek = master
@@ -1876,7 +1901,7 @@ impl App {
             }
             KeyCode::Char('l') => {
                 session::lock(&scr.vault_dir)?;
-                crate::usage::human(&scr.vault_dir, "lock", None);
+                crate::core::usage::human(&scr.vault_dir, "lock", None);
                 self.set_status(MsgKind::Ok, format!("Vault '{}' locked", scr.name));
                 self.refresh_vaults();
                 self.screen = Screen::List;
@@ -1901,7 +1926,7 @@ impl App {
             .and_then(|v| v.get_secret(&name))
         {
             Ok(Some(value)) => {
-                crate::usage::human(&scr.vault_dir, "secret.reveal", Some(&name));
+                crate::core::usage::human(&scr.vault_dir, "secret.reveal", Some(&name));
                 scr.reveal = Some(Reveal {
                     name,
                     value,
@@ -1933,7 +1958,7 @@ impl App {
                         )
                     };
                     scr.list_state.select(sel);
-                    crate::usage::human(&scr.vault_dir, "secret.remove", Some(name));
+                    crate::core::usage::human(&scr.vault_dir, "secret.remove", Some(name));
                     self.set_status(MsgKind::Ok, format!("Secret '{name}' removed"));
                 }
                 Ok(false) => self.set_status(MsgKind::Error, format!("Secret '{name}' not found")),
@@ -2030,7 +2055,7 @@ impl App {
                     let mut vault_policy = vault.policy.clone();
                     vault_policy.secrets.insert(
                         form.name.trim().to_string(),
-                        crate::policy::SecretRule {
+                        crate::core::policy::SecretRule {
                             scope,
                             tier: tier_at(form.tier),
                             require_reason: form.require_reason,
@@ -2038,7 +2063,11 @@ impl App {
                         },
                     );
                     let _ = vault.save_policy(&vault_policy);
-                    crate::usage::human(&form.vault_dir, "secret.add", Some(form.name.trim()));
+                    crate::core::usage::human(
+                        &form.vault_dir,
+                        "secret.add",
+                        Some(form.name.trim()),
+                    );
                     self.set_status(MsgKind::Ok, format!("Secret '{}' added", form.name.trim()));
                     let (dir, name) = (form.vault_dir.clone(), form.vault_name.clone());
                     self.enter_secrets(&dir, &name)?;
@@ -2130,7 +2159,11 @@ impl App {
                 );
                 match vault.save_policy(&vault_policy) {
                     Ok(_) => {
-                        crate::usage::human(&form.vault_dir, "secret.classify", Some(&form.secret));
+                        crate::core::usage::human(
+                            &form.vault_dir,
+                            "secret.classify",
+                            Some(&form.secret),
+                        );
                         self.set_status(
                             MsgKind::Ok,
                             format!("Classification for '{}' saved", form.secret),
@@ -2165,7 +2198,7 @@ impl App {
                 JudgeEntry::View(name) => {
                     // `e` jumps to the editor; any other key closes the view.
                     if key.code == KeyCode::Char('e') {
-                        if let Some(ed) = crate::keyring::open_from_session().and_then(|kr| {
+                        if let Some(ed) = crate::core::keyring::open_from_session().and_then(|kr| {
                             kr.data
                                 .judges
                                 .get(&name)
@@ -2190,13 +2223,13 @@ impl App {
             if key.code == KeyCode::Enter {
                 form.error = None;
                 // Master already unlocked → do it now, no prompt.
-                if crate::master::is_unlocked() {
+                if crate::core::master::is_unlocked() {
                     return self.keyring_via_session(form);
                 }
                 // Otherwise prompt the master passphrase. A created keyring always
                 // has a master; only first-ever use (no keyring, no master) sets
                 // one (pass + confirm) before creating the keyring.
-                form.entry = Some(if form.created || crate::master::exists() {
+                form.entry = Some(if form.created || crate::core::master::exists() {
                     JudgeEntry::Passphrase(String::new())
                 } else {
                     JudgeEntry::Init(InitForm::new())
@@ -2226,7 +2259,7 @@ impl App {
             }
             KeyCode::Char('e') if form.selected_judge().is_some() => {
                 let name = form.selected_judge().unwrap().name.clone();
-                match crate::keyring::open_from_session().and_then(|kr| {
+                match crate::core::keyring::open_from_session().and_then(|kr| {
                     kr.data
                         .judges
                         .get(&name)
@@ -2293,9 +2326,9 @@ impl App {
             }
             KeyCode::Enter => {
                 let created = form.created;
-                match crate::master::Master::open(&buf) {
+                match crate::core::master::Master::open(&buf) {
                     Ok(master) => {
-                        let _ = crate::master::unlock_session(master.key_bytes());
+                        let _ = crate::core::master::unlock_session(master.key_bytes());
                         match self.keyring_with_master(&master, created) {
                             Ok(()) => {
                                 form = JudgeForm::load();
@@ -2323,7 +2356,7 @@ impl App {
     /// no further prompt.
     fn keyring_via_session(&mut self, mut form: JudgeForm) -> Result<()> {
         let created = form.created;
-        match crate::master::open_from_session() {
+        match crate::core::master::open_from_session() {
             Some(master) => match self.keyring_with_master(&master, created) {
                 Ok(()) => {
                     let f = JudgeForm::load();
@@ -2347,22 +2380,23 @@ impl App {
     /// create a fresh one wrapped under the master; cache the keyring session.
     fn keyring_with_master(
         &mut self,
-        master: &crate::master::Master,
+        master: &crate::core::master::Master,
         created: bool,
     ) -> std::result::Result<(), String> {
         if created {
-            if !crate::master::keyring_has_keyslot() {
+            if !crate::core::master::keyring_has_keyslot() {
                 return Err("the keyring has no master keyslot — wipe .svault/ and re-init".into());
             }
             let dek = master.unwrap_keyring_dek().map_err(|e| format!("{e}"))?;
-            crate::keyring::unlock_session(dek.bytes()).map_err(|e| format!("{e}"))?;
+            crate::core::keyring::unlock_session(dek.bytes()).map_err(|e| format!("{e}"))?;
         } else {
-            let dek = crate::master::new_dek();
-            let kr = crate::keyring::Keyring::init_with_key(dek).map_err(|e| format!("{e}"))?;
+            let dek = crate::core::master::new_dek();
+            let kr =
+                crate::core::keyring::Keyring::init_with_key(dek).map_err(|e| format!("{e}"))?;
             master
                 .wrap_keyring_dek(kr.key())
                 .map_err(|e| format!("{e}"))?;
-            crate::keyring::unlock_session(kr.key().bytes()).map_err(|e| format!("{e}"))?;
+            crate::core::keyring::unlock_session(kr.key().bytes()).map_err(|e| format!("{e}"))?;
         }
         Ok(())
     }
@@ -2412,16 +2446,16 @@ impl App {
     }
 
     fn submit_keyring_init(&mut self, mut form: JudgeForm, mut init: InitForm) -> Result<()> {
-        if let Err(e) = crate::passphrase::meets_floor(&init.pass) {
+        if let Err(e) = crate::core::passphrase::meets_floor(&init.pass) {
             init.error = Some(e);
             init.focus = 0;
         } else if init.pass != init.confirm {
             init.error = Some("passphrases do not match".into());
             init.focus = 1;
         } else {
-            match crate::master::Master::init(&init.pass) {
+            match crate::core::master::Master::init(&init.pass) {
                 Ok(master) => {
-                    let _ = crate::master::unlock_session(master.key_bytes());
+                    let _ = crate::core::master::unlock_session(master.key_bytes());
                     match self.keyring_with_master(&master, false) {
                         Ok(()) => {
                             self.set_status(
@@ -2542,7 +2576,7 @@ impl App {
             _ => reject!(5, "high threshold must be 0–100".into()),
         };
 
-        let Some(mut kr) = crate::keyring::open_from_session() else {
+        let Some(mut kr) = crate::core::keyring::open_from_session() else {
             form.error = Some("keyring is locked".into());
             self.screen = Screen::Judge(form);
             return Ok(());
@@ -2578,7 +2612,7 @@ impl App {
         let first = kr.data.judges.is_empty();
         kr.data.judges.insert(
             name.clone(),
-            crate::keyring::JudgeDef {
+            crate::core::keyring::JudgeDef {
                 model: ed.model.trim().to_string(),
                 base_url: ed.base_url.trim().to_string(),
                 timeout_secs: timeout,
@@ -2614,12 +2648,12 @@ impl App {
 
     /// Re-open the keyring from the session, mutate it, save, and reload the
     /// screen snapshot. Returns false (with an error set) if locked or save fails.
-    fn with_keyring<F: FnOnce(&mut crate::keyring::KeyringData)>(
+    fn with_keyring<F: FnOnce(&mut crate::core::keyring::KeyringData)>(
         &mut self,
         form: &mut JudgeForm,
         f: F,
     ) -> bool {
-        let Some(mut kr) = crate::keyring::open_from_session() else {
+        let Some(mut kr) = crate::core::keyring::open_from_session() else {
             form.error = Some("keyring is locked".into());
             return false;
         };
@@ -2699,7 +2733,7 @@ impl App {
     /// Dry-run the selected judge against a sample request (the TUI equivalent of
     /// `svault judge test`). Blocks the UI briefly for the HTTP round-trip.
     fn run_judge_test(&mut self, form: &mut JudgeForm, name: &str) {
-        let Some(kr) = crate::keyring::open_from_session() else {
+        let Some(kr) = crate::core::keyring::open_from_session() else {
             form.error = Some("keyring is locked".into());
             return;
         };
@@ -2707,7 +2741,7 @@ impl App {
             form.error = Some(format!("no judge named '{name}'"));
             return;
         };
-        let Some(rt) = crate::judge::JudgeRuntime::from_def(def) else {
+        let Some(rt) = crate::core::judge::JudgeRuntime::from_def(def) else {
             form.test_result = Some((
                 MsgKind::Error,
                 format!("judge '{name}' has no key — press k to set one"),
@@ -2715,25 +2749,25 @@ impl App {
             return;
         };
         let model = rt.model.clone();
-        let ctx = crate::judge::JudgeContext {
+        let ctx = crate::core::judge::JudgeContext {
             caller: "claude-code",
             scope: "database",
             reason: "run the nightly database migration to apply pending changes",
             secret: "DB_URL",
-            tier: crate::policy::Tier::Medium,
+            tier: crate::core::policy::Tier::Medium,
             vault: "demo-vault",
             vault_description: "",
             secret_description: "",
             recent: "no prior requests in the last hour",
         };
-        form.test_result = Some(match crate::judge::evaluate(&rt, &model, &ctx) {
-            crate::judge::JudgeVerdict::Allow { score, rationale } => {
+        form.test_result = Some(match crate::core::judge::evaluate(&rt, &model, &ctx) {
+            crate::core::judge::JudgeVerdict::Allow { score, rationale } => {
                 (MsgKind::Ok, format!("ALLOW (score {score}) — {rationale}"))
             }
-            crate::judge::JudgeVerdict::Deny { score, rationale } => {
+            crate::core::judge::JudgeVerdict::Deny { score, rationale } => {
                 (MsgKind::Warn, format!("DENY (score {score}) — {rationale}"))
             }
-            crate::judge::JudgeVerdict::Unavailable { err } => {
+            crate::core::judge::JudgeVerdict::Unavailable { err } => {
                 (MsgKind::Error, format!("unavailable: {err}"))
             }
         });
@@ -2741,6 +2775,41 @@ impl App {
 }
 
 // ── Free helpers ───────────────────────────────────────────────────────────────
+
+/// Names of the judges in the unlocked keyring (sorted), for the vault
+/// judge-assignment picker. Empty when the keyring is locked or has no judges —
+/// the picker then offers only "default".
+fn available_judge_names() -> Vec<String> {
+    match crate::core::keyring::open_from_session() {
+        Some(kr) => {
+            let mut names: Vec<String> = kr.data.judges.keys().cloned().collect();
+            names.sort();
+            names
+        }
+        None => Vec::new(),
+    }
+}
+
+/// Cycle the vault's assigned judge through `default` (None) then each available
+/// judge. The vault's current judge is always reachable even if it is no longer
+/// in `choices` (e.g. the keyring is locked, or the judge was renamed).
+fn cycle_judge_name(current: &Option<String>, choices: &[String], forward: bool) -> Option<String> {
+    let mut opts: Vec<Option<String>> = vec![None];
+    opts.extend(choices.iter().cloned().map(Some));
+    if let Some(c) = current {
+        if !choices.iter().any(|j| j == c) {
+            opts.push(Some(c.clone()));
+        }
+    }
+    let pos = opts.iter().position(|o| o == current).unwrap_or(0);
+    opts[cycle(pos, opts.len(), forward)].clone()
+}
+
+/// Display label for the assigned-judge picker: the judge name, or `default` for
+/// the keyring default.
+fn judge_name_label(name: &Option<String>) -> String {
+    name.clone().unwrap_or_else(|| "default".to_string())
+}
 
 fn parse_agents(raw: &str) -> Vec<String> {
     raw.split(',')
@@ -2750,18 +2819,18 @@ fn parse_agents(raw: &str) -> Vec<String> {
 }
 
 /// Tier <-> picker-index helpers (0 low · 1 medium · 2 high).
-fn tier_at(idx: usize) -> crate::policy::Tier {
+fn tier_at(idx: usize) -> crate::core::policy::Tier {
     match idx {
-        1 => crate::policy::Tier::Medium,
-        2 => crate::policy::Tier::High,
-        _ => crate::policy::Tier::Low,
+        1 => crate::core::policy::Tier::Medium,
+        2 => crate::core::policy::Tier::High,
+        _ => crate::core::policy::Tier::Low,
     }
 }
-fn tier_idx(t: crate::policy::Tier) -> usize {
+fn tier_idx(t: crate::core::policy::Tier) -> usize {
     match t {
-        crate::policy::Tier::Low => 0,
-        crate::policy::Tier::Medium => 1,
-        crate::policy::Tier::High => 2,
+        crate::core::policy::Tier::Low => 0,
+        crate::core::policy::Tier::Medium => 1,
+        crate::core::policy::Tier::High => 2,
     }
 }
 pub fn tier_label(idx: usize) -> &'static str {
@@ -2778,6 +2847,9 @@ fn create_adjust(form: &mut CreateForm, forward: bool) {
         CreateField::Autolock => form.autolock = !form.autolock,
         CreateField::DefaultTier => form.default_tier = cycle(form.default_tier, 3, forward),
         CreateField::Judge => form.judge = !form.judge,
+        CreateField::JudgeName => {
+            form.judge_name = cycle_judge_name(&form.judge_name, &form.judge_choices, forward)
+        }
         _ => {}
     }
 }
@@ -2788,6 +2860,9 @@ fn settings_adjust(form: &mut SettingsForm, forward: bool) {
         SettingsField::Autolock => form.autolock = !form.autolock,
         SettingsField::DefaultTier => form.default_tier = cycle(form.default_tier, 3, forward),
         SettingsField::Judge => form.judge = !form.judge,
+        SettingsField::JudgeName => {
+            form.judge_name = cycle_judge_name(&form.judge_name, &form.judge_choices, forward)
+        }
         _ => {}
     }
 }
@@ -2813,7 +2888,7 @@ fn classify_adjust(form: &mut ClassifyForm, forward: bool) {
 /// global, so they aren't tied to any one vault. Best-effort; never blocks the
 /// action (it's a no-op when `.svault/` doesn't exist yet).
 fn log_judge(action: &str, detail: Option<&str>) {
-    crate::usage::human(Path::new(SVAULT_DIR), action, detail);
+    crate::core::usage::human(Path::new(SVAULT_DIR), action, detail);
 }
 
 fn cycle(current: usize, len: usize, forward: bool) -> usize {
@@ -2899,7 +2974,7 @@ mod tests {
         tempfile::TempDir,
         std::path::PathBuf,
     ) {
-        let guard = crate::testlock::CWD_LOCK
+        let guard = crate::core::testlock::CWD_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::TempDir::new().unwrap();
@@ -2950,15 +3025,15 @@ mod tests {
 
     #[test]
     fn create_field_order_has_the_right_master_tail() {
-        // Nine base fields, plus the master tail per step.
-        assert_eq!(CreateForm::order_for(MasterStep::Ready).len(), 9);
+        // Ten base fields (incl. the assigned-judge picker), plus the master tail.
+        assert_eq!(CreateForm::order_for(MasterStep::Ready).len(), 10);
         let unlock = CreateForm::order_for(MasterStep::Unlock);
-        assert_eq!(unlock.len(), 10);
+        assert_eq!(unlock.len(), 11);
         assert_eq!(unlock.last(), Some(&CreateField::MasterUnlock));
         let set = CreateForm::order_for(MasterStep::Set);
-        assert_eq!(set.len(), 11);
+        assert_eq!(set.len(), 12);
         assert_eq!(
-            &set[9..],
+            &set[10..],
             &[CreateField::MasterNew, CreateField::MasterConfirm]
         );
         assert_eq!(SettingsField::ORDER.len(), SettingsForm::FIELDS);
@@ -2975,6 +3050,8 @@ mod tests {
         assert!(!form.focus_is_text());
         form.focus = idx(CreateField::Judge);
         assert!(!form.focus_is_text());
+        form.focus = idx(CreateField::JudgeName);
+        assert!(!form.focus_is_text());
         form.master_step = MasterStep::Set;
         form.order = CreateForm::order_for(MasterStep::Set);
         form.focus = idx(CreateField::MasterNew);
@@ -2989,6 +3066,26 @@ mod tests {
             panic!("expected create screen")
         };
         assert!(form.judge, "space must toggle the AI judge on");
+    }
+
+    #[test]
+    fn assigned_judge_cycles_default_then_choices_and_wraps() {
+        let choices = vec!["alpha".to_string(), "beta".to_string()];
+        // default -> alpha -> beta -> default
+        let a = cycle_judge_name(&None, &choices, true);
+        assert_eq!(a.as_deref(), Some("alpha"));
+        let b = cycle_judge_name(&a, &choices, true);
+        assert_eq!(b.as_deref(), Some("beta"));
+        assert_eq!(cycle_judge_name(&b, &choices, true), None);
+        // backward from default wraps to the last choice
+        assert_eq!(
+            cycle_judge_name(&None, &choices, false).as_deref(),
+            Some("beta")
+        );
+        // a judge no longer in the list (renamed / keyring locked) stays reachable
+        let orphan = Some("gone".to_string());
+        assert_eq!(judge_name_label(&orphan), "gone");
+        assert_eq!(cycle_judge_name(&orphan, &choices, true), None);
     }
 
     #[test]
@@ -3011,7 +3108,7 @@ mod tests {
             panic!("expected secret-add screen")
         };
         assert_eq!(f.tier, 1, "right arrow cycles tier low → medium");
-        assert_eq!(tier_at(f.tier), crate::policy::Tier::Medium);
+        assert_eq!(tier_at(f.tier), crate::core::policy::Tier::Medium);
     }
 
     #[test]

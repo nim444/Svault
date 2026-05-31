@@ -21,7 +21,7 @@ pub struct Entry {
     pub secret: String,
     pub scope: String,
     pub tier: String,
-    /// Surface the request came through: "cli" / "mcp" / etc. (see [`crate::usage::Source`]).
+    /// Surface the request came through: "cli" / "mcp" / etc. (see [`crate::core::usage::Source`]).
     #[serde(default = "unknown_source")]
     pub source: String,
     pub decision: String,
@@ -56,7 +56,7 @@ impl Entry {
             secret: secret.to_string(),
             scope: scope.to_string(),
             tier: tier.to_string(),
-            source: crate::usage::source().as_str().to_string(),
+            source: crate::core::usage::source().as_str().to_string(),
             decision: decision.to_string(),
             rule: rule.to_string(),
             reason: reason.to_string(),

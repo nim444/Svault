@@ -17,10 +17,11 @@ For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 | Enforced policy + AI judge (0.9.0 – 0.9.1) | Shipped | The behavioural gate: daemon-enforced policy, peer-UID-stamped audit, and an AI judge for medium/high secrets — driven from both CLI and TUI |
 | Everything-encrypted-at-rest (0.9.2 – 0.9.3) | Shipped | The entire policy surface and all global config moved into encrypted stores; no plaintext config or key files remain |
 | Unified unlock (0.9.4 – 0.9.5) | Shipped | One master passphrase opens every vault (0.9.4) **and the keyring** (0.9.5) — per-vault and keyring passphrases removed; all keyslots over a random data key |
-| YubiKey keyslot (0.9.6) | Next | A YubiKey HMAC-SHA1 touch as an equally-easy alternative unlock — another keyslot over the same master key (either the passphrase or a touch, not 2FA) |
-| Conditional access + escalation (0.9.7) | Planned | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
+| Layered source (0.9.6) | Shipped | Source split into a frontend-agnostic `core` plus `cli` / `tui` / `daemon` frontends (a library crate), with `mcp` / `gui` placeholders — structural only, no behavior change |
+| Conditional access + escalation (0.9.7) | Next | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
 | Agent surface — MCP (0.9.8) | Planned | A local MCP server over the existing daemon socket, `svault install`, and an agent-readable capability descriptor |
 | Stable release (1.0.0) | Target | Final independent security review of the full agent-ready surface + distribution channels, then the first stable release |
+| YubiKey keyslot (post-1.0) | Planned | A YubiKey HMAC-SHA1 touch as an alternative unlock slot over the same master key (passphrase or touch, not 2FA) — postponed past 1.0 |
 | Desktop GUI (2.0.0) | Planned | Tauri vault manager + system tray |
 | Remote / cloud (3.0.0+) | Planned | Remote MCP with OAuth, more platforms, and optional anomaly scoring via Claude Haiku |
 
@@ -117,8 +118,9 @@ secrets to type. The fix is the **keyslot model** (the same idea as LUKS or
 1Password):
 
 - Each store gets a **random data key** that encrypts its contents. That data key
-  is wrapped in one or more **keyslots** — a master passphrase, the existing
-  recovery code, and (next) a YubiKey. Per-vault and keyring passphrases go away.
+  is wrapped in one or more **keyslots** — a master passphrase and the existing
+  recovery code (a YubiKey slot is planned post-1.0). Per-vault and keyring
+  passphrases go away.
 - **Any one slot opens the store.** `svault unlock` opens every vault **and the
   keyring** at once; `svault lock --all` clears them and the master session.
 
@@ -135,13 +137,16 @@ like a vault — a random data key wrapped under the master in
 init | unlock` and the TUI judge screen go through the master, and `svault unlock`
 opens the keyring along with the vaults. There is truly one secret to type.
 
-### YubiKey keyslot (0.9.6)
+### Layered source (0.9.6, shipped)
 
-A **YubiKey keyslot** via `svault master enroll-yubikey` (HMAC-SHA1
-challenge-response, KeePassXC-style) — additive over the same master key, no data
-re-encrypted: type the master passphrase **or** touch the YubiKey, either is
-sufficient (not a two-step 2FA). Built behind a `ChallengeResponse` trait with a
-fake responder for CI and verified on real hardware before it ships.
+A structural refactor only — no behavior, CLI surface, or on-disk format change.
+`src/` became a **library crate** (`lib.rs`) with the `svault` binary reduced to a
+thin wrapper over `cli::run()`, split into a frontend-agnostic **`core`** (crypto,
+vault storage, the policy engine, the AI judge, keyring/master, recovery, audit,
+…) and the **frontends** that drive it: `daemon/`, `tui/`, `cli/`, plus `mcp/` and
+`gui/` placeholders. This lets the planned MCP and GUI surfaces reuse `core`
+without touching the CLI or TUI. (The YubiKey keyslot that previously held the
+0.9.6 slot is **postponed to post-1.0** — see [Planned (post-1.0)](#planned-post-10).)
 
 ### Conditional access + anomaly escalation (0.9.7)
 
@@ -192,6 +197,16 @@ A small backlog of accepted, non-blocking items remains: a Windows owner-only
 DACL, a tamper-evident audit sink, and tunable Argon2id parameters.
 
 ## Planned (post-1.0)
+
+### YubiKey keyslot
+
+A **YubiKey keyslot** via `svault master enroll-yubikey` (HMAC-SHA1
+challenge-response, KeePassXC-style) — additive over the same master key, no data
+re-encrypted: type the master passphrase **or** touch the YubiKey, either is
+sufficient (not a two-step 2FA). Built behind a `ChallengeResponse` trait with a
+fake responder for CI and verified on real hardware before it ships. Originally
+slated for 0.9.6; **postponed to after 1.0** so the 1.0 review focuses on the
+agent-ready surface rather than hardware-token unlock.
 
 ### 2.0.0 — Desktop GUI (Tauri)
 

@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use rand::RngCore;
 use std::path::Path;
 
-use crate::crypto::{self, VaultKey, SALT_SIZE};
+use crate::core::crypto::{self, VaultKey, SALT_SIZE};
 
 const RECOVERY_FILE: &str = "recovery.enc";
 const CODE_BYTES: usize = 20; // 160 bits
@@ -64,7 +64,7 @@ pub fn write_at(path: &Path, key: &VaultKey, code: &str) -> Result<()> {
     let kek = VaultKey::derive(&normalize(code), &salt)?;
     let blob = crypto::encrypt(&kek, &salt, key.bytes())?;
     // A recovery slot wraps a key-equivalent — keep it owner-only (#14).
-    crate::secfile::write_owner_only(path, &blob)?;
+    crate::core::secfile::write_owner_only(path, &blob)?;
     Ok(())
 }
 
@@ -147,14 +147,14 @@ mod tests {
 
     #[test]
     fn recovered_key_can_be_rewrapped_and_still_opens_the_vault() {
-        use crate::meta::{VaultMeta, VaultSettings};
-        use crate::policy::VaultPolicyData;
-        use crate::vault::Vault;
+        use crate::core::meta::{VaultMeta, VaultSettings};
+        use crate::core::policy::VaultPolicyData;
+        use crate::core::vault::Vault;
         let dir = TempDir::new().unwrap();
         let vault_dir = dir.path().join("v");
         let meta = VaultMeta::new("v".to_string(), "d".to_string(), VaultSettings::default());
         // A vault under a random data key (the unified-unlock model).
-        let dek = crate::master::new_dek();
+        let dek = crate::core::master::new_dek();
         let vault =
             Vault::init_with_key(&vault_dir, dek, meta, VaultPolicyData::default()).unwrap();
         vault.add_secret("K", "val").unwrap();

@@ -14,6 +14,8 @@
 //! On non-Unix platforms this module compiles to stubs and the CLI falls back
 //! to the file session (see `client`).
 
+pub mod client;
+
 use serde::{Deserialize, Serialize};
 
 pub const SOCKET_NAME: &str = "daemon.sock";
@@ -78,7 +80,7 @@ pub enum Response {
     /// the granted-status line).
     Granted {
         value: String,
-        tier: crate::policy::Tier,
+        tier: crate::core::policy::Tier,
     },
     /// A gated request was denied by policy or the AI judge.
     Denied {
@@ -110,10 +112,10 @@ pub fn is_expired(idle_secs: u64, age_secs: u64, idle_timeout: u64, max_unlocked
 #[cfg(unix)]
 mod imp {
     use super::{is_expired, Request, Response, VaultStatus, LOG_NAME, PID_NAME, SOCKET_NAME};
-    use crate::crypto::VaultKey;
-    use crate::judge::JudgeRuntime;
-    use crate::vault::{Vault, SVAULT_DIR};
-    use crate::{audit, gate, policy};
+    use crate::core::crypto::VaultKey;
+    use crate::core::judge::JudgeRuntime;
+    use crate::core::vault::{Vault, SVAULT_DIR};
+    use crate::core::{audit, gate, policy};
     use anyhow::{anyhow, Context, Result};
     use std::collections::HashMap;
     use std::io::{BufRead, BufReader, Write};
@@ -193,7 +195,7 @@ mod imp {
     /// the gate then applies the static tier rules. Per-vault `enabled = false`
     /// opt-out is honored inside the gate.
     fn resolve_judge(policy: &policy::VaultPolicyData) -> Option<JudgeRuntime> {
-        let kr = crate::keyring::open_from_session()?;
+        let kr = crate::core::keyring::open_from_session()?;
         let (_name, def) = kr.data.resolve_judge(policy.judge.judge.as_deref())?;
         JudgeRuntime::from_def(def)
     }
@@ -703,7 +705,7 @@ mod imp {
     /// Foreground server loop (`svault daemon run`).
     pub fn run() -> Result<()> {
         let base = base_dir();
-        crate::secfile::create_dir_owner_only(&base).context("create .svault directory")?;
+        crate::core::secfile::create_dir_owner_only(&base).context("create .svault directory")?;
         let sock = socket_path(&base);
         if sock.exists() {
             if ping(&base) {
@@ -716,7 +718,7 @@ mod imp {
         // keyring is already unlocked, else use built-in defaults. (Changing
         // these takes effect on the next daemon start.) The judge itself is
         // resolved per-request, so it activates as soon as the keyring unlocks.
-        let kr = crate::keyring::open_from_session();
+        let kr = crate::core::keyring::open_from_session();
         let (idle, max, max_conns, judge_on) = match &kr {
             Some(k) => (
                 k.data.lock.idle_timeout_secs,
@@ -725,8 +727,8 @@ mod imp {
                 k.data.judge_enabled,
             ),
             None => {
-                let l = crate::config::LockConfig::default();
-                let d = crate::config::DaemonConfig::default();
+                let l = crate::core::config::LockConfig::default();
+                let d = crate::core::config::DaemonConfig::default();
                 (
                     l.idle_timeout_secs,
                     l.max_unlocked_secs,
@@ -773,7 +775,7 @@ mod imp {
         use std::process::{Command, Stdio};
 
         let base = base_dir();
-        crate::secfile::create_dir_owner_only(&base)?;
+        crate::core::secfile::create_dir_owner_only(&base)?;
         if is_running(&base) {
             let pid = read_pid(&base)
                 .map(|p| p.to_string())
@@ -921,7 +923,7 @@ mod imp {
         println!("svault daemon doctor");
         println!("  platform           unix (native daemon)");
 
-        let kr = crate::keyring::open_from_session();
+        let kr = crate::core::keyring::open_from_session();
         let (idle_secs, max_secs, src) = match &kr {
             Some(k) => (
                 k.data.lock.idle_timeout_secs,
@@ -929,7 +931,7 @@ mod imp {
                 "keyring",
             ),
             None => {
-                let l = crate::config::LockConfig::default();
+                let l = crate::core::config::LockConfig::default();
                 (
                     l.idle_timeout_secs,
                     l.max_unlocked_secs,
@@ -1025,9 +1027,9 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use crate::meta::{VaultMeta, VaultSettings};
-        use crate::policy::VaultPolicyData;
-        use crate::vault::Vault;
+        use crate::core::meta::{VaultMeta, VaultSettings};
+        use crate::core::policy::VaultPolicyData;
+        use crate::core::vault::Vault;
         use tempfile::TempDir;
 
         fn make_vault(base: &Path, name: &str, pass: &str) {
@@ -1061,7 +1063,7 @@ mod imp {
             idle: u64,
             max: u64,
             max_conns: usize,
-            judge: Option<crate::judge::JudgeRuntime>,
+            judge: Option<crate::core::judge::JudgeRuntime>,
         ) {
             let sock = socket_path(&base);
             let listener = UnixListener::bind(&sock).unwrap();
@@ -1086,7 +1088,7 @@ mod imp {
         }
 
         // ── Gated (agent path) test scaffolding ────────────────────────────
-        use crate::policy::Tier;
+        use crate::core::policy::Tier;
         const PASS: &str = "Str0ng!Pass#99";
 
         /// A vault with one classified secret, so the daemon gate has a tier to
@@ -1097,7 +1099,7 @@ mod imp {
             let mut policy = VaultPolicyData::default();
             policy.secrets.insert(
                 secret.to_string(),
-                crate::policy::SecretRule {
+                crate::core::policy::SecretRule {
                     scope: scope.to_string(),
                     tier,
                     require_reason: false,
@@ -1109,14 +1111,16 @@ mod imp {
         }
 
         struct FakeJudge(std::result::Result<String, String>);
-        impl crate::judge::JudgeTransport for FakeJudge {
+        impl crate::core::judge::JudgeTransport for FakeJudge {
             fn chat(&self, _m: &str, _s: &str, _u: &str) -> anyhow::Result<String> {
                 self.0.clone().map_err(|e| anyhow::anyhow!(e))
             }
         }
 
-        fn judge_rt(reply: std::result::Result<String, String>) -> crate::judge::JudgeRuntime {
-            crate::judge::JudgeRuntime {
+        fn judge_rt(
+            reply: std::result::Result<String, String>,
+        ) -> crate::core::judge::JudgeRuntime {
+            crate::core::judge::JudgeRuntime {
                 model: "fake".into(),
                 allow_threshold: 60,
                 high_threshold: 80,
@@ -1179,7 +1183,7 @@ mod imp {
                 other => panic!("expected Granted, got {other:?}"),
             }
             // The decision is audited with the agent source and a peer UID (N-1/N-5).
-            let entries = crate::audit::all(&vault_dir(&base, "v")).unwrap();
+            let entries = crate::core::audit::all(&vault_dir(&base, "v")).unwrap();
             assert!(entries
                 .iter()
                 .any(|e| e.source == "agent" && e.decision == "allow" && e.peer_uid.is_some()));
@@ -1690,7 +1694,7 @@ mod imp {
     use std::path::{Path, PathBuf};
 
     pub fn base_dir() -> PathBuf {
-        PathBuf::from(crate::vault::SVAULT_DIR)
+        PathBuf::from(crate::core::vault::SVAULT_DIR)
     }
     pub fn is_running(_base: &Path) -> bool {
         false

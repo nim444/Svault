@@ -130,7 +130,7 @@ pub fn import_bundle_as(raw: &str, svault_base: &Path, target_name: &str) -> Res
 
     // Owner-only (0700) like Vault::init, not the default-umask 0755 of create_dir_all,
     // so a later .session in this dir is never reachable via a traversable parent.
-    crate::secfile::create_dir_owner_only(&target)?;
+    crate::core::secfile::create_dir_owner_only(&target)?;
     std::fs::write(
         target.join(".gitignore"),
         ".session\naudit.log\nusage.log\n",
@@ -204,18 +204,18 @@ mod tests {
 
     /// Build a minimal real vault on disk so build/import touch actual files.
     fn make_vault(base: &Path, name: &str) {
-        use crate::meta::{VaultMeta, VaultSettings};
-        use crate::policy::VaultPolicyData;
-        use crate::vault::Vault;
+        use crate::core::meta::{VaultMeta, VaultSettings};
+        use crate::core::policy::VaultPolicyData;
+        use crate::core::vault::Vault;
         let dir = base.join(name);
         let meta = VaultMeta::new(name.to_string(), "d".to_string(), VaultSettings::default());
         let vault = Vault::init(&dir, "Str0ng!Pass#99", meta, VaultPolicyData::default()).unwrap();
-        crate::recovery::write(&dir, vault.key(), "AAAA-BBBB-CCCC").unwrap();
+        crate::core::recovery::write(&dir, vault.key(), "AAAA-BBBB-CCCC").unwrap();
     }
 
     #[test]
     fn build_then_import_recreates_an_openable_vault() {
-        use crate::vault::Vault;
+        use crate::core::vault::Vault;
         let src = TempDir::new().unwrap();
         make_vault(src.path(), "v");
         let json = build_bundle(&src.path().join("v"), "v", "local").unwrap();
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn reimport_on_same_base_uses_a_suffixed_name() {
-        use crate::vault::Vault;
+        use crate::core::vault::Vault;
         let src = TempDir::new().unwrap();
         make_vault(src.path(), "v");
         let json = build_bundle(&src.path().join("v"), "v", "local").unwrap();
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn rename_after_import_resigns_meta_to_match_dir() {
-        use crate::vault::Vault;
+        use crate::core::vault::Vault;
         let src = TempDir::new().unwrap();
         make_vault(src.path(), "v");
         let json = build_bundle(&src.path().join("v"), "v", "local").unwrap();

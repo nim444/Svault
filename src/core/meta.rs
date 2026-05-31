@@ -121,7 +121,7 @@ pub struct VaultJudgeConfig {
 /// plaintext, so it carries only what the pre-unlock vault list needs and *no*
 /// policy that would help an agent plan a bypass. The entire policy surface
 /// (per-secret classification, access rules, caller rules, judge overrides) is
-/// AES-256-GCM encrypted inside `vault.enc` (see [`crate::policy::VaultPolicyData`])
+/// AES-256-GCM encrypted inside `vault.enc` (see [`crate::core::policy::VaultPolicyData`])
 /// and is only readable once the vault is unlocked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultMeta {

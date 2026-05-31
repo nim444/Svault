@@ -12,8 +12,8 @@
 
 use std::path::Path;
 
-use crate::judge::{self, JudgeContext, JudgeRuntime, JudgeVerdict};
-use crate::policy::{self, Decision, Tier, VaultPolicyData};
+use crate::core::judge::{self, JudgeContext, JudgeRuntime, JudgeVerdict};
+use crate::core::policy::{self, Decision, Tier, VaultPolicyData};
 
 const HIGH_HUMAN_ONLY: &str =
     "high-sensitivity secret — a human must retrieve it via 'svault secret get'";
@@ -148,7 +148,7 @@ fn deny(tier: Tier, why: &str) -> Verdict {
 /// judge as a burst/anomaly signal.
 pub fn recent_summary(vault_dir: &Path, caller: &str) -> String {
     let since = chrono::Utc::now() - chrono::Duration::hours(1);
-    let entries = crate::audit::recent(vault_dir, caller, since).unwrap_or_default();
+    let entries = crate::core::audit::recent(vault_dir, caller, since).unwrap_or_default();
     if entries.is_empty() {
         return "no prior requests in the last hour".to_string();
     }

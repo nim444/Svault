@@ -69,6 +69,33 @@ then the static tier rules apply (high = human-only).
 - **`.session`**, **`.keyring.session`**, **`audit.log`**, and **`usage.log`** are always gitignored and created with mode `0600` (owner read/write only). The per-vault `.gitignore` is self-healing — recording the first usage event adds any missing log lines, so vaults created before usage logging are covered too.
 - **`usage.log`** is the activity stream behind the TUI `v` view: who did what, when, and through which surface (the `source`: `cli` / `tui` / `gui` / `mcp`) — human vs agent via the actor, never any secret value. Actor + source distinguish e.g. a human at the CLI from an agent via MCP. `audit.log` carries the same `source` field. See [Interactive mode](tui.md#activity-timeline).
 
+## Source layout
+
+Svault is a library crate (`src/lib.rs`) with a thin `svault` binary (`src/main.rs`)
+that just calls `cli::run()`. The source is split into a reusable **core** and the
+**frontends** that drive it — a frontend never reimplements secret handling, it
+calls into `core`.
+
+```
+src/
+  lib.rs            pub mod core; daemon; tui; cli; mcp; gui;
+  main.rs           fn main() { svault_ai::cli::run() }
+  core/             frontend-agnostic engine — no dependency on any frontend
+    crypto, secfile, passphrase, config, meta, master, recovery, keyring,
+    vault, policy, judge, gate, audit, usage, session, portable
+  daemon/           Unix unlock daemon (mod.rs) + its client (client.rs)
+  tui/              interactive Ratatui terminal UI (mod, ui, theme)
+  cli/              the `svault` command-line frontend; exposes cli::run()
+  mcp/              placeholder for a future MCP-server frontend
+  gui/              placeholder for a future GUI frontend
+```
+
+Dependency direction is one-way: `core` depends on nothing above it; `daemon`,
+`tui`, and `cli` depend on `core` (and `cli`/`tui` reach the daemon client). Adding
+a frontend means adding a sibling module that consumes `core` — no churn in the
+existing layers. Note that the `core` module name shadows the std `core` crate; the
+source uses `std` throughout, so reach the std crate with `::core` if ever needed.
+
 ## Authentication: the keyslot model
 
 Every store — each vault **and the keyring** — is encrypted by a **random data
@@ -90,7 +117,7 @@ two-step 2FA. Today there are three slots:
 Planned additional keyslots — each is purely additive (no data is re-encrypted),
 and any one still opens the store on its own:
 
-- **YubiKey** — hardware HMAC-SHA1 challenge-response *(next, 0.9.6)*.
+- **YubiKey** — hardware HMAC-SHA1 challenge-response *(planned, post-1.0)*.
 - **Google Authenticator (TOTP)** / **Touch ID / Face ID** *(planned)*.
 
 | Slot | UX | Security | Notes |
@@ -98,7 +125,7 @@ and any one still opens the store on its own:
 | Master passphrase | Type once | Strong if long | Unlocks every vault and the keyring; always available |
 | Master recovery code | Paste the saved code | Equal-strength (160-bit) | Resets a forgotten master; reopens every store |
 | Per-vault recovery code | Paste the saved code | Equal-strength (160-bit) | Per-vault fallback + cross-machine import |
-| YubiKey *(next)* | Touch the key | Strong, hardware-backed | An alternative slot — touch instead of typing |
+| YubiKey *(post-1.0)* | Touch the key | Strong, hardware-backed | An alternative slot — touch instead of typing |
 | TOTP / Touch ID *(planned)* | Code / biometric | Medium–strong | Extra alternatives, no 2FA requirement |
 
 See the [Security model](security.md) for the crypto guarantees behind each store.

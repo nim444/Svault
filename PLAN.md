@@ -139,9 +139,9 @@ socket — so it widens capability without changing the trust model.
 used to have its own passphrase and the keyring another; that was too many to
 type. The **keyslot model** (LUKS / 1Password-style): each store gets a random
 **data key** that encrypts its contents, wrapped in one or more **keyslots** — a
-master passphrase, the existing recovery code, and (next) a YubiKey. Per-vault and
-keyring passphrases go away. **Any one slot opens the store**; `svault unlock`
-opens every vault **and the keyring** at once.
+master passphrase and the existing recovery code (a YubiKey slot is planned
+post-1.0). Per-vault and keyring passphrases go away. **Any one slot opens the
+store**; `svault unlock` opens every vault **and the keyring** at once.
 
 *Shipped in 0.9.4 (vaults):* the `master` module — a random master key (MK)
 wrapped under the passphrase in `.svault/master.enc`, each vault's random data key
@@ -158,11 +158,14 @@ own passphrase is gone; `svault keyring init | unlock` and the TUI judge screen 
 through the master, `svault unlock` opens the keyring too, and `svault master
 rekey` covers it. `svault keyring rekey` removed. One secret now opens everything.
 
-**YubiKey keyslot (0.9.6).** A **YubiKey keyslot** (`svault master enroll-yubikey`,
-HMAC-SHA1 challenge-response, KeePassXC-style) — additive over the same MK, no data
-re-encrypted: type the master passphrase *or* touch the YubiKey, either is
-sufficient (not 2FA). Built behind a `ChallengeResponse` trait with a fake
-responder for CI and verified on real hardware before it ships.
+**Layered source (0.9.6, shipped).** Structural refactor only — no behavior, CLI
+surface, or on-disk format change. `src/` became a **library crate** (`lib.rs`)
+with a thin `svault` bin over `cli::run()`, split into a frontend-agnostic
+**`core`** (crypto, vault, policy, judge, keyring, master, recovery, …) and the
+frontends that drive it: `daemon/`, `tui/`, `cli/`, plus `mcp/` and `gui/`
+placeholders. Lets the planned MCP and GUI surfaces reuse `core` without touching
+the CLI or TUI. (The YubiKey keyslot that previously held the 0.9.6 slot is
+postponed to post-1.0 — see [Deferred / not planned](#deferred--not-planned).)
 
 **Conditional access + anomaly escalation (0.9.7).** Add **conditions** to a
 secret's encrypted policy — allowed time windows (e.g. only Fri 10:00–12:00 while
@@ -286,8 +289,12 @@ later is the remote and hosted surface:
 
 ## Deferred / not planned
 
-- **Master passphrase + YubiKey unlock** — now on the path to 1.0 via the keyslot
-  model (0.9.4 – 0.9.6; see [Path to 1.0.0](#path-to-100)), no longer deferred.
+- **YubiKey unlock (post-1.0)** — master-passphrase unlock shipped via the keyslot
+  model (0.9.4 – 0.9.5). A YubiKey keyslot (`svault master enroll-yubikey`,
+  HMAC-SHA1 challenge-response, KeePassXC-style — additive over the same MK, no
+  data re-encrypted: passphrase *or* touch, not 2FA, behind a `ChallengeResponse`
+  trait with a CI fake and real-hardware verification) is **postponed to after
+  1.0**, so the 1.0 review stays focused on the agent-ready surface.
 - **TOTP and macOS Touch ID / Face ID** — the keyslot model could host them as
   extra slots later, but they are not on the path to 1.0.
 - **External backends** (cloud / self-hosted / S3) — `local` is the only wired

@@ -235,10 +235,11 @@ flowchart TD
 | **Enforced policy + AI judge** | Shipped | Daemon-enforced policy engine (peer-UID-audited) — reason, scopes, tiers, rate limit, burst — plus the AI judge (OpenRouter) gating medium/high-tier secrets |
 | **Everything encrypted at rest** | Shipped | The whole policy surface in `vault.enc` and all global config + the judge registry (multiple named judges, with API keys) in `keyring.enc` — nothing abusable in plaintext; per-vault judge assignment; generic caller-facing denials |
 | **Unified unlock** | Shipped (0.9.4 – 0.9.5) | One master passphrase wraps a random data key per store (keyslot model); per-vault passphrases removed (0.9.4) and the keyring brought under the master too (0.9.5); `svault master init / rekey / status` |
-| **YubiKey keyslot** | Next (0.9.6) | A YubiKey HMAC-SHA1 touch as an equally-easy alternative unlock — another keyslot over the same key, so either the master passphrase or a touch opens everything (not 2FA) |
-| **Conditional access + escalation** | Planned | Time-window / caller conditions in the encrypted policy; brute-force / anomaly seals a secret and escalates to a human (agents never self-clear) |
-| **Local MCP** | Planned | `svault mcp` over the daemon socket (auth = same-UID + daemon-unlocked), `svault install`, and an agent capability descriptor that advertises the request interface, not the decision criteria |
+| **Layered source** | Shipped (0.9.6) | Source split into a frontend-agnostic `core` plus `cli` / `tui` / `daemon` frontends (a library crate), with `mcp` / `gui` placeholders — structural only, so future frontends reuse `core` |
+| **Conditional access + escalation** | Next (0.9.7) | Time-window / caller conditions in the encrypted policy; brute-force / anomaly seals a secret and escalates to a human (agents never self-clear) |
+| **Local MCP** | Planned (0.9.8) | `svault mcp` over the daemon socket (auth = same-UID + daemon-unlocked), `svault install`, and an agent capability descriptor that advertises the request interface, not the decision criteria |
 | **1.0.0** | Target | A final independent review of the full agent-ready surface and install channels (script, Homebrew, Docker), then the first stable release |
+| **YubiKey keyslot** | Post-1.0 | A YubiKey HMAC-SHA1 touch as an alternative unlock — another keyslot over the same master key (passphrase or touch, not 2FA); postponed past 1.0 |
 | **2.0.0** | Planned | Desktop GUI (Tauri) + system tray |
 | **3.0.0+ / Cloud** | Planned | Remote MCP with OAuth, more platforms, optional anomaly scoring via Claude Haiku |
 

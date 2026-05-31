@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-use crate::crypto::{self, VaultKey, SALT_SIZE};
-use crate::meta::VaultMeta;
-use crate::policy::VaultPolicyData;
+use crate::core::crypto::{self, VaultKey, SALT_SIZE};
+use crate::core::meta::VaultMeta;
+use crate::core::policy::VaultPolicyData;
 
 pub const SVAULT_DIR: &str = ".svault";
 
@@ -84,9 +84,9 @@ impl Vault {
         // Owner-only .svault/ and vault dir so other local users can't even
         // traverse in to read the (encrypted) files or the session (#16).
         if let Some(parent) = vault_dir.parent() {
-            crate::secfile::create_dir_owner_only(parent)?;
+            crate::core::secfile::create_dir_owner_only(parent)?;
         }
-        crate::secfile::create_dir_owner_only(vault_dir)?;
+        crate::core::secfile::create_dir_owner_only(vault_dir)?;
 
         // Write a local .gitignore so the session file and the logs can never be
         // accidentally committed even if the repo-level .gitignore is missing or wrong.
@@ -132,9 +132,9 @@ impl Vault {
             return Err(anyhow!("Vault already exists at {}", vault_dir.display()));
         }
         if let Some(parent) = vault_dir.parent() {
-            crate::secfile::create_dir_owner_only(parent)?;
+            crate::core::secfile::create_dir_owner_only(parent)?;
         }
-        crate::secfile::create_dir_owner_only(vault_dir)?;
+        crate::core::secfile::create_dir_owner_only(vault_dir)?;
         std::fs::write(
             vault_dir.join(".gitignore"),
             ".session\naudit.log\nusage.log\n",
@@ -310,8 +310,8 @@ pub fn list_vault_dirs_in(base: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::meta::{VaultMeta, VaultSettings};
-    use crate::policy::VaultPolicyData;
+    use crate::core::meta::{VaultMeta, VaultSettings};
+    use crate::core::policy::VaultPolicyData;
     use tempfile::TempDir;
 
     fn tmp_vault(dir: &TempDir, name: &str, passphrase: &str) -> Vault {
@@ -502,7 +502,7 @@ mod tests {
     /// encrypted payload.
     #[test]
     fn policy_roundtrips_through_encrypted_payload() {
-        use crate::policy::{CallerRule, SecretRule, Tier};
+        use crate::core::policy::{CallerRule, SecretRule, Tier};
         let dir = TempDir::new().unwrap();
         let vault_dir = dir.path().join("test");
         let v = tmp_vault(&dir, "test", "Str0ng!Pass#99");
@@ -541,7 +541,7 @@ mod tests {
     /// plan a bypass: no tier/scope/description/caller appears at rest.
     #[test]
     fn meta_yaml_leaks_no_classification_at_rest() {
-        use crate::policy::{SecretRule, Tier};
+        use crate::core::policy::{SecretRule, Tier};
         let dir = TempDir::new().unwrap();
         let vault_dir = dir.path().join("test");
         let v = tmp_vault(&dir, "test", "Str0ng!Pass#99");

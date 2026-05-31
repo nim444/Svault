@@ -12,7 +12,7 @@
 //! Since 0.9.5 the keyring is a keyslot-backed store exactly like a vault: it has
 //! its own random 32-byte **data key (DEK)** that encrypts `keyring.enc`, and the
 //! DEK is wrapped under the master key in `.svault/keyring.keyslot.enc` (see
-//! [`crate::master`]). There is no separate keyring passphrase — the **master
+//! [`crate::core::master`]). There is no separate keyring passphrase — the **master
 //! passphrase opens the keyring along with every vault**. Unlocking the master
 //! unwraps the DEK and caches it in a `0600` session (exactly like a vault); the
 //! daemon reads that session. Until unlocked the judge is off and the static tier
@@ -33,9 +33,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::config::{Backend, DaemonConfig, LockConfig};
-use crate::crypto::{self, VaultKey, SALT_SIZE};
-use crate::vault::SVAULT_DIR;
+use crate::core::config::{Backend, DaemonConfig, LockConfig};
+use crate::core::crypto::{self, VaultKey, SALT_SIZE};
+use crate::core::vault::SVAULT_DIR;
 
 /// Current on-disk version of the encrypted keyring payload.
 const KEYRING_VERSION: u32 = 1;
@@ -191,7 +191,7 @@ pub struct Keyring {
 impl Keyring {
     /// Create a fresh, empty keyring encrypted under a random data key (DEK).
     /// The caller wraps the DEK under the master (see
-    /// [`crate::master::Master::wrap_keyring_dek`]). Errors if one already exists
+    /// [`crate::core::master::Master::wrap_keyring_dek`]). Errors if one already exists
     /// (callers should check [`exists`] first).
     pub fn init_with_key(dek: VaultKey) -> Result<Self> {
         let path = keyring_path();
@@ -200,7 +200,7 @@ impl Keyring {
         }
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
-                crate::secfile::create_dir_owner_only(parent)?;
+                crate::core::secfile::create_dir_owner_only(parent)?;
             }
         }
         // The DEK is used directly; the salt is random filler kept only so the
@@ -209,7 +209,7 @@ impl Keyring {
         rand::thread_rng().fill_bytes(&mut salt);
         let data = KeyringData::default();
         let blob = encrypt_data(&dek, &salt, &data)?;
-        crate::secfile::write_owner_only(&path, &blob)?;
+        crate::core::secfile::write_owner_only(&path, &blob)?;
         Ok(Self { data, key: dek })
     }
 
@@ -236,7 +236,7 @@ impl Keyring {
             .try_into()
             .expect("slice length checked against SALT_SIZE above");
         let blob = encrypt_data(&self.key, &salt, &self.data)?;
-        crate::secfile::write_owner_only(&path, &blob)?;
+        crate::core::secfile::write_owner_only(&path, &blob)?;
         Ok(())
     }
 }
@@ -247,7 +247,7 @@ impl Keyring {
 /// daemon can open it without re-prompting. Never stores the passphrase.
 pub fn unlock_session(key: &[u8; 32]) -> Result<()> {
     let encoded = hex::encode(key);
-    crate::secfile::write_owner_only(&session_path(), encoded.as_bytes())?;
+    crate::core::secfile::write_owner_only(&session_path(), encoded.as_bytes())?;
     Ok(())
 }
 
@@ -283,7 +283,7 @@ pub fn open_from_session() -> Option<Keyring> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testlock::CWD_LOCK;
+    use crate::core::testlock::CWD_LOCK;
     use std::sync::MutexGuard;
 
     fn in_temp_cwd() -> (MutexGuard<'static, ()>, tempfile::TempDir, PathBuf) {
@@ -310,7 +310,7 @@ mod tests {
     fn init_open_roundtrips_and_wrong_key_rejected() {
         let (_g, _tmp, prev) = in_temp_cwd();
 
-        let dek = crate::master::new_dek();
+        let dek = crate::core::master::new_dek();
         let dek_bytes = *dek.bytes();
         let mut kr = Keyring::init_with_key(dek).unwrap();
         kr.data.judge_enabled = true;
@@ -336,7 +336,7 @@ mod tests {
     fn nothing_sensitive_is_readable_at_rest() {
         let (_g, _tmp, prev) = in_temp_cwd();
 
-        let mut kr = Keyring::init_with_key(crate::master::new_dek()).unwrap();
+        let mut kr = Keyring::init_with_key(crate::core::master::new_dek()).unwrap();
         kr.data.judges.insert("j".into(), sample_judge());
         kr.save().unwrap();
 
@@ -362,8 +362,8 @@ mod tests {
         let (_g, _tmp, prev) = in_temp_cwd();
 
         // A keyring under a DEK that is wrapped under the master.
-        let m = crate::master::Master::init("Old!Master#1").unwrap();
-        let dek = crate::master::new_dek();
+        let m = crate::core::master::Master::init("Old!Master#1").unwrap();
+        let dek = crate::core::master::new_dek();
         let dek_bytes = *dek.bytes();
         let mut kr = Keyring::init_with_key(dek).unwrap();
         kr.data.judges.insert("j".into(), sample_judge());
@@ -374,7 +374,7 @@ mod tests {
         // Changing the master passphrase never moves the DEK, so the same DEK
         // still opens the keyring afterwards.
         m.rekey("New!Master#2").unwrap();
-        let reopened = crate::master::Master::open("New!Master#2").unwrap();
+        let reopened = crate::core::master::Master::open("New!Master#2").unwrap();
         let recovered = reopened.unwrap_keyring_dek().unwrap();
         assert_eq!(recovered.bytes(), &dek_bytes);
         let r = Keyring::open_with_key(recovered).unwrap();
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn session_caches_key_then_lock_clears() {
         let (_g, _tmp, prev) = in_temp_cwd();
-        crate::secfile::create_dir_owner_only(&PathBuf::from(SVAULT_DIR)).unwrap();
+        crate::core::secfile::create_dir_owner_only(&PathBuf::from(SVAULT_DIR)).unwrap();
 
         assert!(!is_unlocked());
         unlock_session(&[9u8; 32]).unwrap();

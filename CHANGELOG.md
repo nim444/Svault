@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-06-01
+
+The **layered source** release. Everything used to live flat in `src/` with all
+20 modules and the entire CLI (2391 lines) declared in `main.rs`, as a
+binary-only crate. 0.9.6 reshapes the source into a library crate with explicit
+layers — a reusable, frontend-agnostic `core` plus the frontends that drive it —
+so future frontends (an MCP server, a GUI) can reuse `core` without touching the
+CLI or TUI. The restructure is **purely structural** — no behavior, CLI surface,
+or on-disk format changed, and there is nothing to migrate — and the release also
+bundles a few TUI UX fixes alongside it.
+
+### Added
+- **Per-vault judge assignment (CLI + TUI).** You can now choose *which* keyring
+  judge gates a vault, not just whether the judge is on. The TUI create/settings
+  forms gained an **Assigned judge** picker (space / ←→ cycles `default` → each
+  judge in the keyring), and `svault create` / `svault settings` gained the
+  matching **Assigned judge** prompt. `svault settings` now also toggles the
+  per-vault AI judge on/off (previously it managed neither). All wired to the
+  vault's encrypted `judge` field; `default` falls back to the keyring's default
+  judge, and the vault's current judge stays selectable even when the keyring is
+  locked or the judge was renamed.
+
+### Changed
+- **Clearer judge API-key state in the TUI.** The judge manager now labels each
+  judge's key as `key set` (stored, green), `env key` (`$SVAULT_OPENROUTER_KEY`,
+  amber), or `no key` (red), with a one-line legend. When the judge is **on** but
+  the active judge has no usable key, a warning calls it out (medium/high requests
+  would otherwise fail silently). The judge detail view and add/edit hints spell
+  out the stored-vs-env options.
+- **More readable TUI colors.** Body text is now white and muted text a readable
+  mid-grey (was `DarkGray`, near-invisible on many terminals).
+- **Source restructured into layers.** `src/` is now a library crate (`src/lib.rs`)
+  with the bin (`src/main.rs`) reduced to a thin wrapper over `cli::run()`:
+  - `src/core/` — crypto, vault storage, the policy engine, the AI judge, gate,
+    metadata, keyring/master-key management, recovery, audit, usage, session, and
+    the supporting file/passphrase/config primitives. Self-contained; no frontend
+    dependencies.
+  - `src/daemon/` — the Unix unlock daemon (`mod.rs`) and its client (`client.rs`),
+    moved from `src/daemon.rs` and `src/client.rs`.
+  - `src/tui/` — the interactive terminal UI (unchanged location).
+  - `src/cli/` — the `svault` command-line frontend (the former body of `main.rs`),
+    exposing `cli::run()`.
+  - `src/mcp/`, `src/gui/` — placeholders for future MCP and GUI frontends.
+- Cross-module references now path through the layer (`crate::core::…`). The
+  `core` module deliberately shadows the std `core` crate; the source uses `std`
+  throughout, so this is safe.
+
 ## [0.9.5] - 2026-05-31
 
 The **keyring-under-master** release. 0.9.4 unified every vault under one master

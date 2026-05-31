@@ -5,10 +5,11 @@ use ratatui::style::{Color, Modifier, Style};
 
 /// Primary accent — vault names, titles, focused labels.
 pub const ACCENT: Color = Color::Cyan;
-/// Muted text — hints, borders, unfocused labels.
-pub const MUTED: Color = Color::DarkGray;
-/// Ordinary body text.
-pub const TEXT: Color = Color::Gray;
+/// Muted text — hints, borders, unfocused labels. A readable mid-grey rather
+/// than `DarkGray`, which renders nearly invisible on many terminals.
+pub const MUTED: Color = Color::Gray;
+/// Ordinary body text — white for maximum readability.
+pub const TEXT: Color = Color::White;
 
 pub const OK: Color = Color::Green;
 pub const WARN: Color = Color::Yellow;

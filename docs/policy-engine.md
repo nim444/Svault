@@ -99,8 +99,10 @@ svault judge test --judge strict \
 ```
 
 The first judge added becomes the keyring's **default**. A vault opts in to the
-judge via its per-vault toggle at `svault create` (and in TUI settings); it uses the
-keyring's default judge unless assigned a specific one. **Change** a judge's
+judge via its per-vault toggle at `svault create` or `svault settings` (and the
+same forms in the TUI); it uses the keyring's default judge unless **assigned** a
+specific one — the **Assigned judge** prompt in `svault create` / `svault settings`
+(and the TUI Create / Settings picker). **Change** a judge's
 model/thresholds/criteria with `svault judge edit <name>`; **rotate or clear** its
 key with `svault judge set-key <name>` (a cleared key falls back to the opt-in
 `$SVAULT_OPENROUTER_KEY`). Until the keyring is unlocked the judge is off and the
@@ -211,7 +213,8 @@ init`), add one or more **named judges** (`svault judge add <name>` — each car
 its own model, thresholds, free-text criteria, and API key), turn the judge on
 globally (`svault judge enable`), and unlock the keyring (`svault keyring unlock`).
 Each vault opts in via its per-vault toggle and uses the keyring's **default**
-judge unless assigned a specific one. The daemon then scores the `reason` on every
+judge unless assigned a specific one with `svault settings` (or the TUI). The
+daemon then scores the `reason` on every
 medium/high request from the unlocked keyring. Verify a judge without touching a
 secret:
 

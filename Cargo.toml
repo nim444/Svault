@@ -1,6 +1,6 @@
 [package]
 name = "svault-ai"
-version = "0.9.5"
+version = "0.9.6"
 edition = "2021"
 authors = ["Soluzy <nima@soluzy.ro>"]
 description = "AI-aware secret access layer — enforces structured requests and detects suspicious patterns"
@@ -11,6 +11,10 @@ documentation = "https://docs.rs/svault-ai"
 readme = "README.md"
 keywords = ["security", "secrets", "vault", "ai", "encryption"]
 categories = ["authentication", "cryptography", "command-line-utilities"]
+
+[lib]
+name = "svault_ai"
+path = "src/lib.rs"
 
 [[bin]]
 name = "svault"

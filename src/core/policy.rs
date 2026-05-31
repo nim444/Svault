@@ -3,7 +3,7 @@
 //! A structured request (`secret`, `scope`, `reason`, `caller`) runs through the
 //! base pipeline here: reason required, classification lookup, scope match,
 //! caller capability, rate limit / burst. The verdict is a [`Decision`] carrying
-//! the secret's tier; the tier + AI-judge gate is then applied by [`crate::gate`]
+//! the secret's tier; the tier + AI-judge gate is then applied by [`crate::core::gate`]
 //! so the daemon and the CLI fallback share one decision path. Enforcement lives
 //! in the daemon (the choke point).
 //!
@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::audit;
-use crate::meta::{AccessConfig, AllowAgent, VaultJudgeConfig};
+use crate::core::audit;
+use crate::core::meta::{AccessConfig, AllowAgent, VaultJudgeConfig};
 
 /// Burst window: more than [`BURST_MAX`] allowed requests inside this many
 /// seconds is treated as anomalous regardless of the configured rate limit.
@@ -194,7 +194,7 @@ impl Decision {
 
 /// Run the base policy pipeline (reason, then classification, scope match,
 /// caller capability, rate/burst). Returns `Allow(tier)` or `Deny`. The tier and
-/// AI-judge gate is applied separately by [`crate::gate`] so the same decision
+/// AI-judge gate is applied separately by [`crate::core::gate`] so the same decision
 /// path serves the daemon and the CLI fallback. All policy comes from the
 /// decrypted [`VaultPolicyData`]; caller authorization falls back to
 /// `access.allow_agent` when no caller rules are defined.
@@ -338,8 +338,8 @@ fn allowed_count(vault_dir: &Path, caller: &str, since: DateTime<Utc>) -> usize 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audit::Entry;
-    use crate::meta::{AccessConfig, AllowAgent};
+    use crate::core::audit::Entry;
+    use crate::core::meta::{AccessConfig, AllowAgent};
     use tempfile::TempDir;
 
     fn rule(scope: &str, tier: Tier) -> SecretRule {

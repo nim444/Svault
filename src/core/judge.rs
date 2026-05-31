@@ -4,7 +4,7 @@
 //! the daemon asks a cheap, fast LLM, via the user's OpenRouter account, whether
 //! the caller's stated *reason* plausibly justifies the request given the
 //! secret's name/scope/tier and the caller's recent activity. The model returns
-//! a structured `{decision, score, reason}`, which [`crate::gate`] turns into an
+//! a structured `{decision, score, reason}`, which [`crate::core::gate`] turns into an
 //! allow/deny against per-tier thresholds.
 //!
 //! The daemon is synchronous (thread-per-connection), so the HTTP call is
@@ -16,8 +16,8 @@
 use anyhow::{anyhow, Result};
 use std::time::Duration;
 
-use crate::keyring::JudgeDef;
-use crate::policy::Tier;
+use crate::core::keyring::JudgeDef;
+use crate::core::policy::Tier;
 
 /// What the judge said about one request.
 #[derive(Debug, Clone, PartialEq, Eq)]

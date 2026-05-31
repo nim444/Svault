@@ -28,8 +28,8 @@ use anyhow::{anyhow, Result};
 use rand::RngCore;
 use std::path::{Path, PathBuf};
 
-use crate::crypto::{self, VaultKey, SALT_SIZE};
-use crate::vault::SVAULT_DIR;
+use crate::core::crypto::{self, VaultKey, SALT_SIZE};
+use crate::core::vault::SVAULT_DIR;
 
 const MASTER_FILE: &str = "master.enc";
 const MASTER_SESSION: &str = ".master.session";
@@ -98,7 +98,7 @@ impl Master {
         }
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
-                crate::secfile::create_dir_owner_only(parent)?;
+                crate::core::secfile::create_dir_owner_only(parent)?;
             }
         }
         let mut mk_bytes = [0u8; 32];
@@ -145,8 +145,8 @@ impl Master {
     /// (see [`recover`]). Because it wraps MK directly, this one code opens every
     /// store (all vaults + the keyring).
     pub fn write_recovery(&self) -> Result<String> {
-        let code = crate::recovery::generate_code();
-        crate::recovery::write_at(&master_recovery_path(), &self.mk, &code)?;
+        let code = crate::core::recovery::generate_code();
+        crate::core::recovery::write_at(&master_recovery_path(), &self.mk, &code)?;
         Ok(code)
     }
 
@@ -190,7 +190,7 @@ impl Master {
         // directly is enough (no second Argon2 pass). The salt is stored only to
         // keep the on-disk shape identical to the other keyslots.
         let blob = crypto::encrypt(&self.mk, &salt, dek.bytes())?;
-        crate::secfile::write_owner_only(path, &blob)?;
+        crate::core::secfile::write_owner_only(path, &blob)?;
         Ok(())
     }
 
@@ -218,7 +218,7 @@ pub fn recover(code: &str, new_passphrase: &str) -> Result<Master> {
             "no master recovery code on this machine (master.recovery.enc missing)"
         ));
     }
-    let mk = crate::recovery::unlock_at(&path, code)?;
+    let mk = crate::core::recovery::unlock_at(&path, code)?;
     write_master_slot(&master_path(), &mk, new_passphrase)?;
     Ok(Master { mk })
 }
@@ -237,7 +237,7 @@ fn write_master_slot(path: &Path, mk: &VaultKey, passphrase: &str) -> Result<()>
     rand::thread_rng().fill_bytes(&mut salt);
     let kek = VaultKey::derive(passphrase, &salt)?;
     let blob = crypto::encrypt(&kek, &salt, mk.bytes())?;
-    crate::secfile::write_owner_only(path, &blob)?;
+    crate::core::secfile::write_owner_only(path, &blob)?;
     Ok(())
 }
 
@@ -246,7 +246,7 @@ fn write_master_slot(path: &Path, mk: &VaultKey, passphrase: &str) -> Result<()>
 /// Cache MK (hex, `0600`) so `create` / `enroll` don't re-prompt within a
 /// session. Never stores the passphrase.
 pub fn unlock_session(mk: &[u8; 32]) -> Result<()> {
-    crate::secfile::write_owner_only(&session_path(), hex::encode(mk).as_bytes())?;
+    crate::core::secfile::write_owner_only(&session_path(), hex::encode(mk).as_bytes())?;
     Ok(())
 }
 
@@ -280,7 +280,7 @@ pub fn open_from_session() -> Option<Master> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testlock::CWD_LOCK;
+    use crate::core::testlock::CWD_LOCK;
     use std::sync::MutexGuard;
 
     fn in_temp_cwd() -> (MutexGuard<'static, ()>, tempfile::TempDir, PathBuf) {
@@ -316,7 +316,7 @@ mod tests {
         let m = Master::init("Master!Pass#2").unwrap();
 
         let vault_dir = PathBuf::from(SVAULT_DIR).join("v");
-        crate::secfile::create_dir_owner_only(&vault_dir).unwrap();
+        crate::core::secfile::create_dir_owner_only(&vault_dir).unwrap();
         let dek = new_dek();
         let dek_bytes = *dek.bytes();
         m.wrap_dek(&vault_dir, &dek).unwrap();
@@ -332,7 +332,7 @@ mod tests {
     fn keyring_dek_wraps_under_master_and_unwraps_back() {
         let (_g, _tmp, prev) = in_temp_cwd();
         let m = Master::init("Master!Pass#KR").unwrap();
-        crate::secfile::create_dir_owner_only(&PathBuf::from(SVAULT_DIR)).unwrap();
+        crate::core::secfile::create_dir_owner_only(&PathBuf::from(SVAULT_DIR)).unwrap();
 
         let dek = new_dek();
         let dek_bytes = *dek.bytes();
@@ -350,7 +350,7 @@ mod tests {
         let (_g, _tmp, prev) = in_temp_cwd();
         let m = Master::init("Old!Master#1").unwrap();
         let vault_dir = PathBuf::from(SVAULT_DIR).join("v");
-        crate::secfile::create_dir_owner_only(&vault_dir).unwrap();
+        crate::core::secfile::create_dir_owner_only(&vault_dir).unwrap();
         let dek = new_dek();
         let dek_bytes = *dek.bytes();
         m.wrap_dek(&vault_dir, &dek).unwrap();
@@ -371,7 +371,7 @@ mod tests {
         let (_g, _tmp, prev) = in_temp_cwd();
         let m = Master::init("Right!Master#1").unwrap();
         let vault_dir = PathBuf::from(SVAULT_DIR).join("v");
-        crate::secfile::create_dir_owner_only(&vault_dir).unwrap();
+        crate::core::secfile::create_dir_owner_only(&vault_dir).unwrap();
         m.wrap_dek(&vault_dir, &new_dek()).unwrap();
 
         // A different MK (from a fresh init in another dir) must not unwrap it.
@@ -386,7 +386,7 @@ mod tests {
         let (_g, _tmp, prev) = in_temp_cwd();
         let m = Master::init("Old!Master#R").unwrap();
         let vault_dir = PathBuf::from(SVAULT_DIR).join("v");
-        crate::secfile::create_dir_owner_only(&vault_dir).unwrap();
+        crate::core::secfile::create_dir_owner_only(&vault_dir).unwrap();
         let dek = new_dek();
         let dek_bytes = *dek.bytes();
         m.wrap_dek(&vault_dir, &dek).unwrap();
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn session_caches_mk_then_lock_clears() {
         let (_g, _tmp, prev) = in_temp_cwd();
-        crate::secfile::create_dir_owner_only(&PathBuf::from(SVAULT_DIR)).unwrap();
+        crate::core::secfile::create_dir_owner_only(&PathBuf::from(SVAULT_DIR)).unwrap();
 
         assert!(!is_unlocked());
         unlock_session(&[5u8; 32]).unwrap();

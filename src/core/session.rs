@@ -19,7 +19,7 @@ pub fn unlock_with_key(vault_dir: &Path, key: &[u8; 32]) -> Result<()> {
     let path = session_path(vault_dir);
     let encoded = hex::encode(key);
     // Owner-only: mode 0600 on Unix, an icacls owner-only ACL on Windows (#4).
-    crate::secfile::write_owner_only(&path, encoded.as_bytes())?;
+    crate::core::secfile::write_owner_only(&path, encoded.as_bytes())?;
     Ok(())
 }
 
