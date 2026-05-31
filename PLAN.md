@@ -17,8 +17,9 @@ work remaining to reach a stable **1.0.0**. Shipped versions are detailed in
 
 ## Current state (0.9.3)
 
-The CLI is feature-complete for its 1.0.0 scope. Every layer below is implemented,
-tested, and shipping.
+The base is complete: every layer below is implemented, tested, and shipping. The
+remaining pre-1.0 work (the agent-ready surface in [Path to 1.0.0](#path-to-100))
+builds on this core rather than changing it.
 
 **Encrypted local vaults.** AES-256-GCM secret storage with Argon2id key
 derivation. Secret values are zeroized from memory on drop (`ZeroizeOnDrop` on
@@ -88,7 +89,7 @@ a request designed to pass.
   default and assign one per vault. There are no plaintext `config.yaml` or
   `openrouter.key` files anymore.
 
-**Quality.** 108 tests pass (plus one ignored concurrency stress benchmark). CI
+**Quality.** 110 tests pass (plus one ignored concurrency stress benchmark). CI
 runs on Ubuntu, Fedora, macOS, and Windows, with `cargo fmt --check`, `cargo
 clippy -D warnings`, and a `cargo audit` advisory gate.
 
@@ -125,15 +126,66 @@ findings de-duplicated into a decision register. The full carry-forward lives in
 
 ## Path to 1.0.0
 
-Three pieces remain before the first stable, audited release.
+The path to a stable release is the **agent-ready surface** (the remaining 0.9.x
+line), then a final independent review and distribution channels. The agent-ready
+work all extends primitives that already exist — the keyslot wrap/unwrap in
+`recovery.rs`, the encrypted policy in `vault.enc`, and the peer-UID-bonded daemon
+socket — so it widens capability without changing the trust model.
 
-### 1. Final independent security review — Next
+### 1. Agent-ready surface — Next (remaining 0.9.x)
 
-A final review pass over the enforced, encrypted-policy engine and the keyring,
-following the established release-gated review process. This is the gate on the
-1.0.0 label.
+**Unified unlock — one master, or a YubiKey touch (0.9.4 – 0.9.5).** Today each
+vault has its own passphrase and the keyring another; that is too many to type.
+Move to the **keyslot model** (LUKS / 1Password-style): each store (every vault,
+the keyring) gets a random **data key** that encrypts its contents, and that data
+key is wrapped in one or more **keyslots** — a master passphrase, a YubiKey, and
+the existing recovery code. Per-vault passphrases go away. **Any one slot opens
+the store** (type the master passphrase *or* touch a YubiKey — not 2FA);
+`svault unlock` opens every store at once. New surface: `svault master init |
+rekey | status | enroll-yubikey | enroll-recovery`; `svault create` stops asking
+for a per-vault passphrase. The master + recovery slots are hardware-free and
+fully CI-tested; the YubiKey slot (HMAC-SHA1 challenge-response, KeePassXC-style)
+is built behind a trait with a fake responder for CI and verified on real
+hardware before it ships. Generalises `recovery.rs` into a `keyslot` module over
+a random data key; reuses the existing `0600` session caching (which already
+holds a raw key, not the passphrase).
 
-### 2. Distribution / install channels — In progress
+**Conditional access + anomaly escalation (0.9.6).** Add **conditions** to a
+secret's encrypted policy — allowed time windows (e.g. only Fri 10:00–12:00 while
+CI runs) and required caller(s) — evaluated early in the existing `reason → scope
+→ tier → rate/burst → judge` pipeline; outside the window the agent gets the same
+generic denial. Add **seal-and-escalate**: repeated denials, bursts, or
+out-of-window probing against a medium/high secret seal it (lockout state in the
+encrypted policy) and raise an escalation only a human can clear (`svault
+approve`, a TUI pending-approvals view, later a notify channel). An agent can
+never unlock a vault or clear an escalation — human-only by design.
+
+**Agent surface — MCP (0.9.7).** `svault mcp` runs a local MCP server that is a
+thin client of the daemon over the existing peer-UID-bonded `0600` socket — **MCP
+auth is same-UID plus the daemon's unlocked state**, and the server never sees
+the master passphrase or any key. The human unlocks once; each
+`svault_get_secret(name, scope, reason, caller)` call runs through the same
+policy + judge gate, audited with the peer UID and `source = mcp`; a locked or
+sealed vault returns "needs human unlock / escalated". `svault install`
+auto-detects the platform and writes its MCP config (Claude Code also gets a
+PreToolUse hook blocking direct `.env` reads and a PostToolUse hook scanning
+output for leaked credentials). An **agent capability descriptor** (inspired by
+WorkOS `auth.md`) advertises *how to request* a secret — the fields to send, that
+high-tier is human-only, how to ask for escalation — **without** revealing the
+decision criteria (tiers, thresholds, judge criteria, time windows stay
+encrypted).
+
+### 2. Final independent security review — gate on the 1.0 label
+
+A final review pass over the full agent-ready surface — the enforced,
+encrypted-policy engine and the keyring, plus the new keyslot unlock model, the
+seal/escalate path, and the MCP surface — following the established release-gated
+review process. Includes adversarial judge testing (prompt injection via the
+`reason` field) and the caller-authorization decision (self-asserted today with
+peer-UID-stamped audit: accept as a documented boundary, or add an OS-bound
+caller identity).
+
+### 3. Distribution / install channels — In progress
 
 All channels reuse the four prebuilt binaries that the release workflow
 (`release.yml`, on `v*` tags) already produces — macOS arm64/x64, Linux x64,
@@ -183,7 +235,7 @@ registries).
 > Website hub: `svault.soluzy.app` hosts `install.sh` and a tabbed install block
 > (brew / curl / cargo / docker).
 
-### 3. Remaining polish — Planned
+### 4. Remaining polish — Planned
 
 Final documentation, UX, and consistency passes surfaced during the review and
 distribution work.
@@ -206,28 +258,24 @@ Tauri — lightweight, single binary, offline, no runtime deps. Planned surface:
 - System-tray status, notifications, and a settings UI (daemon socket path, log
   level).
 
-### 3.0.0 — AI-platform access (MCP)
+### 3.0.0+ — Remote / cloud
 
-- `svault mcp` — an MCP server exposing `svault_get_secret(name, scope, reason)`,
-  routed through the same enforced gate.
-- `svault install` — auto-detect the platform and write MCP config.
-- **Claude Code** — MCP server plus a PreToolUse hook (blocks direct `.env`
-  reads) and a PostToolUse hook (scans output for leaked credentials).
-- **Cursor, Copilot, VS Code, Aider** — MCP server.
-- `--project` flag — project-scoped, git-committable install.
+Local MCP ships pre-1.0 (see [Path to 1.0.0](#path-to-100)); what remains for
+later is the remote and hosted surface:
 
-### Cloud anomaly-scoring tier (optional)
-
-A hosted endpoint (e.g. `svault.soluzy.net/api/score`) that scores request
-justifications for anomaly detection, with optional paid plans for higher
-volumes and a shared audit dashboard. Optional and post-1.0.
+- **Remote MCP with OAuth** — the fuller WorkOS-`auth.md` / MCP-OAuth story so an
+  agent on another machine can be authenticated and authorized, not just a
+  same-UID local process.
+- **Cloud anomaly-scoring tier (optional)** — a hosted endpoint (e.g.
+  `api/score`) that scores request justifications for anomaly detection, with
+  optional paid plans for higher volumes and a shared audit dashboard.
 
 ## Deferred / not planned
 
-- **Extra unlock methods** (YubiKey HMAC-SHA1, TOTP, macOS Touch ID / Face ID) —
-  designed but deferred; passphrase is the supported method today. The intended
-  UX is multi-select at create time (any combination) with method config in
-  `meta.yaml`.
+- **Master passphrase + YubiKey unlock** — now on the path to 1.0 via the keyslot
+  model (0.9.4 – 0.9.5; see [Path to 1.0.0](#path-to-100)), no longer deferred.
+- **TOTP and macOS Touch ID / Face ID** — the keyslot model could host them as
+  extra slots later, but they are not on the path to 1.0.
 - **External backends** (cloud / self-hosted / S3) — `local` is the only wired
   backend; the others are recorded placeholders in `meta.yaml` for future remote
   sync.
