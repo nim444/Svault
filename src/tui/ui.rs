@@ -38,7 +38,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Screen::Unlock(form) => draw_unlock(frame, chunks[1], form),
         Screen::Secrets(scr) => draw_secrets(frame, chunks[1], scr),
         Screen::SecretAdd(form) => draw_secret_add(frame, chunks[1], form),
-        Screen::RecoveryCode(code) => draw_recovery_code(frame, chunks[1], code),
+        Screen::RecoveryCode(show) => draw_recovery_code(frame, chunks[1], show),
         Screen::Import(form) => draw_import(frame, chunks[1], form),
         Screen::Recover(form) => draw_recover(frame, chunks[1], form),
         Screen::Activity(scr) => draw_activity(frame, chunks[1], scr),
@@ -1053,44 +1053,64 @@ fn draw_judge_view(frame: &mut Frame, area: Rect, form: &JudgeForm, name: &str) 
     );
 }
 
-fn draw_recovery_code(frame: &mut Frame, area: Rect, code: &str) {
-    let lines = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "  Recovery code",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
+fn draw_recovery_code(frame: &mut Frame, area: Rect, show: &super::RecoveryShow) {
+    let mut lines = vec![Line::from("")];
+    let plural = if show.codes.len() > 1 {
+        "codes"
+    } else {
+        "code"
+    };
+    lines.push(Line::from(Span::styled(
+        format!("  Recovery {plural}"),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )));
+    for (label, code) in &show.codes {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  {label}"),
+            Style::default().fg(DIM),
+        )));
+        lines.push(Line::from(Span::styled(
             format!("    {code}"),
             Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-        )),
+        )));
+    }
+    lines.extend([
         Line::from(""),
         Line::from(Span::styled(
-            "  This is the ONLY time this code is shown — it is not stored in plaintext.",
+            "  This is the ONLY time these are shown — they are not stored in plaintext.",
             Style::default().fg(Color::Yellow),
         )),
         Line::from(Span::styled(
-            "  Save it in a password manager (or on paper, offline). It is the only way",
+            "  Save them in a password manager (or on paper, offline). They are the only",
             Style::default().fg(DIM),
         )),
         Line::from(Span::styled(
-            "  back in if you lose your passphrase — then run 'svault recover'.",
+            "  way back in if you forget your passphrase — 'svault recover' (a vault) or",
+            Style::default().fg(DIM),
+        )),
+        Line::from(Span::styled(
+            "  'svault master recover' (the master).",
             Style::default().fg(DIM),
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "  Press 'y' to confirm you have saved it.",
+            "  Press 'y' to confirm you have saved them.",
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )),
-    ];
+    ]);
+    let title = if show.codes.len() > 1 {
+        " Save your recovery codes "
+    } else {
+        " Save your recovery code "
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Save your recovery code ")
+        .title(title)
         .border_style(Style::default().fg(Color::Yellow));
     frame.render_widget(
         Paragraph::new(lines)

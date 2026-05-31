@@ -31,6 +31,13 @@ passphrase). Delete any old `.svault/` and recreate: `svault master init`, then
 - **`svault unlock`** (no vault argument) now also unlocks the keyring under the
   same master, so the AI judge is live without a second prompt. It works even
   with no vaults yet (a keyring-only setup).
+- **Master recovery code** — setting the master passphrase (via `svault master
+  init`, the first `svault create`, or the TUI set-master step in create / the
+  judge screen) now generates a one-time recovery code, wrapped around the master
+  key in `.svault/master.recovery.enc` and shown once. **`svault master recover`**
+  resets a forgotten master passphrase with it; because it wraps the master key
+  directly, this single code reopens every store (all vaults **and** the keyring).
+  The TUI shows it on the same one-time screen as the vault recovery code.
 
 ### Changed
 - **The keyring has no passphrase of its own.** `svault keyring unlock` opens it

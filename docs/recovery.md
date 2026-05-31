@@ -43,6 +43,32 @@ same code keeps working and the vault is immediately usable under the master.
 
 > Vaults created before recovery support have no `recovery.enc` and cannot be recovered — re-create them to get a code.
 
+## Master recovery code
+
+The per-vault code above gets you back into **one** vault. There is also a
+**master recovery code** for the master passphrase itself — the way back in if you
+forget it, without recovering each vault one by one.
+
+When you first set the master passphrase (`svault master init`, the first `svault
+create`, or the TUI set-master step), Svault prints a one-time master recovery
+code and wraps the master key under it in `.svault/master.recovery.enc` (160 bits,
+Argon2id — same construction and same "safe to commit" property as a vault's
+`recovery.enc`). Store it offline, separately from the passphrase.
+
+```bash
+svault master recover
+```
+
+You'll be prompted for the master recovery code, then for a new master passphrase.
+Svault unwraps the master key with the code and re-wraps it under the new
+passphrase — the recovery code itself is unchanged. Because the code wraps the
+**master key** directly, this one code reopens **every** store (all vaults and the
+keyring) at once, and **nothing is re-encrypted**.
+
+> Per-vault codes are still useful for cross-machine `import` (a bundle carries the
+> vault's `recovery.enc`, not the machine-specific keyslot). The master recovery
+> code only works on the machine that holds `.svault/master.recovery.enc`.
+
 ## Export / import
 
 Move an encrypted vault to another machine without exposing any secret value.

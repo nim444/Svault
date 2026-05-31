@@ -7,8 +7,9 @@ vault, see [Vault selection](#vault-selection) for how it's resolved.
 
 ```bash
 svault                             # launch the interactive TUI (no subcommand)
-svault master init [--force]       # set the master passphrase (one secret unlocks every vault)
+svault master init [--force]       # set the master passphrase (prints a one-time master recovery code)
 svault master rekey [--force]      # change the master passphrase (no vault is re-encrypted)
+svault master recover [--force]    # reset a forgotten master passphrase with the recovery code
 svault master status               # is the master set / unlocked, how many vaults wrapped
 svault create [--force]            # create an encrypted vault (name, description, agents, rate limit, auto-lock)
 svault settings [VAULT]            # view or change a vault's settings
@@ -29,6 +30,15 @@ for the keyring), and the master key itself is wrapped under your passphrase in
 rewrites only the small master slot — no ciphertext is touched. This is the
 keyslot model (LUKS / 1Password style): additional unlock methods — a YubiKey
 touch, the recovery code — are just more slots over the same key.
+
+When you first set the master passphrase, Svault prints a **one-time master
+recovery code** and writes it (wrapped around the master key) to
+`.svault/master.recovery.enc`. Store it offline. If you forget the master
+passphrase, `svault master recover` takes that code and sets a new master
+passphrase — and because the code wraps the master key directly, it reopens
+**every** store (all vaults and the keyring), with nothing re-encrypted. (Each
+vault also keeps its own recovery code from `create`, used for `svault recover`
+and for cross-machine `import`.)
 
 `create` walks you through naming the vault, choosing a [storage backend](storage-backends.md),
 and (on first run) setting the master passphrase — it no longer asks for a

@@ -657,6 +657,15 @@ pub struct ActivityScreen {
     pub state: TableState,
 }
 
+/// One or more one-time recovery codes to show after a create/set action, plus
+/// where to return once the user confirms they've saved them.
+pub struct RecoveryShow {
+    /// (label, code) pairs — e.g. ("Master passphrase", code), ("Vault 'x'", code).
+    pub codes: Vec<(String, String)>,
+    /// Return to the judge screen on confirm (keyring flow) instead of the list.
+    pub to_judge: bool,
+}
+
 pub enum Screen {
     List,
     Create(CreateForm),
@@ -664,9 +673,9 @@ pub enum Screen {
     Unlock(UnlockForm),
     Secrets(SecretScreen),
     SecretAdd(SecretAddForm),
-    /// Shows the one-time recovery code after a vault is created. Dismissed only
-    /// by an explicit 'y' confirmation that the code has been saved.
-    RecoveryCode(String),
+    /// Shows the one-time recovery code(s) after a vault/master is created.
+    /// Dismissed only by an explicit 'y' confirmation that they've been saved.
+    RecoveryCode(RecoveryShow),
     /// Import a vault from a bundle file (path entry).
     Import(ImportForm),
     /// Recover a vault: enter the code + a new passphrase.
@@ -901,7 +910,7 @@ impl App {
             Screen::Unlock(form) => self.key_unlock(form, key)?,
             Screen::Secrets(scr) => self.key_secrets(scr, key)?,
             Screen::SecretAdd(form) => self.key_secret_add(form, key)?,
-            Screen::RecoveryCode(code) => self.key_recovery_code(code, key),
+            Screen::RecoveryCode(show) => self.key_recovery_code(show, key),
             Screen::Import(form) => self.key_import(form, key)?,
             Screen::Recover(form) => self.key_recover(form, key),
             Screen::Activity(scr) => self.key_activity(scr, key),
@@ -957,11 +966,15 @@ impl App {
     /// The recovery-code screen requires an explicit confirmation ('y') that the
     /// code was saved — any other key keeps it on screen, so it can't be
     /// dismissed by accident before the user has written it down.
-    fn key_recovery_code(&mut self, code: String, key: KeyEvent) {
+    fn key_recovery_code(&mut self, show: RecoveryShow, key: KeyEvent) {
         if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
-            self.screen = Screen::List;
+            if show.to_judge {
+                self.screen = Screen::Judge(JudgeForm::load());
+            } else {
+                self.screen = Screen::List;
+            }
         } else {
-            self.screen = Screen::RecoveryCode(code);
+            self.screen = Screen::RecoveryCode(show);
         }
     }
 
@@ -1440,6 +1453,8 @@ impl App {
             self.screen = Screen::Create(form);
             return Ok(());
         }
+        // First-run create also sets the master, which gets its own recovery code.
+        let setting_master = form.master_step == MasterStep::Set;
         let vault_dir = PathBuf::from(SVAULT_DIR).join(&name);
         if vault_dir.exists() {
             let existing = VaultMeta::load_unverified(&vault_dir)
@@ -1550,7 +1565,19 @@ impl App {
                     return Ok(());
                 }
                 let _ = session::unlock_with_key(&vault_dir, vault.key().bytes());
-                // Generate and store the recovery code, then show it once.
+                // Generate and store the recovery code(s), then show them once.
+                let mut codes: Vec<(String, String)> = Vec::new();
+                // If this create just set the master, surface the master recovery
+                // code too — it's the way back in if the master is forgotten.
+                if setting_master {
+                    match master.write_recovery() {
+                        Ok(mc) => codes.push(("Master passphrase".to_string(), mc)),
+                        Err(e) => self.set_status(
+                            MsgKind::Warn,
+                            format!("master recovery code could not be saved: {e}"),
+                        ),
+                    }
+                }
                 let code = crate::recovery::generate_code();
                 if let Err(e) = crate::recovery::write(&vault_dir, vault.key(), &code) {
                     self.refresh_vaults();
@@ -1563,10 +1590,14 @@ impl App {
                     self.screen = Screen::List;
                     return Ok(());
                 }
+                codes.push((format!("Vault '{name}'"), code));
                 crate::usage::human(&vault_dir, "vault.create", None);
                 self.refresh_vaults();
                 self.set_status(MsgKind::Ok, format!("Vault '{name}' created"));
-                self.screen = Screen::RecoveryCode(code);
+                self.screen = Screen::RecoveryCode(RecoveryShow {
+                    codes,
+                    to_judge: false,
+                });
             }
             Err(e) => {
                 form.error = Some(format!("{e}"));
@@ -2393,12 +2424,19 @@ impl App {
                     let _ = crate::master::unlock_session(master.key_bytes());
                     match self.keyring_with_master(&master, false) {
                         Ok(()) => {
-                            form = JudgeForm::load();
                             self.set_status(
                                 MsgKind::Ok,
                                 "Master set · keyring created and unlocked",
                             );
-                            self.screen = Screen::Judge(form);
+                            // Show the master recovery code once, then return to
+                            // the (now unlocked) judge screen.
+                            self.screen = match master.write_recovery() {
+                                Ok(mc) => Screen::RecoveryCode(RecoveryShow {
+                                    codes: vec![("Master passphrase".to_string(), mc)],
+                                    to_judge: true,
+                                }),
+                                Err(_) => Screen::Judge(JudgeForm::load()),
+                            };
                             return Ok(());
                         }
                         Err(e) => init.error = Some(e),
@@ -3173,7 +3211,10 @@ mod tests {
 
     #[test]
     fn recovery_code_screen_needs_y_to_dismiss() {
-        let mut app = bare_app(Screen::RecoveryCode("AAAA-BBBB-CCCC".into()));
+        let mut app = bare_app(Screen::RecoveryCode(RecoveryShow {
+            codes: vec![("Vault 'x'".to_string(), "AAAA-BBBB-CCCC".to_string())],
+            to_judge: false,
+        }));
         press(&mut app, KeyCode::Char('x'));
         assert!(
             matches!(app.screen, Screen::RecoveryCode(_)),

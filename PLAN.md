@@ -90,7 +90,7 @@ a request designed to pass.
   default and assign one per vault. There are no plaintext `config.yaml` or
   `openrouter.key` files anymore.
 
-**Quality.** 116 tests pass (plus one ignored concurrency stress benchmark). CI
+**Quality.** 117 tests pass (plus one ignored concurrency stress benchmark). CI
 runs on Ubuntu, Fedora, macOS, and Windows, with `cargo fmt --check`, `cargo
 clippy -D warnings`, and a `cargo audit` advisory gate.
 

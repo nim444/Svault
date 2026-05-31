@@ -163,9 +163,10 @@ enum Commands {
     ///
     /// Set it once (`init`); thereafter `svault unlock` opens all vaults with it
     /// and `svault create` wraps each new vault under it (no per-vault
-    /// passphrase). Actions: `init`, `rekey` (change it), `status`.
+    /// passphrase). Actions: `init`, `rekey` (change it), `recover` (reset a
+    /// forgotten one with the recovery code), `status`.
     Master {
-        /// init | rekey | status
+        /// init | rekey | recover | status
         action: String,
         /// Skip the passphrase strength floor (for non-interactive / scripted use)
         #[arg(long)]
@@ -1782,7 +1783,31 @@ fn ensure_master_unlocked(force: bool) -> Result<master::Master> {
     let passphrase = prompt_new_passphrase("  Master passphrase", force)?;
     let m = master::Master::init(&passphrase)?;
     master::unlock_session(m.key_bytes())?;
+    print_master_recovery_code(&m)?;
     Ok(m)
+}
+
+/// Generate the master recovery code and show it once. Called the moment the
+/// master passphrase is first set — it's the only way back in if the passphrase
+/// is forgotten, and it opens every store (all vaults + the keyring).
+fn print_master_recovery_code(master: &master::Master) -> Result<()> {
+    let code = master.write_recovery()?;
+    println!();
+    println!(
+        "  {} {}",
+        style("Master recovery code").yellow().bold(),
+        style("(shown once — store it safely)").dim()
+    );
+    println!("    {}", style(&code).cyan().bold());
+    println!(
+        "{}",
+        style("  Recovers your master if you forget it (opens every vault + the keyring).").dim()
+    );
+    println!(
+        "{}",
+        style("  Reset later with 'svault master recover'.").dim()
+    );
+    Ok(())
 }
 
 /// `svault master <action>` — the single passphrase that unlocks every vault.
@@ -1790,16 +1815,50 @@ fn cmd_master(action: &str, force: bool) -> Result<()> {
     match action {
         "init" => cmd_master_init(force),
         "rekey" => cmd_master_rekey(force),
+        "recover" => cmd_master_recover(force),
         "status" => cmd_master_status(),
         other => {
             eprintln!(
-                "{} unknown master action '{}' — use init | rekey | status",
+                "{} unknown master action '{}' — use init | rekey | recover | status",
                 style("error:").red(),
                 other
             );
             std::process::exit(1);
         }
     }
+}
+
+/// `svault master recover` — reset a forgotten master passphrase with the
+/// recovery code shown when the master was first set.
+fn cmd_master_recover(force: bool) -> Result<()> {
+    if !master::exists() {
+        eprintln!(
+            "{} no master passphrase set yet — run 'svault master init'",
+            style("error:").red()
+        );
+        std::process::exit(1);
+    }
+    if !master::master_recovery_exists() {
+        eprintln!(
+            "{} no master recovery code on this machine — recover each vault with its own code instead",
+            style("error:").red()
+        );
+        std::process::exit(1);
+    }
+    let code = prompt_secret("  Master recovery code")?;
+    let new = prompt_new_passphrase("  New master passphrase", force)?;
+    let m = master::recover(&code, &new).map_err(|e| {
+        eprintln!("{} {}", style("error:").red(), e);
+        std::process::exit(1);
+        #[allow(unreachable_code)]
+        e
+    })?;
+    master::unlock_session(m.key_bytes())?;
+    println!(
+        "{} Master passphrase reset. Every vault and the keyring stay accessible (nothing was re-encrypted).",
+        style("ok:").green().bold()
+    );
+    Ok(())
 }
 
 fn cmd_master_init(force: bool) -> Result<()> {
@@ -1821,6 +1880,7 @@ fn cmd_master_init(force: bool) -> Result<()> {
         "{} Master passphrase set. 'svault unlock' now opens all vaults with it.",
         style("ok:").green().bold()
     );
+    print_master_recovery_code(&m)?;
     Ok(())
 }
 

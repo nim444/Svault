@@ -38,6 +38,8 @@ then the static tier rules apply (high = human-only).
 .svault/
   master.enc         ← master key wrapped under your master passphrase
                        (the unlock root for every vault)  (safe to commit, owner-only)
+  master.recovery.enc ← master key wrapped under the one-time master recovery
+                       code (reset a forgotten master)    (safe to commit, owner-only)
   .master.session    ← master-key cache while unlocked    (gitignored, mode 0600)
   keyring.enc        ← AES-256-GCM encrypted global config: the named-judge
                        registry (model/thresholds/criteria/API key each) +
@@ -72,15 +74,18 @@ then the static tier rules apply (high = human-only).
 Every store — each vault **and the keyring** — is encrypted by a **random data
 key**, not by your passphrase. That data key is wrapped in one or more
 **keyslots**, and **any one slot opens the store** — it's "this *or* that", never a
-two-step 2FA. Today there are two slots:
+two-step 2FA. Today there are three slots:
 
 - **Master passphrase** *(today)* — one passphrase wraps a master key, which in
   turn wraps every store's data key (every vault and the keyring). Set once; it
   unlocks everything. This replaced the old per-vault passphrases and, as of
   0.9.5, the keyring's separate passphrase.
-- **Recovery code** *(today)* — a 160-bit code generated at create, an
-  equal-strength second slot into a single vault; use it if you lose the master
-  (see [Recovery](recovery.md)).
+- **Master recovery code** *(today)* — a 160-bit code generated when the master
+  is first set; it wraps the *master key*, so `svault master recover` resets a
+  forgotten master passphrase and reopens every store at once.
+- **Per-vault recovery code** *(today)* — a 160-bit code generated at create, an
+  equal-strength second slot into a single vault; used by `svault recover` and to
+  attach a vault on another machine via `import` (see [Recovery](recovery.md)).
 
 Planned additional keyslots — each is purely additive (no data is re-encrypted),
 and any one still opens the store on its own:
@@ -91,7 +96,8 @@ and any one still opens the store on its own:
 | Slot | UX | Security | Notes |
 |---|---|---|---|
 | Master passphrase | Type once | Strong if long | Unlocks every vault and the keyring; always available |
-| Recovery code | Paste the saved code | Equal-strength (160-bit) | Per-vault fallback if the master is lost |
+| Master recovery code | Paste the saved code | Equal-strength (160-bit) | Resets a forgotten master; reopens every store |
+| Per-vault recovery code | Paste the saved code | Equal-strength (160-bit) | Per-vault fallback + cross-machine import |
 | YubiKey *(next)* | Touch the key | Strong, hardware-backed | An alternative slot — touch instead of typing |
 | TOTP / Touch ID *(planned)* | Code / biometric | Medium–strong | Extra alternatives, no 2FA requirement |
 

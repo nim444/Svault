@@ -33,6 +33,9 @@ use crate::vault::SVAULT_DIR;
 
 const MASTER_FILE: &str = "master.enc";
 const MASTER_SESSION: &str = ".master.session";
+/// Recovery keyslot wrapping the master key under a 160-bit code — the way back
+/// in if the master passphrase is forgotten (opens every store).
+const MASTER_RECOVERY: &str = "master.recovery.enc";
 /// Per-vault keyslot wrapping that vault's DEK under the master key.
 pub const VAULT_KEYSLOT: &str = "keyslot.enc";
 /// Keyslot wrapping the keyring's DEK under the master key. The keyring lives at
@@ -53,6 +56,15 @@ fn keyslot_path(vault_dir: &Path) -> PathBuf {
 
 fn keyring_keyslot_path() -> PathBuf {
     PathBuf::from(SVAULT_DIR).join(KEYRING_KEYSLOT)
+}
+
+fn master_recovery_path() -> PathBuf {
+    PathBuf::from(SVAULT_DIR).join(MASTER_RECOVERY)
+}
+
+/// True if a master recovery code has been written for this machine.
+pub fn master_recovery_exists() -> bool {
+    master_recovery_path().exists()
 }
 
 /// True once a master passphrase has been set on this machine.
@@ -128,6 +140,16 @@ impl Master {
         write_master_slot(&master_path(), &self.mk, new_passphrase)
     }
 
+    /// Generate a recovery code, wrap MK under it, and write the recovery slot.
+    /// Shown once at master creation; any later master-passphrase reset uses it
+    /// (see [`recover`]). Because it wraps MK directly, this one code opens every
+    /// store (all vaults + the keyring).
+    pub fn write_recovery(&self) -> Result<String> {
+        let code = crate::recovery::generate_code();
+        crate::recovery::write_at(&master_recovery_path(), &self.mk, &code)?;
+        Ok(code)
+    }
+
     /// The raw master key bytes — for caching the session. Never written to a
     /// non-owner-only file.
     pub fn key_bytes(&self) -> &[u8; 32] {
@@ -183,6 +205,22 @@ impl Master {
             .map_err(|_| anyhow!("keyslot holds an unexpected key length"))?;
         Ok(VaultKey::from_bytes(dek_bytes))
     }
+}
+
+/// Reset the master passphrase using the recovery code: unwrap MK from the
+/// recovery slot, then re-wrap it under `new_passphrase` (the recovery slot
+/// itself is left unchanged, so the code keeps working). MK never changes, so
+/// every vault and the keyring stay accessible.
+pub fn recover(code: &str, new_passphrase: &str) -> Result<Master> {
+    let path = master_recovery_path();
+    if !path.exists() {
+        return Err(anyhow!(
+            "no master recovery code on this machine (master.recovery.enc missing)"
+        ));
+    }
+    let mk = crate::recovery::unlock_at(&path, code)?;
+    write_master_slot(&master_path(), &mk, new_passphrase)?;
+    Ok(Master { mk })
 }
 
 /// Generate a random DEK for a new store. The caller wraps it under the master
@@ -339,6 +377,33 @@ mod tests {
         // A different MK (from a fresh init in another dir) must not unwrap it.
         let other = Master::open_with_key([0x11u8; 32]);
         assert!(other.unwrap_dek(&vault_dir).is_err());
+
+        std::env::set_current_dir(prev).unwrap();
+    }
+
+    #[test]
+    fn recovery_code_resets_the_master_and_keeps_unwrapping_stores() {
+        let (_g, _tmp, prev) = in_temp_cwd();
+        let m = Master::init("Old!Master#R").unwrap();
+        let vault_dir = PathBuf::from(SVAULT_DIR).join("v");
+        crate::secfile::create_dir_owner_only(&vault_dir).unwrap();
+        let dek = new_dek();
+        let dek_bytes = *dek.bytes();
+        m.wrap_dek(&vault_dir, &dek).unwrap();
+        let code = m.write_recovery().unwrap();
+        assert!(master_recovery_exists());
+        drop(m);
+
+        // Forgot the master passphrase: the recovery code resets it to a new one,
+        // and the same MK still unwraps the vault DEK (nothing was re-encrypted).
+        let recovered = recover(&code, "New!Master#R").unwrap();
+        assert_eq!(
+            recovered.unwrap_dek(&vault_dir).unwrap().bytes(),
+            &dek_bytes
+        );
+        // The new passphrase now opens the master; a wrong code is rejected.
+        assert!(Master::open("New!Master#R").is_ok());
+        assert!(recover("0000-0000-0000-0000-0000-0000-0000-0000-0000-0000", "X").is_err());
 
         std::env::set_current_dir(prev).unwrap();
     }

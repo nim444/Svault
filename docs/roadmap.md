@@ -40,9 +40,10 @@ A complete, self-contained secret manager that works fully offline:
   signed, so tampering is detectable.
 - **Interactive TUI** — a full-screen Ratatui dashboard for vault, secret, and
   policy management, with a live lock-state indicator and an activity timeline.
-- **Recovery and portability** — a one-time recovery code resets a lost
-  passphrase (`svault recover`), and checksummed encrypted bundles move a vault
-  between machines (`svault export` / `svault import`).
+- **Recovery and portability** — a one-time master recovery code resets a
+  forgotten master passphrase and reopens every store (`svault master recover`),
+  per-vault codes recover a single vault (`svault recover`), and checksummed
+  encrypted bundles move a vault between machines (`svault export` / `import`).
 - **Unix daemon** — unlock once and hold keys **in memory** behind a `0600`
   Unix socket, with idle and hard-max auto-lock (keys zeroized on lock,
   auto-lock, and shutdown) and a per-connection peer-UID check so only the
