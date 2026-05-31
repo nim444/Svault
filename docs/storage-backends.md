@@ -1,6 +1,6 @@
 # Storage backends
 
-At create time you pick where a vault lives. **`local`** is the default and the only backend wired today; the rest are reserved placeholders — remote sync ships in a later step.
+At create time you pick where a vault lives. **`local`** is the default and the only backend implemented today; the others are reserved placeholders for planned remote sync.
 
 | Backend | Status | What it is |
 |---|---|---|
@@ -22,6 +22,6 @@ The prefix keeps vault identity unambiguous per backend.
 
 ## Unique names
 
-**Vault names must be unique.** Creating a second vault with an existing name is rejected, so the same name can't be duplicated across storage backends.
+**Vault names must be unique.** Creating a second vault with a name already in use is rejected, so a name can't be duplicated across storage backends.
 
-> Svault is in beta — `storage` is a required field on `meta.yaml`. Vaults created before this field existed must be re-created.
+> While Svault is on 0.9.x, `storage` is a required field on `meta.yaml`. Vaults created before the field existed must be re-created.

@@ -79,11 +79,7 @@ pub fn authorize(
     }
 
     let rt = judge.expect("active implies Some");
-    let model = policy
-        .judge
-        .model
-        .clone()
-        .unwrap_or_else(|| rt.model.clone());
+    let model = rt.model.clone();
     let recent = recent_summary(req.vault_dir, req.caller);
     let ctx = JudgeContext {
         caller: req.caller,

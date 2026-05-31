@@ -5,6 +5,7 @@ mod crypto;
 mod daemon;
 mod gate;
 mod judge;
+mod keyring;
 mod meta;
 mod passphrase;
 mod policy;
@@ -155,15 +156,29 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
-    /// AI judge: manage the OpenRouter key, toggle it on/off, and test it.
+    /// Encrypted keyring: the single store for judges, API keys, and operational
+    /// config (replaces the old plaintext config.yaml + openrouter.key).
     ///
-    /// Actions: `set-key` (store the key as a 0600 file), `enable` / `disable`
-    /// (turn the judge on/off globally), `status` (show where the key resolves
-    /// from + model config), `remove-key` (delete the file), `test` (dry-run a
-    /// sample request against the model).
-    Judge {
-        /// set-key | enable | disable | status | remove-key | test
+    /// Actions: `init` (create it), `unlock` / `lock` (cache/clear its key for
+    /// this session), `rekey` (change its passphrase), `status`.
+    Keyring {
+        /// init | unlock | lock | rekey | status
         action: String,
+    },
+    /// AI judge registry: define multiple named judges (model, thresholds,
+    /// criteria, key), pick a default, toggle the judge on/off, and test it.
+    /// Operates on the unlocked keyring.
+    ///
+    /// Actions: `add` / `edit` / `remove` <name>, `list`, `set-default <name>`,
+    /// `set-key <name>`, `enable` / `disable` (global), `status`, `test`.
+    Judge {
+        /// add | edit | remove | list | set-default | set-key | enable | disable | status | test
+        action: String,
+        /// (add/edit/remove/set-key/set-default) The judge name.
+        name: Option<String>,
+        /// (test) Which judge to test (defaults to the keyring's default judge).
+        #[arg(long = "judge")]
+        judge_name: Option<String>,
         #[arg(long)]
         reason: Option<String>,
         #[arg(long, default_value = "misc")]
@@ -238,8 +253,11 @@ fn main() -> Result<()> {
         Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
         Commands::Import { file, name } => cmd_import(&file, name.as_deref()),
         Commands::Daemon { action, fix } => cmd_daemon(&action, fix),
+        Commands::Keyring { action } => cmd_keyring(&action),
         Commands::Judge {
             action,
+            name,
+            judge_name,
             reason,
             scope,
             secret,
@@ -250,6 +268,8 @@ fn main() -> Result<()> {
             vault_description,
         } => cmd_judge(
             &action,
+            name.as_deref(),
+            judge_name.as_deref(),
             JudgeTestArgs {
                 reason: reason.as_deref(),
                 scope: &scope,
@@ -480,28 +500,28 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
     }
 
     // If the vault opted into the judge, tell the user what's still needed for it
-    // to actually gate access — the judge needs the global switch on AND a key.
+    // to actually gate access — a keyring with an enabled judge and a key.
     if judge_enabled {
-        let jcfg = config::SvaultConfig::load().judge;
-        let has_key = config::openrouter_key(&jcfg).is_some();
-        if !jcfg.enabled || !has_key {
+        let ready = keyring::open_from_session()
+            .map(|kr| kr.data.judge_enabled && !kr.data.judges.is_empty())
+            .unwrap_or(false);
+        if !ready {
             println!();
             println!(
-                "{} the AI judge is on for this vault, but it won't act until:",
+                "{} the AI judge is on for this vault, but it won't act until the",
                 style("note:").cyan()
             );
-            if !has_key {
-                println!(
-                    "{}",
-                    style("    • an OpenRouter key is set   →  svault judge set-key").dim()
-                );
-            }
-            if !jcfg.enabled {
-                println!(
-                    "{}",
-                    style("    • the judge is enabled       →  svault judge enable").dim()
-                );
-            }
+            println!(
+                "{}",
+                style("      keyring has an enabled judge with a key:").cyan()
+            );
+            println!(
+                "{}",
+                style(
+                    "    • svault keyring init   • svault judge add <name>   • svault judge enable"
+                )
+                .dim()
+            );
         }
     }
     Ok(())
@@ -1003,7 +1023,13 @@ fn cmd_get(
     // No daemon (or vault not unlocked there): run the SAME gate locally against
     // the decrypted, key-authenticated policy, then fetch from the session/prompt.
     let vault = open_unlocked_or_prompt(&vault_dir, &meta_preview.name)?;
-    let judge = judge::JudgeRuntime::from_config(&config::SvaultConfig::load().judge);
+    // Resolve the judge from the unlocked keyring (the vault's assigned judge or
+    // the keyring default); None when the keyring is locked / judge off / no key.
+    let judge = keyring::open_from_session().and_then(|kr| {
+        kr.data
+            .resolve_judge(vault.policy.judge.judge.as_deref())
+            .and_then(|(_n, def)| judge::JudgeRuntime::from_def(def))
+    });
     let req = policy::Request {
         vault: &vault.meta.name,
         vault_description: &vault.meta.description,
@@ -1632,19 +1658,33 @@ struct JudgeTestArgs<'a> {
     vault_description: Option<&'a str>,
 }
 
-/// `svault judge <action>` — manage the OpenRouter key (`set-key` / `status` /
-/// `remove-key`) and dry-run the configured model with `test`.
-fn cmd_judge(action: &str, t: JudgeTestArgs) -> Result<()> {
+/// Open the keyring for a management command: reuse the cached session if it's
+/// unlocked, else prompt for the keyring passphrase and cache a session (so the
+/// keyring is unlocked for the rest of this session, and the daemon sees it).
+fn unlock_keyring_interactive() -> Result<keyring::Keyring> {
+    if !keyring::exists() {
+        anyhow::bail!("no keyring yet — run 'svault keyring init'");
+    }
+    if let Some(kr) = keyring::open_from_session() {
+        return Ok(kr);
+    }
+    let pass = prompt_secret("  Keyring passphrase")?;
+    let kr = keyring::Keyring::open(&pass)?;
+    keyring::unlock_session(kr.key().bytes())?;
+    Ok(kr)
+}
+
+/// `svault keyring <action>` — lifecycle of the encrypted keyring.
+fn cmd_keyring(action: &str) -> Result<()> {
     match action {
-        "test" => cmd_judge_test(t),
-        "set-key" | "set" => cmd_judge_set_key(),
-        "status" | "key" | "key-status" => cmd_judge_status(),
-        "remove-key" | "remove" | "unset" => cmd_judge_remove_key(),
-        "enable" | "on" => cmd_judge_toggle(true),
-        "disable" | "off" => cmd_judge_toggle(false),
+        "init" => cmd_keyring_init(),
+        "unlock" => cmd_keyring_unlock(),
+        "lock" => cmd_keyring_lock(),
+        "rekey" => cmd_keyring_rekey(),
+        "status" => cmd_keyring_status(),
         other => {
             eprintln!(
-                "{} Unknown action '{}'. Use: set-key | enable | disable | status | remove-key | test",
+                "{} Unknown action '{}'. Use: init | unlock | lock | rekey | status",
                 style("error:").red(),
                 other
             );
@@ -1653,33 +1693,347 @@ fn cmd_judge(action: &str, t: JudgeTestArgs) -> Result<()> {
     }
 }
 
-/// `svault judge enable|disable` — flip the global on/off switch in
-/// `.svault/config.yaml`. The judge only acts when this is on AND a key is
-/// configured; per-vault `meta.judge.enabled = false` can still opt a vault out.
-fn cmd_judge_toggle(enabled: bool) -> Result<()> {
-    let mut cfg = config::SvaultConfig::load();
-    cfg.judge.enabled = enabled;
-    cfg.save()?;
-    let word = if enabled { "enabled" } else { "disabled" };
-    println!("{} AI judge {} (global)", style("ok:").green().bold(), word);
-    if enabled && config::openrouter_key(&cfg.judge).is_none() {
-        println!("  note: no OpenRouter key yet — run `svault judge set-key` to activate it.");
+fn cmd_keyring_init() -> Result<()> {
+    if keyring::exists() {
+        eprintln!("{} a keyring already exists", style("error:").red());
+        std::process::exit(1);
+    }
+    println!("  The keyring holds your AI judges, their API keys, and operational");
+    println!("  config — AES-256-GCM encrypted under this passphrase, never plaintext.");
+    let passphrase = loop {
+        let p = prompt_secret("  Keyring passphrase")?;
+        match passphrase::meets_floor(&p) {
+            Ok(()) => break p,
+            Err(e) => eprintln!("{} {}", style("error:").red(), e),
+        }
+    };
+    let confirm = prompt_secret("  Confirm passphrase")?;
+    if *passphrase != *confirm {
+        eprintln!("{} passphrases do not match", style("error:").red());
+        std::process::exit(1);
+    }
+    let kr = keyring::Keyring::init(&passphrase)?;
+    keyring::unlock_session(kr.key().bytes())?;
+    println!(
+        "{} keyring created and unlocked",
+        style("ok:").green().bold()
+    );
+    println!("  add a judge:   svault judge add <name>");
+    println!("  turn it on:    svault judge enable");
+    Ok(())
+}
+
+fn cmd_keyring_unlock() -> Result<()> {
+    if !keyring::exists() {
+        eprintln!(
+            "{} no keyring yet — run 'svault keyring init'",
+            style("error:").red()
+        );
+        std::process::exit(1);
+    }
+    let pass = prompt_secret("  Keyring passphrase")?;
+    let kr = keyring::Keyring::open(&pass)?;
+    keyring::unlock_session(kr.key().bytes())?;
+    println!("{} keyring unlocked", style("ok:").green().bold());
+    Ok(())
+}
+
+fn cmd_keyring_lock() -> Result<()> {
+    keyring::lock_session()?;
+    println!("{} keyring locked", style("ok:").green().bold());
+    Ok(())
+}
+
+fn cmd_keyring_rekey() -> Result<()> {
+    if !keyring::exists() {
+        eprintln!("{} no keyring to rekey", style("error:").red());
+        std::process::exit(1);
+    }
+    let old = prompt_secret("  Current keyring passphrase")?;
+    let mut kr = keyring::Keyring::open(&old)?;
+    let new = loop {
+        let p = prompt_secret("  New keyring passphrase")?;
+        match passphrase::meets_floor(&p) {
+            Ok(()) => break p,
+            Err(e) => eprintln!("{} {}", style("error:").red(), e),
+        }
+    };
+    let confirm = prompt_secret("  Confirm new passphrase")?;
+    if *new != *confirm {
+        eprintln!("{} passphrases do not match", style("error:").red());
+        std::process::exit(1);
+    }
+    kr.rekey(&new)?;
+    keyring::unlock_session(kr.key().bytes())?;
+    println!("{} keyring passphrase changed", style("ok:").green().bold());
+    Ok(())
+}
+
+fn cmd_keyring_status() -> Result<()> {
+    if !keyring::exists() {
+        println!(
+            "keyring: {} — run 'svault keyring init'",
+            style("not created").red()
+        );
+        return Ok(());
+    }
+    if let Some(kr) = keyring::open_from_session() {
+        println!("keyring: {}", style("unlocked").green());
+        println!(
+            "  judge (global): {}",
+            if kr.data.judge_enabled { "on" } else { "off" }
+        );
+        println!(
+            "  default judge:  {}",
+            kr.data.default_judge.as_deref().unwrap_or("(none)")
+        );
+        if kr.data.judges.is_empty() {
+            println!("  judges:         (none) — add one with 'svault judge add <name>'");
+        } else {
+            println!(
+                "  judges:         {}",
+                kr.data
+                    .judges
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    } else {
+        println!("keyring: {}", style("locked").yellow());
+        println!("  unlock to manage judges: svault keyring unlock");
     }
     Ok(())
 }
 
-/// `svault judge set-key` — prompt for the OpenRouter key (hidden) and store it
-/// as a `0600` file at `~/.config/svault/openrouter.key`. The key is never
-/// echoed and never written to config.
-fn cmd_judge_set_key() -> Result<()> {
+/// Require a judge name for actions that take one.
+fn require_judge_name(name: Option<&str>, action: &str) -> Result<String> {
+    name.map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("'svault judge {action} <name>' needs a judge name"))
+}
+
+/// Prompt for one judge's fields (model/url/timeout/thresholds/criteria),
+/// pre-filled from `existing` when editing. The API key is prompted separately.
+fn prompt_judge_def(existing: Option<&keyring::JudgeDef>) -> Result<keyring::JudgeDef> {
+    let base = existing.cloned().unwrap_or_default();
+    let model: String = Input::new()
+        .with_prompt("  Model")
+        .default(base.model.clone())
+        .interact_text()?;
+    let base_url: String = Input::new()
+        .with_prompt("  Base URL")
+        .default(base.base_url.clone())
+        .interact_text()?;
+    let timeout_secs: u64 = Input::new()
+        .with_prompt("  Timeout (s)")
+        .default(base.timeout_secs)
+        .interact_text()?;
+    let allow_threshold: u8 = Input::new()
+        .with_prompt("  Allow threshold (0-100)")
+        .default(base.allow_threshold)
+        .interact_text()?;
+    let high_threshold: u8 = Input::new()
+        .with_prompt("  High threshold (0-100)")
+        .default(base.high_threshold)
+        .interact_text()?;
+    let criteria: String = Input::new()
+        .with_prompt("  Criteria (extra rules added to this judge's prompt — optional)")
+        .allow_empty(true)
+        .with_initial_text(base.criteria.clone())
+        .interact_text()?;
+    Ok(keyring::JudgeDef {
+        model,
+        base_url,
+        timeout_secs,
+        allow_threshold,
+        high_threshold,
+        criteria,
+        api_key: base.api_key,
+    })
+}
+
+/// Prompt for an OpenRouter key (hidden). Empty = leave/clear (fall back to env).
+fn prompt_optional_key(prompt: &str) -> Result<String> {
+    let key = Password::new()
+        .with_prompt(prompt)
+        .allow_empty_password(true)
+        .interact()?;
+    Ok(key.trim().to_string())
+}
+
+/// `svault judge <action>` — manage the judge registry inside the keyring.
+fn cmd_judge(
+    action: &str,
+    name: Option<&str>,
+    judge_name: Option<&str>,
+    t: JudgeTestArgs,
+) -> Result<()> {
+    match action {
+        "add" => cmd_judge_add(name),
+        "edit" => cmd_judge_edit(name),
+        "remove" | "rm" | "delete" => cmd_judge_remove(name),
+        "list" | "ls" => cmd_judge_list(),
+        "set-default" | "default" => cmd_judge_set_default(name),
+        "set-key" | "key" => cmd_judge_set_key(name),
+        "enable" | "on" => cmd_judge_toggle(true),
+        "disable" | "off" => cmd_judge_toggle(false),
+        "status" => cmd_keyring_status(),
+        "test" => cmd_judge_test(judge_name, t),
+        other => {
+            eprintln!(
+                "{} Unknown action '{}'. Use: add | edit | remove | list | set-default | set-key | enable | disable | status | test",
+                style("error:").red(),
+                other
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_judge_add(name: Option<&str>) -> Result<()> {
+    let name = require_judge_name(name, "add")?;
+    let mut kr = unlock_keyring_interactive()?;
+    if kr.data.judges.contains_key(&name) {
+        eprintln!(
+            "{} a judge named '{}' already exists (use 'edit')",
+            style("error:").red(),
+            name
+        );
+        std::process::exit(1);
+    }
+    let mut def = prompt_judge_def(None)?;
+    def.api_key =
+        prompt_optional_key("  OpenRouter API key (sk-or-…, blank = use $SVAULT_OPENROUTER_KEY)")?;
+    let first = kr.data.judges.is_empty();
+    kr.data.judges.insert(name.clone(), def);
+    if first {
+        kr.data.default_judge = Some(name.clone());
+    }
+    kr.save()?;
+    println!("{} judge '{}' added", style("ok:").green().bold(), name);
+    if !kr.data.judge_enabled {
+        println!("  turn the judge on globally: svault judge enable");
+    }
+    Ok(())
+}
+
+fn cmd_judge_edit(name: Option<&str>) -> Result<()> {
+    let name = require_judge_name(name, "edit")?;
+    let mut kr = unlock_keyring_interactive()?;
+    let existing = kr
+        .data
+        .judges
+        .get(&name)
+        .ok_or_else(|| anyhow::anyhow!("no judge named '{name}'"))?
+        .clone();
+    let def = prompt_judge_def(Some(&existing))?;
+    kr.data.judges.insert(name.clone(), def);
+    kr.save()?;
+    println!("{} judge '{}' updated", style("ok:").green().bold(), name);
+    println!("  (key unchanged — set it with 'svault judge set-key {name}')");
+    Ok(())
+}
+
+fn cmd_judge_remove(name: Option<&str>) -> Result<()> {
+    let name = require_judge_name(name, "remove")?;
+    let mut kr = unlock_keyring_interactive()?;
+    if kr.data.judges.remove(&name).is_none() {
+        eprintln!("{} no judge named '{}'", style("error:").red(), name);
+        std::process::exit(1);
+    }
+    if kr.data.default_judge.as_deref() == Some(name.as_str()) {
+        kr.data.default_judge = kr.data.judges.keys().next().cloned();
+    }
+    kr.save()?;
+    println!("{} judge '{}' removed", style("ok:").green().bold(), name);
+    Ok(())
+}
+
+fn cmd_judge_list() -> Result<()> {
+    let kr = unlock_keyring_interactive()?;
+    if kr.data.judges.is_empty() {
+        println!("No judges yet — add one with 'svault judge add <name>'.");
+        return Ok(());
+    }
+    println!(
+        "judge (global): {}   default: {}",
+        if kr.data.judge_enabled { "on" } else { "off" },
+        kr.data.default_judge.as_deref().unwrap_or("(none)")
+    );
+    println!(
+        "{:<18} {:<26} {:>6} {:>5} KEY",
+        "NAME", "MODEL", "ALLOW", "HIGH"
+    );
+    println!("{}", "─".repeat(72));
+    for (n, d) in &kr.data.judges {
+        let mark = if kr.data.default_judge.as_deref() == Some(n.as_str()) {
+            "*"
+        } else {
+            " "
+        };
+        let key = if d.api_key.trim().is_empty() {
+            "env/none"
+        } else {
+            "set"
+        };
+        println!(
+            "{mark}{:<17} {:<26} {:>6} {:>5} {}",
+            n, d.model, d.allow_threshold, d.high_threshold, key
+        );
+    }
+    Ok(())
+}
+
+fn cmd_judge_set_default(name: Option<&str>) -> Result<()> {
+    let name = require_judge_name(name, "set-default")?;
+    let mut kr = unlock_keyring_interactive()?;
+    if !kr.data.judges.contains_key(&name) {
+        eprintln!("{} no judge named '{}'", style("error:").red(), name);
+        std::process::exit(1);
+    }
+    kr.data.default_judge = Some(name.clone());
+    kr.save()?;
+    println!(
+        "{} default judge is now '{}'",
+        style("ok:").green().bold(),
+        name
+    );
+    Ok(())
+}
+
+/// `svault judge enable|disable` — flip the global on/off switch in the
+/// encrypted keyring. The judge only acts when this is on AND the keyring is
+/// unlocked AND the resolved judge has a key; per-vault `judge.enabled = false`
+/// can still opt a vault out.
+fn cmd_judge_toggle(enabled: bool) -> Result<()> {
+    let mut kr = unlock_keyring_interactive()?;
+    kr.data.judge_enabled = enabled;
+    kr.save()?;
+    let word = if enabled { "enabled" } else { "disabled" };
+    println!("{} AI judge {} (global)", style("ok:").green().bold(), word);
+    if enabled && kr.data.judges.is_empty() {
+        println!("  note: no judges yet — add one with `svault judge add <name>`.");
+    }
+    Ok(())
+}
+
+/// `svault judge set-key <name>` — set (or clear) one judge's OpenRouter key.
+/// The key is stored encrypted in the keyring, never in a plaintext file.
+fn cmd_judge_set_key(name: Option<&str>) -> Result<()> {
     use std::io::IsTerminal;
-    let cfg = config::SvaultConfig::load();
+    let name = require_judge_name(name, "set-key")?;
+    let mut kr = unlock_keyring_interactive()?;
+    if !kr.data.judges.contains_key(&name) {
+        eprintln!("{} no judge named '{}'", style("error:").red(), name);
+        std::process::exit(1);
+    }
     // Interactive at a TTY → hidden prompt. Piped (e.g. `echo $KEY | svault
-    // judge set-key`) → read the key from stdin so it stays out of the shell
-    // history / argv.
+    // judge set-key gemini`) → read from stdin so it stays out of argv/history.
     let key = if std::io::stdin().is_terminal() {
         Password::new()
-            .with_prompt("  OpenRouter API key (sk-or-...)")
+            .with_prompt("  OpenRouter API key (sk-or-…)")
+            .allow_empty_password(true)
             .interact()?
     } else {
         let mut buf = String::new();
@@ -1687,105 +2041,67 @@ fn cmd_judge_set_key() -> Result<()> {
         buf
     };
     let key = key.trim().to_string();
+    if let Some(def) = kr.data.judges.get_mut(&name) {
+        def.api_key = key.clone();
+    }
+    kr.save()?;
     if key.is_empty() {
-        eprintln!("{} empty key — nothing written", style("error:").red());
-        std::process::exit(1);
-    }
-    let path = config::set_openrouter_key(&cfg.judge, &key)?;
-    println!(
-        "{} stored OpenRouter key at {} (0600)",
-        style("ok:").green().bold(),
-        path.display()
-    );
-    if std::env::var(config::KEY_ENV).is_ok() {
         println!(
-            "  note: ${} is also set and takes precedence over the file",
-            config::KEY_ENV
-        );
-    }
-    println!("  verify it with: svault judge test");
-    Ok(())
-}
-
-/// `svault judge status` — show where the key resolves from (without revealing
-/// it) plus the active model/threshold config.
-fn cmd_judge_status() -> Result<()> {
-    let cfg = config::SvaultConfig::load();
-    let j = &cfg.judge;
-    println!(
-        "{} enabled={} model={} (allow≥{}, high≥{}) timeout={}s",
-        style("judge:").bold().cyan(),
-        j.enabled,
-        j.model,
-        j.allow_threshold,
-        j.high_threshold,
-        j.timeout_secs
-    );
-    match config::key_source(j) {
-        config::KeySource::Env => println!(
-            "  key: from ${} (environment)",
-            style(config::KEY_ENV).green()
-        ),
-        config::KeySource::File(p) => {
-            println!("  key: {} ({})", style("present").green(), p.display())
-        }
-        config::KeySource::None => {
-            let path = config::key_file_path(j)
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "~/.config/svault/openrouter.key".to_string());
-            println!(
-                "  key: {} — run `svault judge set-key`",
-                style("none").red()
-            );
-            println!("       (would be stored at {path})");
-        }
-    }
-    Ok(())
-}
-
-/// `svault judge remove-key` — delete the stored key file.
-fn cmd_judge_remove_key() -> Result<()> {
-    let cfg = config::SvaultConfig::load();
-    match config::remove_openrouter_key(&cfg.judge)? {
-        Some(path) => println!(
-            "{} removed key file {}",
+            "{} cleared key for '{}' (will fall back to ${})",
             style("ok:").green().bold(),
-            path.display()
-        ),
-        None => println!("{} no key file to remove", style("note:").dim()),
-    }
-    if std::env::var(config::KEY_ENV).is_ok() {
-        println!(
-            "  note: ${} is still set in your environment",
-            config::KEY_ENV
+            name,
+            keyring::KEY_ENV
         );
+    } else {
+        println!(
+            "{} stored encrypted key for judge '{}'",
+            style("ok:").green().bold(),
+            name
+        );
+        println!("  verify it with: svault judge test --judge {name}");
     }
     Ok(())
 }
 
-/// `svault judge test` — dry-run the configured model/key against a sample
-/// request so you can verify OpenRouter setup without touching a real secret.
-fn cmd_judge_test(t: JudgeTestArgs) -> Result<()> {
+/// `svault judge test [--judge <name>]` — dry-run a judge against a sample
+/// request so you can verify the model + key + criteria without a real secret.
+fn cmd_judge_test(judge_name: Option<&str>, t: JudgeTestArgs) -> Result<()> {
     let reason = t
         .reason
         .unwrap_or("run the nightly database migration to apply pending changes");
-    let cfg = config::SvaultConfig::load();
-    // Attempt regardless of the global on/off toggle — the point is to verify the
-    // model + key plumbing works.
-    let mut jcfg = cfg.judge.clone();
-    jcfg.enabled = true;
-    let Some(rt) = judge::JudgeRuntime::from_config(&jcfg) else {
+    let kr = unlock_keyring_interactive()?;
+    let target = judge_name.or(kr.data.default_judge.as_deref());
+    let Some(name) = target else {
         eprintln!(
-            "{} No OpenRouter API key found.",
+            "{} no judge to test — pass --judge <name> or set a default.",
             style("error:").red().bold()
         );
+        std::process::exit(1);
+    };
+    let Some(def) = kr.data.judges.get(name) else {
+        eprintln!("{} no judge named '{}'", style("error:").red(), name);
+        std::process::exit(1);
+    };
+    let Some(rt) = judge::JudgeRuntime::from_def(def) else {
         eprintln!(
-            "  Run `svault judge set-key`, or set ${} in the environment.",
-            config::KEY_ENV
+            "{} judge '{}' has no API key.",
+            style("error:").red().bold(),
+            name
+        );
+        eprintln!(
+            "  Set one: svault judge set-key {name}  (or export ${})",
+            keyring::KEY_ENV
         );
         std::process::exit(1);
     };
     let tier_enum = parse_tier(t.tier);
+    println!(
+        "{} judge={name} model={} tier={tier_enum} (allow≥{}, high≥{})",
+        style("judge:").bold().cyan(),
+        rt.model,
+        rt.allow_threshold,
+        rt.high_threshold
+    );
     println!(
         "{} model={} tier={tier_enum} (allow≥{}, high≥{})",
         style("judge:").bold().cyan(),

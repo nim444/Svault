@@ -81,12 +81,6 @@ svault lock
 
 Or just run `svault` with no arguments for the [interactive TUI](docs/tui.md).
 
-<div align="center">
-
-⭐ **Star us if you like the project!**
-
-</div>
-
 ---
 
 <details>
@@ -100,7 +94,7 @@ Run `svault` with no subcommand to open the full-screen terminal UI:
 svault
 ```
 
-Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s` edit settings, `shift-J` manage the AI judge (key, global on/off, model, thresholds, live test), and — once a vault is unlocked — `a` add, `c` classify (tier/scope/reason/description), view, and `d` delete secrets, with each secret's classification shown inline. The TUI reuses the cached session key, so an unlocked vault is never re-prompted. Every subcommand still works for scripting.
+Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s` edit settings, `shift-J` manage the AI judge (unlock the keyring, toggle the global on/off switch, set the default judge, set/clear a judge's API key, live test, remove a judge), and — once a vault is unlocked — `a` add, `c` classify (tier/scope/reason/description), view, and `d` delete secrets, with each secret's classification shown inline. Adding or editing a judge's model/criteria/thresholds is done from the CLI (`svault judge add|edit <name>`). The TUI reuses the cached session key, so an unlocked vault is never re-prompted. Every subcommand still works for scripting.
 
 **Full keybindings → [docs/tui.md](docs/tui.md)**
 
@@ -111,7 +105,7 @@ Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s`
 
 <br>
 
-`svault secret get` is the **human path** — passphrase, no questions asked. `svault get` is the **agent path**: a structured request that an AI must justify. As of 0.9.0 it is **enforced inside the daemon** (the component that holds the key), not advisory — there is no unguarded read path, and every decision is audited with the connecting process's peer UID.
+`svault secret get` is the **human path** — passphrase, no questions asked. `svault get` is the **agent path**: a structured request that an AI must justify, **enforced inside the daemon** that holds the key — not advisory. There is no unguarded read path, and every decision is audited with the connecting process's peer UID.
 
 ```bash
 svault get DB_URL --scope database --reason "run nightly migration" --caller claude-code
@@ -133,7 +127,15 @@ flowchart TD
     JUDGE -->|deny| DENY
 ```
 
-**AI judge (0.9.0):** for medium/high-tier secrets, Svault asks a cheap, fast LLM via your OpenRouter account whether the stated *reason* plausibly justifies the request — the behavioural gate that makes Svault AI-aware. Per-secret classification (scope/tier + an optional **description** the judge weighs against the request's reason), caller rules, and the judge override all live **AES-256-GCM encrypted inside `vault.enc`** (0.9.2) — set classification with `svault secret add --scope --tier --description`; seed caller rules with `svault policy init`. Because the policy is encrypted at rest, an agent can't read it to plan a passing request, and a denied `svault get` returns only a **generic** message (the real reason is logged for you, never returned to the caller). The judge is **off until you configure a key** — store it with `svault judge set-key` (or `$SVAULT_OPENROUTER_KEY`), then try `svault judge test`.
+**The AI judge.** For medium/high-tier secrets, Svault asks a fast LLM — via your OpenRouter account — whether the stated *reason* plausibly justifies the request. This is the behavioural gate that makes Svault AI-aware. You can define **multiple named judges**, each with its own model, thresholds, and free-text **criteria**, pick a default, and assign one per vault.
+
+Everything that gates access is **AES-256-GCM encrypted at rest** — per-secret classification (scope/tier + an optional description the judge weighs against the reason) and caller rules live inside `vault.enc`; the judge registry and its API keys live in a separate encrypted **keyring** (`.svault/keyring.enc`). There are no plaintext config or key files. Because the policy is unreadable at rest, an agent can't study it to craft a passing request — and a denied `svault get` returns only a **generic** message, with the real reason recorded in the audit log for you.
+
+```bash
+svault keyring init          # create the encrypted keyring (one-time)
+svault judge add reviewer    # name a judge: model, thresholds, criteria, key
+svault judge enable          # turn the judge on globally
+```
 
 **Full pipeline, tiers, judge setup → [docs/policy-engine.md](docs/policy-engine.md)**
 
@@ -183,14 +185,15 @@ The chosen backend is recorded in `meta.yaml` and shown as a `storage:name` pref
 
 | Property | Implementation |
 |---|---|
-| Encryption | AES-256-GCM |
+| Encryption | AES-256-GCM (authenticated) |
 | Key derivation | Argon2id (64 MB, 3 iterations) — GPU-resistant |
-| Metadata integrity | HMAC-SHA256 — tampering with `meta.yaml` is detected |
+| Policy & judge config | Encrypted at rest — the policy in `vault.enc`, the judge registry + API keys in `keyring.enc`. No plaintext config or key files |
+| Metadata integrity | HMAC-SHA256 — tampering with the public `meta.yaml` is detected |
 | Memory safety | `VaultKey` + secrets derive `ZeroizeOnDrop` — wiped on drop |
-| Session file | Atomic write, mode `0600` |
-| Vault file | Safe to commit — encrypted at rest |
+| Session / on-disk files | Owner-only (`0600`), written atomically |
+| Vault file | Safe to commit — encrypted at rest, useless without the passphrase |
 
-**The passphrase is the only key.**
+**Your passphrases are the only keys** — one per vault, one for the keyring.
 
 **Threat model + on-disk layout → [docs/security.md](docs/security.md)**
 
@@ -222,19 +225,17 @@ flowchart TD
 
 ## Roadmap
 
-| Phase | Status | What |
+| Milestone | Status | What |
 |---|---|---|
-| **Step 1** | Done | Local encrypted vault — AES-256-GCM + Argon2id |
-| **Step 1+** | Done | Interactive Ratatui TUI — forms, browsers, lock-aware secrets |
-| **Step 2** | Done | Policy engine — caller identity, `reason`, scopes, tiers, rate limit, audit log |
-| **Step 3** | Done | Recovery (code + export/import) and the Unix daemon (keys in memory, auto-lock). Extra auth methods (YubiKey, TOTP, Touch ID/Face ID) deferred |
-| **0.9.0** | Done | **Enforced** policy engine (in the daemon, peer-UID-audited) + signed per-secret classification + **AI judge** (OpenRouter) |
-| **0.9.1** | Done | Policy + judge in the **TUI** — `shift-J` judge management, classification table + reclassify, `judge enable/disable`, audited |
-| **0.9.2** | Done | **Policy encrypted at rest** — classification, caller rules, access, judge overrides moved into the AES-256-GCM `vault.enc` (no read-to-bypass); denials are generic to the caller |
-| **1.0.0** | Planned | Final independent review + install channels, then the first stable release |
+| **Foundation** | Shipped | Local AES-256-GCM vaults (Argon2id), the interactive Ratatui TUI, recovery code + encrypted export/import, and the Unix daemon (keys in memory, auto-lock) |
+| **Enforced policy + AI judge** | Shipped | Daemon-enforced policy engine (peer-UID-audited) — reason, scopes, tiers, rate limit, burst — plus the AI judge (OpenRouter) gating medium/high-tier secrets |
+| **Everything encrypted at rest** | Shipped | The whole policy surface in `vault.enc` and all global config + the judge registry (multiple named judges, with API keys) in `keyring.enc` — nothing abusable in plaintext; per-vault judge assignment; generic caller-facing denials |
+| **1.0.0** | Next | A final independent security review and install channels (script, Homebrew, Docker), then the first stable release |
 | **2.0.0** | Planned | Desktop GUI (Tauri) + system tray |
 | **3.0.0** | Planned | MCP integration — Claude Code, Cursor, Copilot, VS Code, Aider |
 | **Cloud** | Planned | Anomaly scoring via Claude Haiku — free tier + premium plans |
+
+Svault is currently on the **0.9.x** line; 1.0.0 is reserved for the reviewed, stable release. Per-release detail lives in the [changelog](CHANGELOG.md).
 
 **Full roadmap → [docs/roadmap.md](docs/roadmap.md)**
 
@@ -246,11 +247,15 @@ flowchart TD
 cargo test
 ```
 
-103 tests (plus one `#[ignore]`d stress benchmark) covering: roundtrip encryption, wrong-key rejection, bit-flip authentication failure, distinct salts → distinct keys, key-from-bytes roundtrip, vault create/open, open-with-key, re-key, wrong passphrase, add/get/list/remove, persistence across reopen, tampered `vault.enc` rejected, **truncated `vault.enc` errors instead of panicking**, tampered `meta.yaml` rejected, session unlock/lock/lock-all, **the session caching a derived key (never a passphrase)**, passphrase strength checks + **entropy floor**, **owner-only file (0600) / dir (0700) permissions**, audit record/read, rate-limit parsing, the policy engine (capability, tiers, rate limit, burst, unknown caller, fallback mode), recovery code write/unlock + wrong-code rejection, full recover-and-rekey roundtrip (old passphrase rejected, secret preserved, code still valid), export-bundle checksum integrity, build→import recreating an openable vault, **import name-collision suffixing + rename re-signing meta**, storage-backend metadata roundtrip, the daemon (protocol JSON roundtrip, **client-derived-key unlock + bogus-key rejection**, auto-lock idle/hard-max/active decisions, a unix unlock→get→lock→shutdown integration test, a concurrent-reads stress test, **poisoned-mutex recovery**, and **connection-slot accounting**), usage-log source stamping (event tagged with the current surface; old logs parse as unknown), TUI key dispatch (field navigation, the rate-limit space-toggle regression, paste handling, and **help opening with `h` or `?`**), and the **0.9.0 enforced engine** — the AI judge's JSON parsing + tier-dependent fail modes (with a fake transport, no network), **the vault/secret descriptions reaching the judge prompt only when set**, and the daemon's gated read path (policy allow/deny, **high-tier fail-closed when the judge is unavailable**, medium fail-open, peer-UID-stamped audit), and the **OpenRouter key store** (`set-key`/`status`/`remove-key` round-trip writes a `0600` file, trims the key, and resolves the source), and the **0.9.1 TUI policy/judge surface** (the classify form's tier cycle + require-reason toggle, and the judge screen's global toggle + masked key-entry sub-mode), and the **0.9.2 policy-at-rest guarantees** (the policy round-trips through the encrypted payload, and the plaintext `meta.yaml` leaks no tier/scope/description/caller token at rest).
+**108 tests** (plus an `#[ignore]`d concurrency stress benchmark) cover the crypto core and tamper detection, vault operations, the policy engine and the enforced daemon gate (including peer-UID-stamped audit and high-tier fail-closed behaviour), the AI judge — run against a fake transport, so the suite never touches the network — and the encrypted-at-rest guarantees for both the policy (`vault.enc`) and the keyring (`keyring.enc`).
 
-A heavier concurrency / pressure simulation runs on demand (`cargo test --release daemon_stress_simulation -- --ignored --nocapture`); methodology and a recorded run are in [docs/security-review/stress/0.6.0.md](docs/security-review/stress/0.6.0.md).
+CI runs the full suite on **Ubuntu, Fedora, macOS, and Windows** on every push and pull request. A heavier concurrency simulation runs on demand:
 
-CI runs the suite on **Ubuntu, Fedora, macOS, and Windows** on every push and pull request.
+```bash
+cargo test --release daemon_stress_simulation -- --ignored --nocapture
+```
+
+Methodology and a recorded run are in [docs/security-review/stress/0.6.0.md](docs/security-review/stress/0.6.0.md).
 
 ---
 

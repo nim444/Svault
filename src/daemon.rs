@@ -110,7 +110,6 @@ pub fn is_expired(idle_secs: u64, age_secs: u64, idle_timeout: u64, max_unlocked
 #[cfg(unix)]
 mod imp {
     use super::{is_expired, Request, Response, VaultStatus, LOG_NAME, PID_NAME, SOCKET_NAME};
-    use crate::config::SvaultConfig;
     use crate::crypto::VaultKey;
     use crate::judge::JudgeRuntime;
     use crate::vault::{Vault, SVAULT_DIR};
@@ -178,13 +177,25 @@ mod imp {
     }
 
     /// Server-wide handler context, built once at start and shared (Arc) across
-    /// connection threads. `judge` is `None` when the AI judge is disabled or
-    /// unconfigured — the gate then runs the static tier rules.
+    /// connection threads. The judge is normally resolved per-request from the
+    /// unlocked keyring (see [`resolve_judge`]); `judge_override` is a test-only
+    /// seam to inject a fake transport — production sets it to `None`.
     pub(super) struct ServerCtx {
         base: PathBuf,
         idle: u64,
         max: u64,
-        judge: Option<JudgeRuntime>,
+        judge_override: Option<JudgeRuntime>,
+    }
+
+    /// Build the judge runtime for a gated request from the **unlocked keyring**:
+    /// resolve the vault's assigned judge (or the keyring default), then its key.
+    /// `None` when the keyring is locked, the global switch is off, or no key —
+    /// the gate then applies the static tier rules. Per-vault `enabled = false`
+    /// opt-out is honored inside the gate.
+    fn resolve_judge(policy: &policy::VaultPolicyData) -> Option<JudgeRuntime> {
+        let kr = crate::keyring::open_from_session()?;
+        let (_name, def) = kr.data.resolve_judge(policy.judge.judge.as_deref())?;
+        JudgeRuntime::from_def(def)
     }
 
     // ── Request handling ──────────────────────────────────────────────────
@@ -330,7 +341,14 @@ mod imp {
                     reason: &reason,
                     caller: &caller,
                 };
-                let verdict = gate::authorize(&v.policy, &req, ctx.judge.as_ref());
+                // Test override wins; otherwise resolve from the unlocked keyring.
+                let resolved = if ctx.judge_override.is_some() {
+                    None
+                } else {
+                    resolve_judge(&v.policy)
+                };
+                let rt = ctx.judge_override.as_ref().or(resolved.as_ref());
+                let verdict = gate::authorize(&v.policy, &req, rt);
                 let decision_str = if verdict.allowed() { "allow" } else { "deny" };
                 // The full reason (judge score + rationale, mismatch, rate limit)
                 // is recorded for the human; the caller only ever sees a generic
@@ -694,11 +712,30 @@ mod imp {
             let _ = std::fs::remove_file(&sock); // stale socket from a crash
         }
 
-        let cfg = SvaultConfig::load();
-        let (idle, max) = (cfg.lock.idle_timeout_secs, cfg.lock.max_unlocked_secs);
-        let max_conns = cfg.daemon.max_connections;
-        let judge = JudgeRuntime::from_config(&cfg.judge);
-        let judge_on = judge.is_some();
+        // Operational config lives in the encrypted keyring; read it if the
+        // keyring is already unlocked, else use built-in defaults. (Changing
+        // these takes effect on the next daemon start.) The judge itself is
+        // resolved per-request, so it activates as soon as the keyring unlocks.
+        let kr = crate::keyring::open_from_session();
+        let (idle, max, max_conns, judge_on) = match &kr {
+            Some(k) => (
+                k.data.lock.idle_timeout_secs,
+                k.data.lock.max_unlocked_secs,
+                k.data.daemon.max_connections,
+                k.data.judge_enabled,
+            ),
+            None => {
+                let l = crate::config::LockConfig::default();
+                let d = crate::config::DaemonConfig::default();
+                (
+                    l.idle_timeout_secs,
+                    l.max_unlocked_secs,
+                    d.max_connections,
+                    false,
+                )
+            }
+        };
+        drop(kr);
 
         // Bind under a tight umask so the socket is born 0600 — no TOCTOU window
         // between bind and chmod where it's group/world-accessible (#16).
@@ -721,7 +758,7 @@ mod imp {
             base,
             idle,
             max,
-            judge,
+            judge_override: None,
         });
         serve(listener, store, ctx, max_conns);
         Ok(())
@@ -884,17 +921,25 @@ mod imp {
         println!("svault daemon doctor");
         println!("  platform           unix (native daemon)");
 
-        let cfg = SvaultConfig::load();
-        let src = if crate::config::config_path().exists() {
-            ".svault/config.yaml"
-        } else {
-            "defaults"
+        let kr = crate::keyring::open_from_session();
+        let (idle_secs, max_secs, src) = match &kr {
+            Some(k) => (
+                k.data.lock.idle_timeout_secs,
+                k.data.lock.max_unlocked_secs,
+                "keyring",
+            ),
+            None => {
+                let l = crate::config::LockConfig::default();
+                (
+                    l.idle_timeout_secs,
+                    l.max_unlocked_secs,
+                    "defaults (keyring locked)",
+                )
+            }
         };
-        println!(
-            "  idle timeout       {}s ({src})",
-            cfg.lock.idle_timeout_secs
-        );
-        println!("  hard max           {}s", cfg.lock.max_unlocked_secs);
+        drop(kr);
+        println!("  idle timeout       {idle_secs}s ({src})");
+        println!("  hard max           {max_secs}s");
 
         let sock_exists = sock.exists();
         let responds = sock_exists && ping(&base);
@@ -1025,7 +1070,7 @@ mod imp {
                 base,
                 idle,
                 max,
-                judge,
+                judge_override: judge,
             });
             std::thread::spawn(move || serve(listener, store, ctx, max_conns));
         }
@@ -1075,6 +1120,7 @@ mod imp {
                 model: "fake".into(),
                 allow_threshold: 60,
                 high_threshold: 80,
+                criteria: String::new(),
                 transport: Box::new(FakeJudge(reply)),
             }
         }

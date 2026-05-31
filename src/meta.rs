@@ -104,15 +104,17 @@ impl Default for VaultSettings {
     }
 }
 
-/// Per-vault AI-judge overrides. A `None` field inherits the global judge
-/// config in `.svault/config.yaml`; `enabled = Some(false)` turns the judge off
-/// for this vault regardless of the global setting.
+/// Per-vault AI-judge assignment, stored AES-256-GCM encrypted inside the
+/// vault's policy (so which judge — and thus which criteria — gates a vault is
+/// not readable at rest). `enabled = Some(false)` turns the judge off for this
+/// vault regardless of the global switch; `judge` names which keyring judge to
+/// use (`None` falls back to the keyring's `default_judge`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VaultJudgeConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    pub judge: Option<String>,
 }
 
 /// The **public** vault metadata: `meta.yaml`. HMAC-signed (tamper-evident) but

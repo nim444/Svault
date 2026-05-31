@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-05-31
+
+The **encrypted-keyring and multiple-judges** release. 0.9.2 encrypted the policy,
+but two plaintext artifacts still leaked abusable material at rest: the judge
+config in `.svault/config.yaml` (model and thresholds — read them, tune a passing
+request) and the OpenRouter API key in `~/.config/svault/openrouter.key` (`0600`,
+but plaintext and directly stealable). Both are gone. All global config now lives
+in a single AES-256-GCM-encrypted **keyring** (`.svault/keyring.enc`) under its own
+passphrase. The judge is no longer single and global: you can define **multiple
+named judges** — each with its own model, thresholds, free-text **criteria**
+injected into its prompt, and **API key** — pick a **default**, and **assign one
+per vault**.
+
+**Honest scope:** the keyring is exactly as protected as a vault — it closes the
+read-the-files path, but is not a sandbox against a hostile same-UID process
+reading the unlocked daemon's memory or the `0600` session.
+
+### Added
+- **Encrypted keyring** (`svault keyring init | unlock | lock | rekey | status`): the single store for judges, their API keys, and operational config, AES-256-GCM encrypted (Argon2id) under its own passphrase. Unlock once per session (cached like a vault); until unlocked the judge is off and the static tier rules apply.
+- **Multiple named judges** (`svault judge add | edit | remove | list | set-default | set-key`): each judge has a model, base URL, timeout, allow/high thresholds, free-text **criteria**, and its own key. `criteria` are appended to that judge's prompt so different vaults can be judged by different rules.
+- **Per-vault judge assignment**: a vault's encrypted policy stores the *name* of the judge that gates it (or falls back to the keyring's default), so which judge — and which criteria — a vault uses is not readable at rest.
+- `svault judge test [--judge <name>]` dry-runs a chosen judge (criteria included).
+
+### Changed
+- **No plaintext config or key files.** `.svault/config.yaml` and `~/.config/svault/openrouter.key` are removed; their contents (lock timers, daemon max-connections, backend, judge settings, API keys) live encrypted in the keyring. The daemon starts on built-in defaults and adopts the keyring's operational settings once it is unlocked (lock/connection/backend changes take effect on the next daemon start; the judge activates as soon as the keyring is unlocked).
+- The TUI `shift-J` screen is now a **judge manager** backed by the keyring: unlock, toggle the global switch, set the default, set/clear a judge's key, test, and remove. Adding/editing a judge's model/criteria/thresholds is done with `svault judge add|edit <name>` (multi-field entry lives at the CLI).
+- `$SVAULT_OPENROUTER_KEY` remains as an explicit, opt-in per-judge fallback when a judge has no stored key (an env var, never a file).
+
+### Security
+- The OpenRouter API key is no longer a plaintext file — it is AES-256-GCM encrypted in the keyring, decryptable only with the keyring key held in memory after unlock.
+- Judge models, thresholds, and **criteria** are encrypted at rest, so an agent can't read them to tune a request that passes.
+
+### Migration
+- No migration (pre-release): delete any old `.svault/config.yaml` and `~/.config/svault/openrouter.key`, then `svault keyring init`, `svault judge add <name>`, `svault judge enable`.
+
 ## [0.9.2] - 2026-05-31
 
 The **encrypt-the-policy-at-rest** release. Through 0.9.1 only secret *values*
@@ -18,9 +53,9 @@ then craft a request designed to pass. This release closes that reconnaissance
 path: the whole policy now lives **AES-256-GCM encrypted inside `vault.enc`**, no
 easier to read than the secrets themselves.
 
-**Honest scope:** this defeats reading the files to plan a bypass. It is *not* a
-sandbox against a hostile same-UID process that reads the unlocked daemon's
-memory directly — that remains inherent to the documented same-UID trust model.
+**Honest scope:** this defeats reading the files to plan a bypass. It is **not** a
+sandbox against a hostile same-UID process that reads the unlocked daemon's memory
+directly — that remains inherent to the documented same-UID trust model.
 
 ### Changed
 - **Policy is encrypted at rest.** Per-secret classification (scope/tier/`require_reason`/description), the vault's `allow_agent` + `rate_limit`, the per-vault judge override, the default tier, and **caller rules** all moved out of the plaintext `meta.yaml` (and the former `svault.policy.yaml`) into a versioned, AES-256-GCM-encrypted payload inside `vault.enc` (`policy::VaultPolicyData`). The public `meta.yaml` now carries only non-sensitive metadata (name, description, storage, created-at, behavioural settings). Reading any file at rest reveals nothing an agent could use to plan a passing request.
@@ -34,8 +69,8 @@ memory directly — that remains inherent to the documented same-UID trust model
 - Closes the policy-reconnaissance path: classification, caller scopes, rate limits, and judge thresholds-of-effect are unreadable at rest.
 - Removes the score/rationale leak to the caller on a denial (no hill-climbing toward a passing request).
 
-### Notes
-- The on-disk vault payload format is bumped (v2). There is no migration — the project has no released users; create vaults fresh.
+### Migration
+- The on-disk vault payload format is bumped to v2. There is no migration — the project has no released users; create vaults fresh.
 
 ## [0.9.1] - 2026-05-30
 
