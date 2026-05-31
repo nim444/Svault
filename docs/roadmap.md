@@ -16,9 +16,10 @@ For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 | Foundation (0.1 – 0.8) | Shipped | Encrypted local vaults, interactive TUI, Unix daemon, and a multi-release security-hardening track |
 | Enforced policy + AI judge (0.9.0 – 0.9.1) | Shipped | The behavioural gate: daemon-enforced policy, peer-UID-stamped audit, and an AI judge for medium/high secrets — driven from both CLI and TUI |
 | Everything-encrypted-at-rest (0.9.2 – 0.9.3) | Shipped | The entire policy surface and all global config moved into encrypted stores; no plaintext config or key files remain |
-| Unified unlock (0.9.4 – 0.9.5) | 0.9.4 shipped · YubiKey next | One master passphrase opens every vault (shipped, 0.9.4); a YubiKey touch as an equally-easy alternative is next — both as keyslots over a random data key |
-| Conditional access + escalation (0.9.6) | Planned | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
-| Agent surface — MCP (0.9.7) | Planned | A local MCP server over the existing daemon socket, `svault install`, and an agent-readable capability descriptor |
+| Unified unlock (0.9.4 – 0.9.5) | Shipped | One master passphrase opens every vault (0.9.4) **and the keyring** (0.9.5) — per-vault and keyring passphrases removed; all keyslots over a random data key |
+| YubiKey keyslot (0.9.6) | Next | A YubiKey HMAC-SHA1 touch as an equally-easy alternative unlock — another keyslot over the same master key (either the passphrase or a touch, not 2FA) |
+| Conditional access + escalation (0.9.7) | Planned | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
+| Agent surface — MCP (0.9.8) | Planned | A local MCP server over the existing daemon socket, `svault install`, and an agent-readable capability descriptor |
 | Stable release (1.0.0) | Target | Final independent security review of the full agent-ready surface + distribution channels, then the first stable release |
 | Desktop GUI (2.0.0) | Planned | Tauri vault manager + system tray |
 | Remote / cloud (3.0.0+) | Planned | Remote MCP with OAuth, more platforms, and optional anomaly scoring via Claude Haiku |
@@ -39,9 +40,10 @@ A complete, self-contained secret manager that works fully offline:
   signed, so tampering is detectable.
 - **Interactive TUI** — a full-screen Ratatui dashboard for vault, secret, and
   policy management, with a live lock-state indicator and an activity timeline.
-- **Recovery and portability** — a one-time recovery code resets a lost
-  passphrase (`svault recover`), and checksummed encrypted bundles move a vault
-  between machines (`svault export` / `svault import`).
+- **Recovery and portability** — a one-time master recovery code resets a
+  forgotten master passphrase and reopens every store (`svault master recover`),
+  per-vault codes recover a single vault (`svault recover`), and checksummed
+  encrypted bundles move a vault between machines (`svault export` / `import`).
 - **Unix daemon** — unlock once and hold keys **in memory** behind a `0600`
   Unix socket, with idle and hard-max auto-lock (keys zeroized on lock,
   auto-lock, and shutdown) and a per-connection peer-UID check so only the
@@ -85,10 +87,10 @@ read-the-files reconnaissance path entirely:
   descriptions, caller scopes, or rate limits at rest to craft a passing
   request.
 - **Encrypted keyring** — all global config and the judge registry live in a
-  single encrypted store, `.svault/keyring.enc`, under its own passphrase
-  (`svault keyring init | unlock | lock | rekey | status`). The former plaintext
-  `config.yaml` and `openrouter.key` file are gone — **no plaintext config or
-  key files remain.**
+  single encrypted store, `.svault/keyring.enc`, opened by the master passphrase
+  (`svault keyring init | unlock | lock | status`; as of 0.9.5 it has no separate
+  passphrase). The former plaintext `config.yaml` and `openrouter.key` file are
+  gone — **no plaintext config or key files remain.**
 - **Multiple named judges** — the judge is a registry, not a single global
   setting (`svault judge add | edit | remove | list | set-default | set-key`).
   Each judge has its own model, thresholds, free-text criteria, and encrypted
@@ -108,35 +110,40 @@ day-to-day AI agents. They all extend existing primitives — the keyslot patter
 already in `recovery.rs`, the encrypted policy in `vault.enc`, and the
 peer-UID-bonded daemon socket — rather than adding a new trust model.
 
-### Unified unlock — one master, or a YubiKey touch (0.9.4 – 0.9.5)
+### Unified unlock — one master passphrase (0.9.4 – 0.9.5, shipped)
 
 Each vault used to have its own passphrase and the keyring another — too many
 secrets to type. The fix is the **keyslot model** (the same idea as LUKS or
 1Password):
 
 - Each store gets a **random data key** that encrypts its contents. That data key
-  is wrapped in one or more **keyslots** — a master passphrase, a YubiKey, and the
-  existing recovery code. Per-vault passphrases go away.
-- **Any one slot opens the store.** Type the master passphrase **or** touch a
-  YubiKey — either is sufficient, not a two-step 2FA. `svault unlock` opens every
-  vault at once; `svault lock --all` clears them and the master session.
+  is wrapped in one or more **keyslots** — a master passphrase, the existing
+  recovery code, and (next) a YubiKey. Per-vault and keyring passphrases go away.
+- **Any one slot opens the store.** `svault unlock` opens every vault **and the
+  keyring** at once; `svault lock --all` clears them and the master session.
 
-**Shipped in 0.9.4 (master passphrase):** `svault master init | rekey | status`;
-a random data key per vault wrapped under a master key in `<vault>/keyslot.enc`,
-and the master key wrapped under the passphrase in `.svault/master.enc`. `create`
-no longer asks for a per-vault passphrase; `unlock` opens every vault at once;
-`recover` and cross-machine `import` re-attach a vault to the local master via its
-recovery code. Both the CLI and the TUI drive it. Generalises the wrap/unwrap
-already in `recovery.rs`.
+**Shipped in 0.9.4 (vaults):** `svault master init | rekey | status`; a random
+data key per vault wrapped under a master key in `<vault>/keyslot.enc`, and the
+master key wrapped under the passphrase in `.svault/master.enc`. `create` no longer
+asks for a per-vault passphrase; `unlock` opens every vault at once; `recover` and
+cross-machine `import` re-attach a vault to the local master via its recovery code.
+Generalises the wrap/unwrap already in `recovery.rs`.
 
-**Next (0.9.5):** two additive pieces over the same master key — (1) bring the
-**keyring** (the optional AI-judge config store, which still has its own
-passphrase) under the master, so there is truly one secret; and (2) a **YubiKey
-keyslot** via `svault master enroll-yubikey` (HMAC-SHA1 challenge-response,
-KeePassXC-style) — no data re-encrypted, built behind a trait with a fake
-responder for CI and verified on real hardware before it ships.
+**Shipped in 0.9.5 (keyring):** the keyring is now a keyslot-backed store exactly
+like a vault — a random data key wrapped under the master in
+`.svault/keyring.keyslot.enc`. The keyring's own passphrase is gone; `svault keyring
+init | unlock` and the TUI judge screen go through the master, and `svault unlock`
+opens the keyring along with the vaults. There is truly one secret to type.
 
-### Conditional access + anomaly escalation (0.9.6)
+### YubiKey keyslot (0.9.6)
+
+A **YubiKey keyslot** via `svault master enroll-yubikey` (HMAC-SHA1
+challenge-response, KeePassXC-style) — additive over the same master key, no data
+re-encrypted: type the master passphrase **or** touch the YubiKey, either is
+sufficient (not a two-step 2FA). Built behind a `ChallengeResponse` trait with a
+fake responder for CI and verified on real hardware before it ships.
+
+### Conditional access + anomaly escalation (0.9.7)
 
 - **Conditional access** — a secret can carry conditions in its encrypted policy:
   allowed time windows (e.g. only Fri 10:00–12:00 while CI runs) and required
@@ -149,7 +156,7 @@ responder for CI and verified on real hardware before it ships.
   those are human-only by design, so a brute-force pattern is stopped and handed
   to a person rather than ground down into a leak.
 
-### Agent surface — MCP (0.9.7)
+### Agent surface — MCP (0.9.8)
 
 - `svault mcp` runs a local MCP server that is a thin client of the daemon over
   the existing peer-UID-bonded `0600` socket. **MCP auth is same-UID plus the

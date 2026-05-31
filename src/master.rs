@@ -33,8 +33,14 @@ use crate::vault::SVAULT_DIR;
 
 const MASTER_FILE: &str = "master.enc";
 const MASTER_SESSION: &str = ".master.session";
+/// Recovery keyslot wrapping the master key under a 160-bit code — the way back
+/// in if the master passphrase is forgotten (opens every store).
+const MASTER_RECOVERY: &str = "master.recovery.enc";
 /// Per-vault keyslot wrapping that vault's DEK under the master key.
 pub const VAULT_KEYSLOT: &str = "keyslot.enc";
+/// Keyslot wrapping the keyring's DEK under the master key. The keyring lives at
+/// `.svault/keyring.enc` (not in a vault subdir), so its slot needs its own name.
+pub const KEYRING_KEYSLOT: &str = "keyring.keyslot.enc";
 
 fn master_path() -> PathBuf {
     PathBuf::from(SVAULT_DIR).join(MASTER_FILE)
@@ -48,6 +54,19 @@ fn keyslot_path(vault_dir: &Path) -> PathBuf {
     vault_dir.join(VAULT_KEYSLOT)
 }
 
+fn keyring_keyslot_path() -> PathBuf {
+    PathBuf::from(SVAULT_DIR).join(KEYRING_KEYSLOT)
+}
+
+fn master_recovery_path() -> PathBuf {
+    PathBuf::from(SVAULT_DIR).join(MASTER_RECOVERY)
+}
+
+/// True if a master recovery code has been written for this machine.
+pub fn master_recovery_exists() -> bool {
+    master_recovery_path().exists()
+}
+
 /// True once a master passphrase has been set on this machine.
 pub fn exists() -> bool {
     master_path().exists()
@@ -56,6 +75,11 @@ pub fn exists() -> bool {
 /// True if the given vault is wrapped under the master key (has a keyslot).
 pub fn vault_has_keyslot(vault_dir: &Path) -> bool {
     keyslot_path(vault_dir).exists()
+}
+
+/// True if the keyring is wrapped under the master key (has a keyslot).
+pub fn keyring_has_keyslot() -> bool {
+    keyring_keyslot_path().exists()
 }
 
 /// An open master: the master key (MK) held in memory, used to wrap/unwrap the
@@ -116,6 +140,16 @@ impl Master {
         write_master_slot(&master_path(), &self.mk, new_passphrase)
     }
 
+    /// Generate a recovery code, wrap MK under it, and write the recovery slot.
+    /// Shown once at master creation; any later master-passphrase reset uses it
+    /// (see [`recover`]). Because it wraps MK directly, this one code opens every
+    /// store (all vaults + the keyring).
+    pub fn write_recovery(&self) -> Result<String> {
+        let code = crate::recovery::generate_code();
+        crate::recovery::write_at(&master_recovery_path(), &self.mk, &code)?;
+        Ok(code)
+    }
+
     /// The raw master key bytes — for caching the session. Never written to a
     /// non-owner-only file.
     pub fn key_bytes(&self) -> &[u8; 32] {
@@ -124,27 +158,69 @@ impl Master {
 
     /// Wrap a vault's data key under MK and write `<vault_dir>/keyslot.enc`.
     pub fn wrap_dek(&self, vault_dir: &Path, dek: &VaultKey) -> Result<()> {
+        self.wrap_dek_at(&keyslot_path(vault_dir), dek)
+    }
+
+    /// Unwrap a vault's data key from its keyslot using MK.
+    pub fn unwrap_dek(&self, vault_dir: &Path) -> Result<VaultKey> {
+        self.unwrap_dek_at(
+            &keyslot_path(vault_dir),
+            "vault is not wrapped under the master key (no keyslot.enc)",
+        )
+    }
+
+    /// Wrap the keyring's data key under MK and write `.svault/keyring.keyslot.enc`.
+    pub fn wrap_keyring_dek(&self, dek: &VaultKey) -> Result<()> {
+        self.wrap_dek_at(&keyring_keyslot_path(), dek)
+    }
+
+    /// Unwrap the keyring's data key from its keyslot using MK.
+    pub fn unwrap_keyring_dek(&self) -> Result<VaultKey> {
+        self.unwrap_dek_at(
+            &keyring_keyslot_path(),
+            "keyring is not wrapped under the master key (no keyring.keyslot.enc)",
+        )
+    }
+
+    /// Wrap a DEK under MK and write the keyslot at `path`.
+    fn wrap_dek_at(&self, path: &Path, dek: &VaultKey) -> Result<()> {
         let mut salt = [0u8; SALT_SIZE];
         rand::thread_rng().fill_bytes(&mut salt);
         // MK is 32 random bytes already — high entropy, so AES-GCM under MK
         // directly is enough (no second Argon2 pass). The salt is stored only to
         // keep the on-disk shape identical to the other keyslots.
         let blob = crypto::encrypt(&self.mk, &salt, dek.bytes())?;
-        crate::secfile::write_owner_only(&keyslot_path(vault_dir), &blob)?;
+        crate::secfile::write_owner_only(path, &blob)?;
         Ok(())
     }
 
-    /// Unwrap a vault's data key from its keyslot using MK.
-    pub fn unwrap_dek(&self, vault_dir: &Path) -> Result<VaultKey> {
-        let blob = std::fs::read(keyslot_path(vault_dir))
-            .map_err(|_| anyhow!("vault is not wrapped under the master key (no keyslot.enc)"))?;
+    /// Unwrap a DEK from the keyslot at `path` using MK. `missing` is the error
+    /// shown when the slot file does not exist.
+    fn unwrap_dek_at(&self, path: &Path, missing: &str) -> Result<VaultKey> {
+        let blob = std::fs::read(path).map_err(|_| anyhow!("{missing}"))?;
         let dek_bytes = crypto::decrypt(&self.mk, &blob)
-            .map_err(|_| anyhow!("could not unwrap the vault key with this master"))?;
+            .map_err(|_| anyhow!("could not unwrap the data key with this master"))?;
         let dek_bytes: [u8; 32] = dek_bytes
             .try_into()
-            .map_err(|_| anyhow!("keyslot.enc holds an unexpected key length"))?;
+            .map_err(|_| anyhow!("keyslot holds an unexpected key length"))?;
         Ok(VaultKey::from_bytes(dek_bytes))
     }
+}
+
+/// Reset the master passphrase using the recovery code: unwrap MK from the
+/// recovery slot, then re-wrap it under `new_passphrase` (the recovery slot
+/// itself is left unchanged, so the code keeps working). MK never changes, so
+/// every vault and the keyring stay accessible.
+pub fn recover(code: &str, new_passphrase: &str) -> Result<Master> {
+    let path = master_recovery_path();
+    if !path.exists() {
+        return Err(anyhow!(
+            "no master recovery code on this machine (master.recovery.enc missing)"
+        ));
+    }
+    let mk = crate::recovery::unlock_at(&path, code)?;
+    write_master_slot(&master_path(), &mk, new_passphrase)?;
+    Ok(Master { mk })
 }
 
 /// Generate a random DEK for a new store. The caller wraps it under the master
@@ -253,6 +329,23 @@ mod tests {
     }
 
     #[test]
+    fn keyring_dek_wraps_under_master_and_unwraps_back() {
+        let (_g, _tmp, prev) = in_temp_cwd();
+        let m = Master::init("Master!Pass#KR").unwrap();
+        crate::secfile::create_dir_owner_only(&PathBuf::from(SVAULT_DIR)).unwrap();
+
+        let dek = new_dek();
+        let dek_bytes = *dek.bytes();
+        m.wrap_keyring_dek(&dek).unwrap();
+        assert!(keyring_has_keyslot());
+
+        let unwrapped = m.unwrap_keyring_dek().unwrap();
+        assert_eq!(unwrapped.bytes(), &dek_bytes);
+
+        std::env::set_current_dir(prev).unwrap();
+    }
+
+    #[test]
     fn rekey_keeps_master_key_and_keeps_unwrapping_vaults() {
         let (_g, _tmp, prev) = in_temp_cwd();
         let m = Master::init("Old!Master#1").unwrap();
@@ -284,6 +377,33 @@ mod tests {
         // A different MK (from a fresh init in another dir) must not unwrap it.
         let other = Master::open_with_key([0x11u8; 32]);
         assert!(other.unwrap_dek(&vault_dir).is_err());
+
+        std::env::set_current_dir(prev).unwrap();
+    }
+
+    #[test]
+    fn recovery_code_resets_the_master_and_keeps_unwrapping_stores() {
+        let (_g, _tmp, prev) = in_temp_cwd();
+        let m = Master::init("Old!Master#R").unwrap();
+        let vault_dir = PathBuf::from(SVAULT_DIR).join("v");
+        crate::secfile::create_dir_owner_only(&vault_dir).unwrap();
+        let dek = new_dek();
+        let dek_bytes = *dek.bytes();
+        m.wrap_dek(&vault_dir, &dek).unwrap();
+        let code = m.write_recovery().unwrap();
+        assert!(master_recovery_exists());
+        drop(m);
+
+        // Forgot the master passphrase: the recovery code resets it to a new one,
+        // and the same MK still unwraps the vault DEK (nothing was re-encrypted).
+        let recovered = recover(&code, "New!Master#R").unwrap();
+        assert_eq!(
+            recovered.unwrap_dek(&vault_dir).unwrap().bytes(),
+            &dek_bytes
+        );
+        // The new passphrase now opens the master; a wrong code is rejected.
+        assert!(Master::open("New!Master#R").is_ok());
+        assert!(recover("0000-0000-0000-0000-0000-0000-0000-0000-0000-0000", "X").is_err());
 
         std::env::set_current_dir(prev).unwrap();
     }

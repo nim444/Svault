@@ -7,8 +7,9 @@ vault, see [Vault selection](#vault-selection) for how it's resolved.
 
 ```bash
 svault                             # launch the interactive TUI (no subcommand)
-svault master init [--force]       # set the master passphrase (one secret unlocks every vault)
+svault master init [--force]       # set the master passphrase (prints a one-time master recovery code)
 svault master rekey [--force]      # change the master passphrase (no vault is re-encrypted)
+svault master recover [--force]    # reset a forgotten master passphrase with the recovery code
 svault master status               # is the master set / unlocked, how many vaults wrapped
 svault create [--force]            # create an encrypted vault (name, description, agents, rate limit, auto-lock)
 svault settings [VAULT]            # view or change a vault's settings
@@ -22,22 +23,32 @@ svault vaults                      # list all vaults with metadata (storage:name
 ### The master passphrase
 
 Svault has **one master passphrase**, not one per vault. A random 32-byte data
-key encrypts each vault; that key is wrapped under the master in
-`<vault>/keyslot.enc`, and the master key itself is wrapped under your passphrase
-in `.svault/master.enc`. So **unlock once and every vault opens**. `master rekey`
-rewrites only the small master slot — no vault ciphertext is touched. This is the
+key encrypts each store — every vault **and the keyring**; that key is wrapped
+under the master in a keyslot (`<vault>/keyslot.enc`, or `.svault/keyring.keyslot.enc`
+for the keyring), and the master key itself is wrapped under your passphrase in
+`.svault/master.enc`. So **unlock once and everything opens**. `master rekey`
+rewrites only the small master slot — no ciphertext is touched. This is the
 keyslot model (LUKS / 1Password style): additional unlock methods — a YubiKey
 touch, the recovery code — are just more slots over the same key.
+
+When you first set the master passphrase, Svault prints a **one-time master
+recovery code** and writes it (wrapped around the master key) to
+`.svault/master.recovery.enc`. Store it offline. If you forget the master
+passphrase, `svault master recover` takes that code and sets a new master
+passphrase — and because the code wraps the master key directly, it reopens
+**every** store (all vaults and the keyring), with nothing re-encrypted. (Each
+vault also keeps its own recovery code from `create`, used for `svault recover`
+and for cross-machine `import`.)
 
 `create` walks you through naming the vault, choosing a [storage backend](storage-backends.md),
 and (on first run) setting the master passphrase — it no longer asks for a
 per-vault passphrase. `--force` skips the passphrase strength floor for scripted
 use. On success it prints a one-time recovery code (see [Recovery](recovery.md)).
 
-> The **keyring** — the optional store for the AI judge's config and API keys —
-> still has its own passphrase (`svault keyring init | unlock`) in this release;
-> bringing it under the master is the next step. Most setups never need it unless
-> they enable the AI judge.
+> The **keyring** — the optional store for the AI judge's config and API keys — is
+> opened by the **same master passphrase** (`svault keyring init | unlock`); it has
+> no separate passphrase. `svault unlock` opens it along with your vaults. Most
+> setups never need it unless they enable the AI judge.
 
 ## Secrets
 
@@ -75,19 +86,23 @@ svault policy check <caller>       # what a caller can access + recent activity 
 
 All global config — the judge registry, each judge's API key, and operational
 knobs (lock timers, daemon `max_connections`, backend) — lives in a single
-**AES-256-GCM-encrypted keyring** at `.svault/keyring.enc`, under its own
-passphrase (Argon2id). There is **no plaintext `.svault/config.yaml`** and **no
+**AES-256-GCM-encrypted keyring** at `.svault/keyring.enc`, opened by the **master
+passphrase** (its data key is wrapped under the master in
+`.svault/keyring.keyslot.enc`, exactly like a vault — there is no separate keyring
+passphrase). There is **no plaintext `.svault/config.yaml`** and **no
 `~/.config/svault/openrouter.key`** — both are gone. Unlock the keyring once per
-session (a `0600` session caches its derived key, like a vault); until it's
-unlocked the judge is off and the static tier rules apply.
+session (a `0600` session caches its data key, like a vault); until it's unlocked
+the judge is off and the static tier rules apply.
 
 ```bash
-svault keyring init       # create the encrypted keyring (prompts for a passphrase) and unlock it
-svault keyring unlock     # cache the keyring's derived key for this session
+svault keyring init       # create the encrypted keyring under your master passphrase and unlock it
+svault keyring unlock     # unlock the keyring via the master (also done by 'svault unlock')
 svault keyring lock       # clear the session — the judge goes back to off
-svault keyring rekey      # change the keyring passphrase
 svault keyring status     # show locked/unlocked, global on/off, default judge, and the judge names
 ```
+
+> To change the secret that opens the keyring, use `svault master rekey` — it
+> covers your vaults and the keyring at once. There is no `keyring rekey`.
 
 The daemon reads the operational knobs (lock/connection/backend) from the keyring
 at start — built-in defaults until unlocked — and changes to those apply at the

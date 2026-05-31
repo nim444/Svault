@@ -47,29 +47,40 @@ fn normalize(code: &str) -> String {
 
 /// Wrap `vault_key` under a key derived from `code` and write `recovery.enc`.
 pub fn write(vault_dir: &Path, vault_key: &VaultKey, code: &str) -> Result<()> {
-    let mut salt = [0u8; SALT_SIZE];
-    rand::thread_rng().fill_bytes(&mut salt);
-    let kek = VaultKey::derive(&normalize(code), &salt)?;
-    let blob = crypto::encrypt(&kek, &salt, vault_key.bytes())?;
-    // recovery.enc wraps a key-equivalent — keep it owner-only (#14).
-    crate::secfile::write_owner_only(&recovery_path(vault_dir), &blob)?;
-    Ok(())
+    write_at(&recovery_path(vault_dir), vault_key, code)
 }
 
 /// Recover the vault key from `recovery.enc` using the recovery code.
 /// Wrong code → the GCM tag fails and this returns an error.
 pub fn unlock_with_code(vault_dir: &Path, code: &str) -> Result<VaultKey> {
-    let blob = std::fs::read(recovery_path(vault_dir))
-        .map_err(|_| anyhow!("No recovery file for this vault"))?;
+    unlock_at(&recovery_path(vault_dir), code)
+}
+
+/// Wrap `key` under a code-derived KEK and write the recovery slot at `path`.
+/// Used for both the per-vault `recovery.enc` and the master recovery slot.
+pub fn write_at(path: &Path, key: &VaultKey, code: &str) -> Result<()> {
+    let mut salt = [0u8; SALT_SIZE];
+    rand::thread_rng().fill_bytes(&mut salt);
+    let kek = VaultKey::derive(&normalize(code), &salt)?;
+    let blob = crypto::encrypt(&kek, &salt, key.bytes())?;
+    // A recovery slot wraps a key-equivalent — keep it owner-only (#14).
+    crate::secfile::write_owner_only(path, &blob)?;
+    Ok(())
+}
+
+/// Recover the wrapped key from the recovery slot at `path` using the code.
+/// Wrong code → the GCM tag fails and this returns an error.
+pub fn unlock_at(path: &Path, code: &str) -> Result<VaultKey> {
+    let blob = std::fs::read(path).map_err(|_| anyhow!("No recovery file found"))?;
     if blob.len() < SALT_SIZE {
-        return Err(anyhow!("recovery.enc is too short — may be corrupted"));
+        return Err(anyhow!("recovery slot is too short — may be corrupted"));
     }
     let salt = &blob[..SALT_SIZE];
     let kek = VaultKey::derive(&normalize(code), salt)?;
     let key_bytes = crypto::decrypt(&kek, &blob).map_err(|_| anyhow!("Invalid recovery code"))?;
     let key_bytes: [u8; 32] = key_bytes
         .try_into()
-        .map_err(|_| anyhow!("recovery.enc holds an unexpected key length"))?;
+        .map_err(|_| anyhow!("recovery slot holds an unexpected key length"))?;
     Ok(VaultKey::from_bytes(key_bytes))
 }
 

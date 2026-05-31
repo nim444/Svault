@@ -84,12 +84,12 @@ callers:
 
 There is no plaintext config and no key file. Every judge — its model, thresholds,
 free-text **criteria**, and its own API key — lives AES-256-GCM **encrypted** in the
-keyring at `.svault/keyring.enc`, under the keyring passphrase. Create the keyring,
-add a named judge (with criteria and key), enable the judge globally, then unlock
-once:
+keyring at `.svault/keyring.enc`, opened by your **master passphrase** (no separate
+keyring passphrase). Create the keyring, add a named judge (with criteria and key),
+enable the judge globally, then unlock once:
 
 ```bash
-svault keyring init                 # set the keyring passphrase (one-time)
+svault keyring init                 # create the keyring under your master (one-time)
 svault judge add strict             # prompts: model, thresholds, criteria, then the API key (hidden)
 #   Model:               google/gemini-2.5-flash
 #   Allow threshold:     60

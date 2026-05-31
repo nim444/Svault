@@ -82,14 +82,15 @@ a request designed to pass.
 - *0.9.3* removed the last two plaintext artifacts: the judge config in
   `.svault/config.yaml` and the OpenRouter key file. All global config and the
   judge registry now live in a single AES-256-GCM-encrypted **keyring**
-  (`.svault/keyring.enc`) under its own passphrase, unlocked once per session.
+  (`.svault/keyring.enc`), unlocked once per session (since 0.9.5 it is opened by
+  the master passphrase, not a separate one).
   The judge is no longer single and global: you can define **multiple named
   judges**, each with its own model, base URL, timeout, allow/high thresholds,
   free-text **criteria** injected into its prompt, and **API key**; pick a
   default and assign one per vault. There are no plaintext `config.yaml` or
   `openrouter.key` files anymore.
 
-**Quality.** 115 tests pass (plus one ignored concurrency stress benchmark). CI
+**Quality.** 117 tests pass (plus one ignored concurrency stress benchmark). CI
 runs on Ubuntu, Fedora, macOS, and Windows, with `cargo fmt --check`, `cargo
 clippy -D warnings`, and a `cargo audit` advisory gate.
 
@@ -134,32 +135,36 @@ socket — so it widens capability without changing the trust model.
 
 ### 1. Agent-ready surface — Next (remaining 0.9.x)
 
-**Unified unlock — one master, or a YubiKey touch (0.9.4 – 0.9.5).** Each vault
+**Unified unlock — one master passphrase (0.9.4 – 0.9.5, shipped).** Each vault
 used to have its own passphrase and the keyring another; that was too many to
 type. The **keyslot model** (LUKS / 1Password-style): each store gets a random
 **data key** that encrypts its contents, wrapped in one or more **keyslots** — a
-master passphrase, a YubiKey, and the existing recovery code. Per-vault
-passphrases go away. **Any one slot opens the store** (type the master passphrase
-*or* touch a YubiKey — not 2FA); `svault unlock` opens every vault at once.
+master passphrase, the existing recovery code, and (next) a YubiKey. Per-vault and
+keyring passphrases go away. **Any one slot opens the store**; `svault unlock`
+opens every vault **and the keyring** at once.
 
-*Shipped in 0.9.4 (master passphrase):* the `master` module — a random master key
-(MK) wrapped under the passphrase in `.svault/master.enc`, each vault's random
-data key wrapped under MK in `<vault>/keyslot.enc`. `svault master init | rekey |
-status`; `create` no longer asks for a per-vault passphrase; `unlock` (no arg)
-opens every vault, `lock --all` also clears the master session; `recover` and
-cross-machine `import` re-attach a vault to the local master via its recovery
-code. CLI + TUI, plus 5 keyslot unit tests. Generalises `recovery.rs`'s
-wrap/unwrap and reuses the existing `0600` session caching (which already holds a
-raw key, not the passphrase).
+*Shipped in 0.9.4 (vaults):* the `master` module — a random master key (MK)
+wrapped under the passphrase in `.svault/master.enc`, each vault's random data key
+wrapped under MK in `<vault>/keyslot.enc`. `svault master init | rekey | status`;
+`create` no longer asks for a per-vault passphrase; `unlock` (no arg) opens every
+vault, `lock --all` also clears the master session; `recover` and cross-machine
+`import` re-attach a vault to the local master via its recovery code. Generalises
+`recovery.rs`'s wrap/unwrap and reuses the existing `0600` session caching (which
+already holds a raw key, not the passphrase).
 
-*Next (0.9.5):* two additive pieces over the same MK — (1) bring the **keyring**
-(the optional AI-judge config store, which still has its own passphrase in 0.9.4)
-under the master, so there is truly one secret to type; and (2) a **YubiKey
-keyslot** (`svault master enroll-yubikey`, HMAC-SHA1 challenge-response,
-KeePassXC-style) — no data re-encrypted, built behind a trait with a fake
+*Shipped in 0.9.5 (keyring):* the keyring is now a keyslot-backed store like a
+vault — a random data key wrapped under MK in `.svault/keyring.keyslot.enc`. Its
+own passphrase is gone; `svault keyring init | unlock` and the TUI judge screen go
+through the master, `svault unlock` opens the keyring too, and `svault master
+rekey` covers it. `svault keyring rekey` removed. One secret now opens everything.
+
+**YubiKey keyslot (0.9.6).** A **YubiKey keyslot** (`svault master enroll-yubikey`,
+HMAC-SHA1 challenge-response, KeePassXC-style) — additive over the same MK, no data
+re-encrypted: type the master passphrase *or* touch the YubiKey, either is
+sufficient (not 2FA). Built behind a `ChallengeResponse` trait with a fake
 responder for CI and verified on real hardware before it ships.
 
-**Conditional access + anomaly escalation (0.9.6).** Add **conditions** to a
+**Conditional access + anomaly escalation (0.9.7).** Add **conditions** to a
 secret's encrypted policy — allowed time windows (e.g. only Fri 10:00–12:00 while
 CI runs) and required caller(s) — evaluated early in the existing `reason → scope
 → tier → rate/burst → judge` pipeline; outside the window the agent gets the same
@@ -169,7 +174,7 @@ encrypted policy) and raise an escalation only a human can clear (`svault
 approve`, a TUI pending-approvals view, later a notify channel). An agent can
 never unlock a vault or clear an escalation — human-only by design.
 
-**Agent surface — MCP (0.9.7).** `svault mcp` runs a local MCP server that is a
+**Agent surface — MCP (0.9.8).** `svault mcp` runs a local MCP server that is a
 thin client of the daemon over the existing peer-UID-bonded `0600` socket — **MCP
 auth is same-UID plus the daemon's unlocked state**, and the server never sees
 the master passphrase or any key. The human unlocks once; each
@@ -282,7 +287,7 @@ later is the remote and hosted surface:
 ## Deferred / not planned
 
 - **Master passphrase + YubiKey unlock** — now on the path to 1.0 via the keyslot
-  model (0.9.4 – 0.9.5; see [Path to 1.0.0](#path-to-100)), no longer deferred.
+  model (0.9.4 – 0.9.6; see [Path to 1.0.0](#path-to-100)), no longer deferred.
 - **TOTP and macOS Touch ID / Face ID** — the keyslot model could host them as
   extra slots later, but they are not on the path to 1.0.
 - **External backends** (cloud / self-hosted / S3) — `local` is the only wired

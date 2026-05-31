@@ -25,10 +25,12 @@ lives AES-256-GCM **encrypted inside `vault.enc`**, not in the plaintext
 There is no plaintext config file. All **global** config — the registry of **named
 judges** (each with its own model, thresholds, free-text criteria, and API key)
 plus operational knobs (lock timers, daemon max-connections, backend) — lives
-AES-256-GCM **encrypted in `.svault/keyring.enc`** under its own passphrase,
-unlocked once per session. A vault is assigned a judge by name (encrypted in its
-policy) and falls back to the keyring's default judge; the judge acts only when the
-keyring is unlocked, so until then the static tier rules apply (high = human-only).
+AES-256-GCM **encrypted in `.svault/keyring.enc`**, opened by the **master
+passphrase** (the keyring has a random data key wrapped under the master in
+`.svault/keyring.keyslot.enc`, exactly like a vault) and unlocked once per session.
+A vault is assigned a judge by name (encrypted in its policy) and falls back to the
+keyring's default judge; the judge acts only when the keyring is unlocked, so until
+then the static tier rules apply (high = human-only).
 
 ## On-disk layout
 
@@ -36,11 +38,15 @@ keyring is unlocked, so until then the static tier rules apply (high = human-onl
 .svault/
   master.enc         ← master key wrapped under your master passphrase
                        (the unlock root for every vault)  (safe to commit, owner-only)
+  master.recovery.enc ← master key wrapped under the one-time master recovery
+                       code (reset a forgotten master)    (safe to commit, owner-only)
   .master.session    ← master-key cache while unlocked    (gitignored, mode 0600)
   keyring.enc        ← AES-256-GCM encrypted global config: the named-judge
                        registry (model/thresholds/criteria/API key each) +
                        operational knobs                  (safe to commit, owner-only)
-  .keyring.session   ← keyring derived-key cache while unlocked (gitignored, mode 0600)
+  keyring.keyslot.enc ← the keyring's data key wrapped under
+                       the master key                     (safe to commit, owner-only)
+  .keyring.session   ← keyring data-key cache while unlocked (gitignored, mode 0600)
   usage.log          ← global judge changes, folded into vault timelines (gitignored, 0600)
   my-project/
     vault.enc     ← AES-256-GCM encrypted secrets + the
@@ -59,37 +65,40 @@ keyring is unlocked, so until then the static tier rules apply (high = human-onl
 ```
 
 - **`vault.enc`**, **`meta.yaml`**, **`keyslot.enc`**, **`master.enc`**, and **`recovery.enc`** are safe to commit — useless without the master passphrase or a recovery code. `keyslot.enc` wraps the vault's data key under the master key; `master.enc` wraps the master key under your passphrase. See [Recovery](recovery.md).
-- **`keyring.enc`** is the single encrypted-at-rest store for global config (judges, their API keys, and operational knobs), unlocked under its own passphrase. Like a vault, it's useless without that passphrase; the per-judge keys and criteria are unreadable at rest.
+- **`keyring.enc`** is the single encrypted-at-rest store for global config (judges, their API keys, and operational knobs), opened by the **master passphrase** — its data key is wrapped under the master in `keyring.keyslot.enc`, exactly like a vault. It's useless without the master; the per-judge keys and criteria are unreadable at rest.
 - **`.session`**, **`.keyring.session`**, **`audit.log`**, and **`usage.log`** are always gitignored and created with mode `0600` (owner read/write only). The per-vault `.gitignore` is self-healing — recording the first usage event adds any missing log lines, so vaults created before usage logging are covered too.
 - **`usage.log`** is the activity stream behind the TUI `v` view: who did what, when, and through which surface (the `source`: `cli` / `tui` / `gui` / `mcp`) — human vs agent via the actor, never any secret value. Actor + source distinguish e.g. a human at the CLI from an agent via MCP. `audit.log` carries the same `source` field. See [Interactive mode](tui.md#activity-timeline).
 
 ## Authentication: the keyslot model
 
-A vault is encrypted by a **random data key**, not by your passphrase. That data
-key is wrapped in one or more **keyslots**, and **any one slot opens the vault** —
-it's "this *or* that", never a two-step 2FA. Today there are two slots:
+Every store — each vault **and the keyring** — is encrypted by a **random data
+key**, not by your passphrase. That data key is wrapped in one or more
+**keyslots**, and **any one slot opens the store** — it's "this *or* that", never a
+two-step 2FA. Today there are three slots:
 
 - **Master passphrase** *(today)* — one passphrase wraps a master key, which in
-  turn wraps every vault's data key. Set once; it unlocks every vault. This
-  replaced the old per-vault passphrases.
-- **Recovery code** *(today)* — a 160-bit code generated at create, an
-  equal-strength second slot into a single vault; use it if you lose the master
-  (see [Recovery](recovery.md)).
+  turn wraps every store's data key (every vault and the keyring). Set once; it
+  unlocks everything. This replaced the old per-vault passphrases and, as of
+  0.9.5, the keyring's separate passphrase.
+- **Master recovery code** *(today)* — a 160-bit code generated when the master
+  is first set; it wraps the *master key*, so `svault master recover` resets a
+  forgotten master passphrase and reopens every store at once.
+- **Per-vault recovery code** *(today)* — a 160-bit code generated at create, an
+  equal-strength second slot into a single vault; used by `svault recover` and to
+  attach a vault on another machine via `import` (see [Recovery](recovery.md)).
 
 Planned additional keyslots — each is purely additive (no data is re-encrypted),
 and any one still opens the store on its own:
 
-- **YubiKey** — hardware HMAC-SHA1 challenge-response *(next, 0.9.5)*.
+- **YubiKey** — hardware HMAC-SHA1 challenge-response *(next, 0.9.6)*.
 - **Google Authenticator (TOTP)** / **Touch ID / Face ID** *(planned)*.
 
 | Slot | UX | Security | Notes |
 |---|---|---|---|
-| Master passphrase | Type once | Strong if long | Unlocks every vault; always available |
-| Recovery code | Paste the saved code | Equal-strength (160-bit) | Per-vault fallback if the master is lost |
+| Master passphrase | Type once | Strong if long | Unlocks every vault and the keyring; always available |
+| Master recovery code | Paste the saved code | Equal-strength (160-bit) | Resets a forgotten master; reopens every store |
+| Per-vault recovery code | Paste the saved code | Equal-strength (160-bit) | Per-vault fallback + cross-machine import |
 | YubiKey *(next)* | Touch the key | Strong, hardware-backed | An alternative slot — touch instead of typing |
 | TOTP / Touch ID *(planned)* | Code / biometric | Medium–strong | Extra alternatives, no 2FA requirement |
-
-> The keyring (the optional AI-judge config store) still has its own passphrase in
-> this release; folding it under the master is the next step.
 
 See the [Security model](security.md) for the crypto guarantees behind each store.

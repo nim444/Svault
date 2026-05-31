@@ -4,10 +4,10 @@
 |---|---|
 | Encryption | AES-256-GCM |
 | Key derivation | Argon2id (64 MB memory, 3 iterations) — GPU-resistant |
-| Unlock (keyslot model) | A random 32-byte data key encrypts each vault; it is wrapped under a random master key (MK) in `<vault>/keyslot.enc`, and MK is wrapped under your **master passphrase** (Argon2id) in `.svault/master.enc`. One passphrase unlocks every vault; changing it rewraps only MK, never any vault ciphertext |
+| Unlock (keyslot model) | A random 32-byte data key encrypts each store — every vault **and the keyring**; it is wrapped under a random master key (MK) in a keyslot (`<vault>/keyslot.enc` or `.svault/keyring.keyslot.enc`), and MK is wrapped under your **master passphrase** (Argon2id) in `.svault/master.enc`. One passphrase unlocks everything; changing it rewraps only MK, never any ciphertext |
 | Metadata integrity | HMAC-SHA256 — tampering with the public `meta.yaml` is detected |
 | Policy at rest | The full policy surface (classification, caller rules, access, the vault's judge assignment) is AES-256-GCM **encrypted inside `vault.enc`** — unreadable at rest, so an agent can't read it to plan a bypass |
-| Global config at rest | The judge registry, every judge's **API key**, their criteria/thresholds, and operational knobs are AES-256-GCM **encrypted inside `keyring.enc`** under its own passphrase — no plaintext config file, no plaintext key file |
+| Global config at rest | The judge registry, every judge's **API key**, their criteria/thresholds, and operational knobs are AES-256-GCM **encrypted inside `keyring.enc`**, opened by the master passphrase (data key wrapped in `keyring.keyslot.enc`) — no plaintext config file, no plaintext key file |
 | Memory safety | `VaultKey`, returned secret values, prompts, and the daemon's reply buffer are `Zeroizing`/`ZeroizeOnDrop` — wiped after use. (The transient decrypted secret map built while reading a vault is freed but not individually wiped — best-effort residue, consistent with the cooperative same-UID model.) |
 | Session file | Created atomically with mode `0600`, never at permissive permissions |
 | Vault file | Safe to commit to git — encrypted at rest |
@@ -16,7 +16,7 @@
 
 ## What's safe to commit
 
-`vault.enc`, `meta.yaml`, `recovery.enc`, `keyslot.enc`, `master.enc`, and `keyring.enc` are safe to commit to git — they are useless without the master passphrase or a recovery code. (`keyslot.enc` holds the vault's data key wrapped under the master key; `master.enc` holds the master key wrapped under your passphrase; `recovery.enc` holds the vault data key wrapped under the recovery code — see [Recovery](recovery.md). `keyring.enc` is the encrypted global config — judge registry, API keys, knobs.) The `.session`, the master session `.master.session`, the keyring's `.keyring.session`, `audit.log`, `usage.log`, the daemon's `daemon.sock` / `daemon.pid` / `daemon.log`, and any local lock state are always gitignored (`.svault/` itself is gitignored, and a per-vault `.gitignore` is written at create time and self-heals to add the log lines on first use) and created with mode `0600` (owner read/write only).
+`vault.enc`, `meta.yaml`, `recovery.enc`, `keyslot.enc`, `master.enc`, `master.recovery.enc`, `keyring.enc`, and `keyring.keyslot.enc` are safe to commit to git — they are useless without the master passphrase or a recovery code. (`keyslot.enc` holds the vault's data key wrapped under the master key; `keyring.keyslot.enc` holds the keyring's data key wrapped under the master key; `master.enc` holds the master key wrapped under your passphrase; `master.recovery.enc` holds the master key wrapped under the master recovery code; `recovery.enc` holds the vault data key wrapped under that vault's recovery code — see [Recovery](recovery.md). `keyring.enc` is the encrypted global config — judge registry, API keys, knobs.) The `.session`, the master session `.master.session`, the keyring's `.keyring.session`, `audit.log`, `usage.log`, the daemon's `daemon.sock` / `daemon.pid` / `daemon.log`, and any local lock state are always gitignored (`.svault/` itself is gitignored, and a per-vault `.gitignore` is written at create time and self-heals to add the log lines on first use) and created with mode `0600` (owner read/write only).
 
 ## Session state: file vs daemon
 
@@ -57,17 +57,21 @@ process (see [Threat model](#threat-model) below).
 ## The encrypted keyring
 
 There is **no plaintext config file and no plaintext key file.** All global config
-lives in a single **AES-256-GCM-encrypted keyring** at `.svault/keyring.enc`, under
-its own passphrase (Argon2id, like a vault). It holds the judge registry, each
-judge's **API key**, each judge's **criteria and thresholds**, and the operational
-knobs (lock timers, daemon `max_connections`, backend). **Nothing abusable is
-readable at rest:** a same-UID agent can no longer read thresholds or criteria to
-tune a passing request, nor lift the API key from a plaintext file.
+lives in a single **AES-256-GCM-encrypted keyring** at `.svault/keyring.enc`, opened
+by the **master passphrase** — the keyring has a random data key wrapped under the
+master in `.svault/keyring.keyslot.enc`, exactly like a vault (no separate keyring
+passphrase). It holds the judge registry, each judge's **API key**, each judge's
+**criteria and thresholds**, and the operational knobs (lock timers, daemon
+`max_connections`, backend). **Nothing abusable is readable at rest:** a same-UID
+agent can no longer read thresholds or criteria to tune a passing request, nor lift
+the API key from a plaintext file.
 
-Unlock the keyring once per session with `svault keyring unlock` (a `0600` session
-caches its derived key, exactly like a vault); `svault keyring lock` clears it and
-the judge goes back to off; `svault keyring rekey` changes the passphrase. Until
-the keyring is unlocked the judge is off and the static tier rules apply. The
+Unlock the keyring once per session with `svault keyring unlock` — or just
+`svault unlock`, which opens it along with your vaults (a `0600` session caches its
+data key, exactly like a vault); `svault keyring lock` clears it and the judge goes
+back to off; `svault master rekey` changes the master that opens it (there is no
+keyring rekey). Until the keyring is unlocked the judge is off and the static tier
+rules apply. The
 daemon reads the operational knobs from the keyring at start (built-in defaults
 until unlocked; lock, connection, and backend changes apply at the next daemon
 start) and resolves the judge per request, so the judge activates the moment the

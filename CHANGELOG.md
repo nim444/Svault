@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-05-31
+
+The **keyring-under-master** release. 0.9.4 unified every vault under one master
+passphrase but left one exception: the keyring (the encrypted store for the AI
+judges, their API keys, criteria, and operational config) still had its own
+separate passphrase. 0.9.5 removes that last extra secret — the keyring is now a
+keyslot-backed store exactly like a vault, opened by the **same master
+passphrase**. One secret now opens everything.
+
+**No migration (pre-release):** the keyring's on-disk model changed (it is now
+encrypted under a random data key wrapped under the master, not under a keyring
+passphrase). Delete any old `.svault/` and recreate: `svault master init`, then
+`svault keyring init` and `svault create`.
+
+### Added
+- **Keyring keyslot** (`src/master.rs`): the keyring gets a random data key (DEK)
+  that encrypts `keyring.enc`; the DEK is wrapped under the master key in
+  `.svault/keyring.keyslot.enc` (the same wrap/unwrap the vaults use).
+- **`svault keyring init`** now creates the keyring under your master passphrase
+  (reusing the master session if unlocked, prompting it otherwise, or setting one
+  on first ever use) — there is no separate keyring passphrase.
+- **`svault unlock`** (no vault argument) now also unlocks the keyring under the
+  same master, so the AI judge is live without a second prompt. It works even
+  with no vaults yet (a keyring-only setup).
+- **Master recovery code** — setting the master passphrase (via `svault master
+  init`, the first `svault create`, or the TUI set-master step in create / the
+  judge screen) now generates a one-time recovery code, wrapped around the master
+  key in `.svault/master.recovery.enc` and shown once. **`svault master recover`**
+  resets a forgotten master passphrase with it; because it wraps the master key
+  directly, this single code reopens every store (all vaults **and** the keyring).
+  The TUI shows it on the same one-time screen as the vault recovery code.
+
+### Changed
+- **The keyring has no passphrase of its own.** `svault keyring unlock` opens it
+  via the master; `svault keyring rekey` is gone — change the secret with
+  `svault master rekey` (it covers vaults and the keyring at once).
+- **`svault lock --all`** now also clears the keyring session.
+- **TUI judge screen**: unlocking or creating the keyring goes through the master
+  passphrase (or the live master session) instead of a keyring passphrase.
+
+### Removed
+- `Keyring::init/open/rekey` (the passphrase-based keyring path) and the
+  `svault keyring rekey` command.
+
 ## [0.9.4] - 2026-05-31
 
 The **unified-unlock** release. Until now every vault had its own passphrase — up

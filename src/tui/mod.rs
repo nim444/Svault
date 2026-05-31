@@ -532,6 +532,16 @@ pub enum JudgeEntry {
     View(String),
 }
 
+/// Status line shown after the keyring is opened: created on first use, else just
+/// unlocked.
+fn keyring_done_msg(created: bool) -> &'static str {
+    if created {
+        "Keyring unlocked"
+    } else {
+        "Keyring created and unlocked"
+    }
+}
+
 /// The AI-judge manager (`shift-J`), backed by the encrypted [`crate::keyring`].
 /// Shows the global on/off switch, the default judge, and the registry, and
 /// supports the common actions: unlock, toggle, set default, set/clear a judge's
@@ -647,6 +657,15 @@ pub struct ActivityScreen {
     pub state: TableState,
 }
 
+/// One or more one-time recovery codes to show after a create/set action, plus
+/// where to return once the user confirms they've saved them.
+pub struct RecoveryShow {
+    /// (label, code) pairs — e.g. ("Master passphrase", code), ("Vault 'x'", code).
+    pub codes: Vec<(String, String)>,
+    /// Return to the judge screen on confirm (keyring flow) instead of the list.
+    pub to_judge: bool,
+}
+
 pub enum Screen {
     List,
     Create(CreateForm),
@@ -654,9 +673,9 @@ pub enum Screen {
     Unlock(UnlockForm),
     Secrets(SecretScreen),
     SecretAdd(SecretAddForm),
-    /// Shows the one-time recovery code after a vault is created. Dismissed only
-    /// by an explicit 'y' confirmation that the code has been saved.
-    RecoveryCode(String),
+    /// Shows the one-time recovery code(s) after a vault/master is created.
+    /// Dismissed only by an explicit 'y' confirmation that they've been saved.
+    RecoveryCode(RecoveryShow),
     /// Import a vault from a bundle file (path entry).
     Import(ImportForm),
     /// Recover a vault: enter the code + a new passphrase.
@@ -891,7 +910,7 @@ impl App {
             Screen::Unlock(form) => self.key_unlock(form, key)?,
             Screen::Secrets(scr) => self.key_secrets(scr, key)?,
             Screen::SecretAdd(form) => self.key_secret_add(form, key)?,
-            Screen::RecoveryCode(code) => self.key_recovery_code(code, key),
+            Screen::RecoveryCode(show) => self.key_recovery_code(show, key),
             Screen::Import(form) => self.key_import(form, key)?,
             Screen::Recover(form) => self.key_recover(form, key),
             Screen::Activity(scr) => self.key_activity(scr, key),
@@ -947,11 +966,15 @@ impl App {
     /// The recovery-code screen requires an explicit confirmation ('y') that the
     /// code was saved — any other key keeps it on screen, so it can't be
     /// dismissed by accident before the user has written it down.
-    fn key_recovery_code(&mut self, code: String, key: KeyEvent) {
+    fn key_recovery_code(&mut self, show: RecoveryShow, key: KeyEvent) {
         if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
-            self.screen = Screen::List;
+            if show.to_judge {
+                self.screen = Screen::Judge(JudgeForm::load());
+            } else {
+                self.screen = Screen::List;
+            }
         } else {
-            self.screen = Screen::RecoveryCode(code);
+            self.screen = Screen::RecoveryCode(show);
         }
     }
 
@@ -1430,6 +1453,8 @@ impl App {
             self.screen = Screen::Create(form);
             return Ok(());
         }
+        // First-run create also sets the master, which gets its own recovery code.
+        let setting_master = form.master_step == MasterStep::Set;
         let vault_dir = PathBuf::from(SVAULT_DIR).join(&name);
         if vault_dir.exists() {
             let existing = VaultMeta::load_unverified(&vault_dir)
@@ -1540,7 +1565,19 @@ impl App {
                     return Ok(());
                 }
                 let _ = session::unlock_with_key(&vault_dir, vault.key().bytes());
-                // Generate and store the recovery code, then show it once.
+                // Generate and store the recovery code(s), then show them once.
+                let mut codes: Vec<(String, String)> = Vec::new();
+                // If this create just set the master, surface the master recovery
+                // code too — it's the way back in if the master is forgotten.
+                if setting_master {
+                    match master.write_recovery() {
+                        Ok(mc) => codes.push(("Master passphrase".to_string(), mc)),
+                        Err(e) => self.set_status(
+                            MsgKind::Warn,
+                            format!("master recovery code could not be saved: {e}"),
+                        ),
+                    }
+                }
                 let code = crate::recovery::generate_code();
                 if let Err(e) = crate::recovery::write(&vault_dir, vault.key(), &code) {
                     self.refresh_vaults();
@@ -1553,10 +1590,14 @@ impl App {
                     self.screen = Screen::List;
                     return Ok(());
                 }
+                codes.push((format!("Vault '{name}'"), code));
                 crate::usage::human(&vault_dir, "vault.create", None);
                 self.refresh_vaults();
                 self.set_status(MsgKind::Ok, format!("Vault '{name}' created"));
-                self.screen = Screen::RecoveryCode(code);
+                self.screen = Screen::RecoveryCode(RecoveryShow {
+                    codes,
+                    to_judge: false,
+                });
             }
             Err(e) => {
                 form.error = Some(format!("{e}"));
@@ -2143,15 +2184,23 @@ impl App {
             self.screen = Screen::List;
             return Ok(());
         }
-        // Locked: Enter unlocks an existing keyring, or creates one if none yet.
+        // Locked: Enter unlocks an existing keyring, or creates one — both under
+        // the master passphrase (there is no separate keyring passphrase).
         if !form.unlocked {
             if key.code == KeyCode::Enter {
-                form.entry = Some(if form.created {
+                form.error = None;
+                // Master already unlocked → do it now, no prompt.
+                if crate::master::is_unlocked() {
+                    return self.keyring_via_session(form);
+                }
+                // Otherwise prompt the master passphrase. A created keyring always
+                // has a master; only first-ever use (no keyring, no master) sets
+                // one (pass + confirm) before creating the keyring.
+                form.entry = Some(if form.created || crate::master::exists() {
                     JudgeEntry::Passphrase(String::new())
                 } else {
                     JudgeEntry::Init(InitForm::new())
                 });
-                form.error = None;
             }
             self.screen = Screen::Judge(form);
             return Ok(());
@@ -2221,7 +2270,8 @@ impl App {
         Ok(())
     }
 
-    /// Unlock an existing keyring from a typed passphrase.
+    /// Open the master from a typed passphrase, then unlock (or create) the
+    /// keyring under it. The keyring has no passphrase of its own.
     fn key_judge_passphrase(
         &mut self,
         mut form: JudgeForm,
@@ -2241,21 +2291,84 @@ impl App {
                 buf.push(c);
                 form.entry = Some(JudgeEntry::Passphrase(buf));
             }
-            KeyCode::Enter => match crate::keyring::Keyring::open(&buf) {
-                Ok(kr) => {
-                    let _ = crate::keyring::unlock_session(kr.key().bytes());
-                    form = JudgeForm::load();
-                    self.set_status(MsgKind::Ok, "Keyring unlocked");
+            KeyCode::Enter => {
+                let created = form.created;
+                match crate::master::Master::open(&buf) {
+                    Ok(master) => {
+                        let _ = crate::master::unlock_session(master.key_bytes());
+                        match self.keyring_with_master(&master, created) {
+                            Ok(()) => {
+                                form = JudgeForm::load();
+                                self.set_status(MsgKind::Ok, keyring_done_msg(created));
+                            }
+                            Err(e) => {
+                                form.error = Some(e);
+                                form.entry = Some(JudgeEntry::Passphrase(buf));
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        form.error = Some("wrong master passphrase".into());
+                        form.entry = Some(JudgeEntry::Passphrase(buf));
+                    }
                 }
-                Err(_) => form.error = Some("wrong keyring passphrase".into()),
-            },
+            }
             _ => form.entry = Some(JudgeEntry::Passphrase(buf)),
         }
         self.screen = Screen::Judge(form);
         Ok(())
     }
 
-    /// Create a brand-new keyring (passphrase + confirm) without leaving the TUI.
+    /// With an already-unlocked master session, unlock or create the keyring with
+    /// no further prompt.
+    fn keyring_via_session(&mut self, mut form: JudgeForm) -> Result<()> {
+        let created = form.created;
+        match crate::master::open_from_session() {
+            Some(master) => match self.keyring_with_master(&master, created) {
+                Ok(()) => {
+                    let f = JudgeForm::load();
+                    self.set_status(MsgKind::Ok, keyring_done_msg(created));
+                    self.screen = Screen::Judge(f);
+                }
+                Err(e) => {
+                    form.error = Some(e);
+                    self.screen = Screen::Judge(form);
+                }
+            },
+            None => {
+                form.error = Some("master session expired — press Enter again".into());
+                self.screen = Screen::Judge(form);
+            }
+        }
+        Ok(())
+    }
+
+    /// Given an open master, unlock the existing keyring (unwrap its DEK) or
+    /// create a fresh one wrapped under the master; cache the keyring session.
+    fn keyring_with_master(
+        &mut self,
+        master: &crate::master::Master,
+        created: bool,
+    ) -> std::result::Result<(), String> {
+        if created {
+            if !crate::master::keyring_has_keyslot() {
+                return Err("the keyring has no master keyslot — wipe .svault/ and re-init".into());
+            }
+            let dek = master.unwrap_keyring_dek().map_err(|e| format!("{e}"))?;
+            crate::keyring::unlock_session(dek.bytes()).map_err(|e| format!("{e}"))?;
+        } else {
+            let dek = crate::master::new_dek();
+            let kr = crate::keyring::Keyring::init_with_key(dek).map_err(|e| format!("{e}"))?;
+            master
+                .wrap_keyring_dek(kr.key())
+                .map_err(|e| format!("{e}"))?;
+            crate::keyring::unlock_session(kr.key().bytes()).map_err(|e| format!("{e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Set a brand-new master passphrase (pass + confirm), then create the
+    /// keyring under it. Only reached on first use when no master exists yet.
     fn key_judge_init(
         &mut self,
         mut form: JudgeForm,
@@ -2306,15 +2419,30 @@ impl App {
             init.error = Some("passphrases do not match".into());
             init.focus = 1;
         } else {
-            match crate::keyring::Keyring::init(&init.pass) {
-                Ok(kr) => {
-                    let _ = crate::keyring::unlock_session(kr.key().bytes());
-                    form = JudgeForm::load();
-                    self.set_status(MsgKind::Ok, "Keyring created and unlocked");
-                    self.screen = Screen::Judge(form);
-                    return Ok(());
+            match crate::master::Master::init(&init.pass) {
+                Ok(master) => {
+                    let _ = crate::master::unlock_session(master.key_bytes());
+                    match self.keyring_with_master(&master, false) {
+                        Ok(()) => {
+                            self.set_status(
+                                MsgKind::Ok,
+                                "Master set · keyring created and unlocked",
+                            );
+                            // Show the master recovery code once, then return to
+                            // the (now unlocked) judge screen.
+                            self.screen = match master.write_recovery() {
+                                Ok(mc) => Screen::RecoveryCode(RecoveryShow {
+                                    codes: vec![("Master passphrase".to_string(), mc)],
+                                    to_judge: true,
+                                }),
+                                Err(_) => Screen::Judge(JudgeForm::load()),
+                            };
+                            return Ok(());
+                        }
+                        Err(e) => init.error = Some(e),
+                    }
                 }
-                Err(e) => init.error = Some(format!("could not create keyring: {e}")),
+                Err(e) => init.error = Some(format!("could not set master passphrase: {e}")),
             }
         }
         form.entry = Some(JudgeEntry::Init(init));
@@ -2761,6 +2889,25 @@ mod tests {
             .unwrap();
     }
 
+    /// Run in a fresh temp working directory with no `.svault/`, so the keyring
+    /// entry branch sees a deterministic "no master" state. Takes the shared
+    /// process-wide CWD lock (the keyring screen now reads `master::exists()` /
+    /// `is_unlocked()`, which are relative to the CWD, so it must not race the
+    /// other chdir tests).
+    fn in_clean_cwd() -> (
+        std::sync::MutexGuard<'static, ()>,
+        tempfile::TempDir,
+        std::path::PathBuf,
+    ) {
+        let guard = crate::testlock::CWD_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        (guard, tmp, prev)
+    }
+
     // Tests force the first-run "set master" step so the field order is
     // deterministic (the live order depends on whether a master exists on disk).
     fn idx(field: CreateField) -> usize {
@@ -2897,7 +3044,9 @@ mod tests {
 
     #[test]
     fn judge_screen_locked_prompts_unlock_then_esc_returns() {
-        // A locked keyring screen: Enter starts the passphrase prompt; Esc backs out.
+        // A locked, already-created keyring: Enter prompts the master passphrase
+        // (a created keyring always has a master); Esc backs out.
+        let (_g, _tmp, prev) = in_clean_cwd();
         let form = JudgeForm {
             created: true,
             unlocked: false,
@@ -2916,7 +3065,7 @@ mod tests {
         };
         assert!(
             matches!(f.entry, Some(JudgeEntry::Passphrase(_))),
-            "enter on a locked keyring opens the unlock prompt"
+            "enter on a locked keyring opens the master-passphrase prompt"
         );
         // Esc out of the entry returns to the vault list.
         press(&mut app, KeyCode::Esc);
@@ -2924,11 +3073,14 @@ mod tests {
             matches!(app.screen, Screen::List),
             "esc returns to the list"
         );
+        std::env::set_current_dir(prev).unwrap();
     }
 
     #[test]
     fn judge_screen_without_keyring_offers_init() {
-        // No keyring on disk: Enter opens the create-keyring prompt, not unlock.
+        // No keyring and no master on disk: Enter opens the set-master prompt
+        // (InitForm: passphrase + confirm) before creating the keyring.
+        let (_g, _tmp, prev) = in_clean_cwd();
         let form = JudgeForm {
             created: false,
             unlocked: false,
@@ -2947,8 +3099,9 @@ mod tests {
         };
         assert!(
             matches!(f.entry, Some(JudgeEntry::Init(_))),
-            "enter with no keyring opens the create prompt"
+            "enter with no keyring and no master opens the set-master prompt"
         );
+        std::env::set_current_dir(prev).unwrap();
     }
 
     #[test]
@@ -3058,7 +3211,10 @@ mod tests {
 
     #[test]
     fn recovery_code_screen_needs_y_to_dismiss() {
-        let mut app = bare_app(Screen::RecoveryCode("AAAA-BBBB-CCCC".into()));
+        let mut app = bare_app(Screen::RecoveryCode(RecoveryShow {
+            codes: vec![("Vault 'x'".to_string(), "AAAA-BBBB-CCCC".to_string())],
+            to_judge: false,
+        }));
         press(&mut app, KeyCode::Char('x'));
         assert!(
             matches!(app.screen, Screen::RecoveryCode(_)),
