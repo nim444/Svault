@@ -16,7 +16,7 @@ For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 | Foundation (0.1 – 0.8) | Shipped | Encrypted local vaults, interactive TUI, Unix daemon, and a multi-release security-hardening track |
 | Enforced policy + AI judge (0.9.0 – 0.9.1) | Shipped | The behavioural gate: daemon-enforced policy, peer-UID-stamped audit, and an AI judge for medium/high secrets — driven from both CLI and TUI |
 | Everything-encrypted-at-rest (0.9.2 – 0.9.3) | Shipped | The entire policy surface and all global config moved into encrypted stores; no plaintext config or key files remain |
-| Unified unlock (0.9.4 – 0.9.5) | Next | One master passphrase opens every vault and the keyring; a YubiKey touch as an equally-easy alternative — both as keyslots over a random data key |
+| Unified unlock (0.9.4 – 0.9.5) | 0.9.4 shipped · YubiKey next | One master passphrase opens every vault (shipped, 0.9.4); a YubiKey touch as an equally-easy alternative is next — both as keyslots over a random data key |
 | Conditional access + escalation (0.9.6) | Planned | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
 | Agent surface — MCP (0.9.7) | Planned | A local MCP server over the existing daemon socket, `svault install`, and an agent-readable capability descriptor |
 | Stable release (1.0.0) | Target | Final independent security review of the full agent-ready surface + distribution channels, then the first stable release |
@@ -110,24 +110,29 @@ peer-UID-bonded daemon socket — rather than adding a new trust model.
 
 ### Unified unlock — one master, or a YubiKey touch (0.9.4 – 0.9.5)
 
-Today each vault has its own passphrase and the keyring has another. That is too
-many secrets to type. The fix is the **keyslot model** (the same idea as LUKS or
+Each vault used to have its own passphrase and the keyring another — too many
+secrets to type. The fix is the **keyslot model** (the same idea as LUKS or
 1Password):
 
-- Each store (every vault, the keyring) gets a **random data key** that encrypts
-  its contents. That data key is wrapped in one or more **keyslots** — a master
-  passphrase, a YubiKey, and the existing recovery code. Per-vault passphrases go
-  away.
+- Each store gets a **random data key** that encrypts its contents. That data key
+  is wrapped in one or more **keyslots** — a master passphrase, a YubiKey, and the
+  existing recovery code. Per-vault passphrases go away.
 - **Any one slot opens the store.** Type the master passphrase **or** touch a
   YubiKey — either is sufficient, not a two-step 2FA. `svault unlock` opens every
-  store at once; `svault lock` clears them.
-- New surface: `svault master init | rekey | status`, `svault master
-  enroll-yubikey`, and `svault master enroll-recovery`. Adding a YubiKey is just
-  adding a slot — no data is re-encrypted. Both the CLI and the TUI drive it.
-- The master passphrase and recovery slots are hardware-free and fully CI-tested.
-  The YubiKey slot (HMAC-SHA1 challenge-response, KeePassXC-style) is built behind
-  a trait with a fake responder for CI, and verified on real hardware before it
-  ships.
+  vault at once; `svault lock --all` clears them and the master session.
+
+**Shipped in 0.9.4 (master passphrase):** `svault master init | rekey | status`;
+a random data key per vault wrapped under a master key in `<vault>/keyslot.enc`,
+and the master key wrapped under the passphrase in `.svault/master.enc`. `create`
+no longer asks for a per-vault passphrase; `unlock` opens every vault at once;
+`recover` and cross-machine `import` re-attach a vault to the local master via its
+recovery code. Both the CLI and the TUI drive it. Generalises the wrap/unwrap
+already in `recovery.rs`.
+
+**Next (0.9.5 — YubiKey slot):** `svault master enroll-yubikey` adds a YubiKey
+keyslot over the same master key (HMAC-SHA1 challenge-response, KeePassXC-style) —
+purely additive, no data re-encrypted. Built behind a trait with a fake responder
+for CI and verified on real hardware before it ships.
 
 ### Conditional access + anomaly escalation (0.9.6)
 

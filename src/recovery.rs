@@ -11,7 +11,6 @@ use rand::RngCore;
 use std::path::Path;
 
 use crate::crypto::{self, VaultKey, SALT_SIZE};
-use crate::vault::Vault;
 
 const RECOVERY_FILE: &str = "recovery.enc";
 const CODE_BYTES: usize = 20; // 160 bits
@@ -72,17 +71,6 @@ pub fn unlock_with_code(vault_dir: &Path, code: &str) -> Result<VaultKey> {
         .try_into()
         .map_err(|_| anyhow!("recovery.enc holds an unexpected key length"))?;
     Ok(VaultKey::from_bytes(key_bytes))
-}
-
-/// Recover a vault with its code and re-key it under `new_passphrase`. Verifies
-/// the code opens the vault, re-encrypts under the new passphrase, and re-wraps
-/// `recovery.enc` so the same code stays valid. Shared by the CLI and the TUI.
-pub fn recover_and_rekey(vault_dir: &Path, code: &str, new_passphrase: &str) -> Result<()> {
-    let key = unlock_with_code(vault_dir, code)?;
-    let mut vault = Vault::open_with_key(vault_dir, key)?;
-    vault.rekey(new_passphrase)?;
-    write(vault_dir, vault.key(), code)?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -147,32 +135,28 @@ mod tests {
     }
 
     #[test]
-    fn recover_and_rekey_resets_passphrase_and_keeps_code() {
+    fn recovered_key_can_be_rewrapped_and_still_opens_the_vault() {
         use crate::meta::{VaultMeta, VaultSettings};
         use crate::policy::VaultPolicyData;
+        use crate::vault::Vault;
         let dir = TempDir::new().unwrap();
         let vault_dir = dir.path().join("v");
         let meta = VaultMeta::new("v".to_string(), "d".to_string(), VaultSettings::default());
+        // A vault under a random data key (the unified-unlock model).
+        let dek = crate::master::new_dek();
         let vault =
-            Vault::init(&vault_dir, "Old!Pass#11", meta, VaultPolicyData::default()).unwrap();
+            Vault::init_with_key(&vault_dir, dek, meta, VaultPolicyData::default()).unwrap();
         vault.add_secret("K", "val").unwrap();
         let code = generate_code();
         write(&vault_dir, vault.key(), &code).unwrap();
         drop(vault);
 
-        recover_and_rekey(&vault_dir, &code, "New!Pass#22").unwrap();
-
-        // Old passphrase no longer works; new one does and the secret survived.
-        assert!(Vault::open(&vault_dir, "Old!Pass#11").is_err());
-        let v = Vault::open(&vault_dir, "New!Pass#22").unwrap();
+        // The recovery code returns the same data key, which still opens the vault.
+        let recovered = unlock_with_code(&vault_dir, &code).unwrap();
+        let v = Vault::open_with_key(&vault_dir, recovered).unwrap();
         assert_eq!(
             v.get_secret("K").unwrap().map(|z| z.to_string()),
             Some("val".to_string())
         );
-
-        // The same recovery code still unlocks after the re-key.
-        let recovered = unlock_with_code(&vault_dir, &code).unwrap();
-        let enc = std::fs::read(vault_dir.join("vault.enc")).unwrap();
-        assert!(crypto::decrypt(&recovered, &enc).is_ok());
     }
 }

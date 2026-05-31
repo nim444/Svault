@@ -89,7 +89,7 @@ a request designed to pass.
   default and assign one per vault. There are no plaintext `config.yaml` or
   `openrouter.key` files anymore.
 
-**Quality.** 110 tests pass (plus one ignored concurrency stress benchmark). CI
+**Quality.** 115 tests pass (plus one ignored concurrency stress benchmark). CI
 runs on Ubuntu, Fedora, macOS, and Windows, with `cargo fmt --check`, `cargo
 clippy -D warnings`, and a `cargo audit` advisory gate.
 
@@ -134,21 +134,28 @@ socket — so it widens capability without changing the trust model.
 
 ### 1. Agent-ready surface — Next (remaining 0.9.x)
 
-**Unified unlock — one master, or a YubiKey touch (0.9.4 – 0.9.5).** Today each
-vault has its own passphrase and the keyring another; that is too many to type.
-Move to the **keyslot model** (LUKS / 1Password-style): each store (every vault,
-the keyring) gets a random **data key** that encrypts its contents, and that data
-key is wrapped in one or more **keyslots** — a master passphrase, a YubiKey, and
-the existing recovery code. Per-vault passphrases go away. **Any one slot opens
-the store** (type the master passphrase *or* touch a YubiKey — not 2FA);
-`svault unlock` opens every store at once. New surface: `svault master init |
-rekey | status | enroll-yubikey | enroll-recovery`; `svault create` stops asking
-for a per-vault passphrase. The master + recovery slots are hardware-free and
-fully CI-tested; the YubiKey slot (HMAC-SHA1 challenge-response, KeePassXC-style)
-is built behind a trait with a fake responder for CI and verified on real
-hardware before it ships. Generalises `recovery.rs` into a `keyslot` module over
-a random data key; reuses the existing `0600` session caching (which already
-holds a raw key, not the passphrase).
+**Unified unlock — one master, or a YubiKey touch (0.9.4 – 0.9.5).** Each vault
+used to have its own passphrase and the keyring another; that was too many to
+type. The **keyslot model** (LUKS / 1Password-style): each store gets a random
+**data key** that encrypts its contents, wrapped in one or more **keyslots** — a
+master passphrase, a YubiKey, and the existing recovery code. Per-vault
+passphrases go away. **Any one slot opens the store** (type the master passphrase
+*or* touch a YubiKey — not 2FA); `svault unlock` opens every vault at once.
+
+*Shipped in 0.9.4 (master passphrase):* the `master` module — a random master key
+(MK) wrapped under the passphrase in `.svault/master.enc`, each vault's random
+data key wrapped under MK in `<vault>/keyslot.enc`. `svault master init | rekey |
+status`; `create` no longer asks for a per-vault passphrase; `unlock` (no arg)
+opens every vault, `lock --all` also clears the master session; `recover` and
+cross-machine `import` re-attach a vault to the local master via its recovery
+code. CLI + TUI, plus 5 keyslot unit tests. Generalises `recovery.rs`'s
+wrap/unwrap and reuses the existing `0600` session caching (which already holds a
+raw key, not the passphrase).
+
+*Next (0.9.5 — YubiKey slot):* `svault master enroll-yubikey` adds a YubiKey
+keyslot over the same MK (HMAC-SHA1 challenge-response, KeePassXC-style) — purely
+additive, no data re-encrypted. Built behind a trait with a fake responder for CI
+and verified on real hardware before it ships.
 
 **Conditional access + anomaly escalation (0.9.6).** Add **conditions** to a
 secret's encrypted policy — allowed time windows (e.g. only Fri 10:00–12:00 while

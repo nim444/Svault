@@ -24,19 +24,22 @@ The code is a **second key to your vault**, equal in power to the passphrase. Tr
 - **Don't** paste it into a chat, ticket, email, shell history, or a plaintext file in the repo. Anyone with the code can re-key the vault.
 - It is **not** the same as your passphrase — store it separately, so one leak doesn't expose both.
 
-### Resetting a lost passphrase
+### Recovering access when you've lost the master passphrase
 
 ```bash
 svault recover [VAULT]
 ```
 
-You'll be prompted for the recovery code, then for a new passphrase. Svault:
+You'll be prompted for the recovery code, then for your master passphrase (on a
+fresh machine with no master set, you set one). Svault:
 
-1. Unwraps the vault key with the code.
-2. Re-encrypts the vault under the new passphrase (re-keys `vault.enc`, re-signs `meta.yaml`).
-3. Re-wraps `recovery.enc` — the **recovery code stays the same**, so you don't have to record a new one.
+1. Unwraps the vault's data key with the code (the data key never changed).
+2. Wraps that data key under the current master — re-attaching the vault to your
+   master passphrase. **No re-encryption** of `vault.enc`, and the **recovery code
+   stays the same**, so you don't have to record a new one.
 
-Your secrets are preserved; the old passphrase stops working.
+Your secrets are preserved. Because the data key is what the code recovers, the
+same code keeps working and the vault is immediately usable under the master.
 
 > Vaults created before recovery support have no `recovery.enc` and cannot be recovered — re-create them to get a code.
 

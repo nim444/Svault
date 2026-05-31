@@ -67,7 +67,11 @@ pub struct Vault {
 }
 
 impl Vault {
-    /// Create a new vault at the given directory path with its initial policy.
+    /// Create a new vault at the given directory path with its initial policy,
+    /// keyed directly from a passphrase. Superseded in the unified-unlock model
+    /// by [`Vault::init_with_key`] (a random data key wrapped under the master);
+    /// retained for the legacy passphrase path and the crypto/vault tests.
+    #[allow(dead_code)]
     pub fn init(
         vault_dir: &Path,
         passphrase: &str,
@@ -105,6 +109,47 @@ impl Vault {
 
         meta_input.save(vault_dir, key.bytes())?;
 
+        let meta = VaultMeta::load_verified(vault_dir, key.bytes())?;
+        Ok(Self {
+            vault_dir: vault_dir.to_path_buf(),
+            meta,
+            policy: payload.policy,
+            key,
+        })
+    }
+
+    /// Create a new vault encrypted under an already-chosen data key (DEK),
+    /// rather than a passphrase-derived key. Used by the unified-unlock path:
+    /// the DEK is random and wrapped under the master key in a keyslot, so the
+    /// vault has no passphrase of its own. Mirrors [`Vault::init`] otherwise.
+    pub fn init_with_key(
+        vault_dir: &Path,
+        key: VaultKey,
+        meta_input: VaultMeta,
+        policy: VaultPolicyData,
+    ) -> Result<Self> {
+        if vault_dir.exists() {
+            return Err(anyhow!("Vault already exists at {}", vault_dir.display()));
+        }
+        if let Some(parent) = vault_dir.parent() {
+            crate::secfile::create_dir_owner_only(parent)?;
+        }
+        crate::secfile::create_dir_owner_only(vault_dir)?;
+        std::fs::write(
+            vault_dir.join(".gitignore"),
+            ".session\naudit.log\nusage.log\n",
+        )?;
+
+        let mut salt = [0u8; SALT_SIZE];
+        rand::thread_rng().fill_bytes(&mut salt);
+        let payload = VaultPayload {
+            version: PAYLOAD_VERSION,
+            secrets: HashMap::new(),
+            policy,
+        };
+        let encrypted = encrypt_payload(&key, &salt, &payload)?;
+        std::fs::write(vault_dir.join("vault.enc"), &encrypted)?;
+        meta_input.save(vault_dir, key.bytes())?;
         let meta = VaultMeta::load_verified(vault_dir, key.bytes())?;
         Ok(Self {
             vault_dir: vault_dir.to_path_buf(),
@@ -156,8 +201,10 @@ impl Vault {
     }
 
     /// Re-encrypt the vault under a new passphrase: fresh salt + key, re-write
-    /// vault.enc (secrets + policy), re-sign meta.yaml. The caller re-wraps
-    /// recovery.enc afterwards.
+    /// vault.enc (secrets + policy), re-sign meta.yaml. Legacy passphrase path
+    /// (the unified model re-wraps the data key under the master instead);
+    /// retained for the vault tests.
+    #[allow(dead_code)]
     pub fn rekey(&mut self, new_passphrase: &str) -> Result<()> {
         let payload = self.load_payload()?;
         let mut salt = [0u8; SALT_SIZE];

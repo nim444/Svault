@@ -61,14 +61,15 @@ flowchart LR
 cargo install svault-ai
 
 # 1. Create an encrypted vault (interactive: storage, name, agents, auto-lock,
-#    default tier, AI judge, passphrase…). Prints a one-time recovery code — save it.
+#    default tier, AI judge). On first run you set one master passphrase — it
+#    unlocks every vault. Prints a one-time recovery code — save it.
 svault create
 
 # 2. Add secrets — also classifies each one (scope + sensitivity tier) for the gate
 svault secret add DB_URL --scope database --tier medium
 svault secret add API_KEY --scope api --tier low
 
-# 3. Unlock for your session (derived key cached, not prompted again)
+# 3. Unlock for your session — one master passphrase opens every vault
 svault unlock
 
 # 4. Use secrets without re-entering the passphrase
@@ -146,10 +147,10 @@ svault judge enable          # turn the judge on globally
 
 <br>
 
-`svault create` prints a one-time **recovery code** — a 160-bit second key that resets a lost passphrase. It's shown once and never stored in plaintext; keep it in a password manager.
+`svault create` prints a one-time **recovery code** — a 160-bit second keyslot into the vault, used if you lose the master passphrase. It's shown once and never stored in plaintext; keep it in a password manager.
 
 ```bash
-svault recover                       # enter the code, set a new passphrase
+svault recover                       # enter the code, re-attach the vault to your master
 svault export myvault --out vault.json   # portable, checksummed encrypted bundle
 svault import vault.json                 # restore on another machine
 ```
@@ -187,13 +188,16 @@ The chosen backend is recorded in `meta.yaml` and shown as a `storage:name` pref
 |---|---|
 | Encryption | AES-256-GCM (authenticated) |
 | Key derivation | Argon2id (64 MB, 3 iterations) — GPU-resistant |
+| Unlock | One **master passphrase** wraps a random per-vault data key (keyslot model) — unlock once, every vault opens |
 | Policy & judge config | Encrypted at rest — the policy in `vault.enc`, the judge registry + API keys in `keyring.enc`. No plaintext config or key files |
 | Metadata integrity | HMAC-SHA256 — tampering with the public `meta.yaml` is detected |
 | Memory safety | `VaultKey` + secrets derive `ZeroizeOnDrop` — wiped on drop |
 | Session / on-disk files | Owner-only (`0600`), written atomically |
-| Vault file | Safe to commit — encrypted at rest, useless without the passphrase |
+| Vault file | Safe to commit — encrypted at rest, useless without the master passphrase |
 
-**Your passphrases are the only keys** — one per vault, one for the keyring.
+**One master passphrase is the only key you type** — it wraps each vault's random
+data key, so unlocking once opens everything. The recovery code is a second
+keyslot into a vault if you lose the master.
 
 **Threat model + on-disk layout → [docs/security.md](docs/security.md)**
 
@@ -230,12 +234,14 @@ flowchart TD
 | **Foundation** | Shipped | Local AES-256-GCM vaults (Argon2id), the interactive Ratatui TUI, recovery code + encrypted export/import, and the Unix daemon (keys in memory, auto-lock) |
 | **Enforced policy + AI judge** | Shipped | Daemon-enforced policy engine (peer-UID-audited) — reason, scopes, tiers, rate limit, burst — plus the AI judge (OpenRouter) gating medium/high-tier secrets |
 | **Everything encrypted at rest** | Shipped | The whole policy surface in `vault.enc` and all global config + the judge registry (multiple named judges, with API keys) in `keyring.enc` — nothing abusable in plaintext; per-vault judge assignment; generic caller-facing denials |
-| **1.0.0** | Next | A final independent security review and install channels (script, Homebrew, Docker), then the first stable release |
+| **Unified unlock** | Shipped (0.9.4) | One master passphrase wraps a random per-vault data key (keyslot model); per-vault passphrases removed; `svault master init / rekey / status`; foundation for a YubiKey-touch keyslot |
+| **Conditional access + escalation** | Next | Time-window / caller conditions in the encrypted policy; brute-force / anomaly seals a secret and escalates to a human (agents never self-clear) |
+| **Local MCP** | Planned | `svault mcp` over the daemon socket (auth = same-UID + daemon-unlocked), `svault install`, and an agent capability descriptor that advertises the request interface, not the decision criteria |
+| **1.0.0** | Target | A final independent review of the full agent-ready surface and install channels (script, Homebrew, Docker), then the first stable release |
 | **2.0.0** | Planned | Desktop GUI (Tauri) + system tray |
-| **3.0.0** | Planned | MCP integration — Claude Code, Cursor, Copilot, VS Code, Aider |
-| **Cloud** | Planned | Anomaly scoring via Claude Haiku — free tier + premium plans |
+| **3.0.0+ / Cloud** | Planned | Remote MCP with OAuth, more platforms, optional anomaly scoring via Claude Haiku |
 
-Svault is currently on the **0.9.x** line; 1.0.0 is reserved for the reviewed, stable release. Per-release detail lives in the [changelog](CHANGELOG.md).
+Svault is currently on the **0.9.x** line, working through the agent-ready path; 1.0.0 is reserved for the reviewed, stable release. Per-release detail lives in the [changelog](CHANGELOG.md).
 
 **Full roadmap → [docs/roadmap.md](docs/roadmap.md)**
 
@@ -247,7 +253,7 @@ Svault is currently on the **0.9.x** line; 1.0.0 is reserved for the reviewed, s
 cargo test
 ```
 
-**110 tests** (plus an `#[ignore]`d concurrency stress benchmark) cover the crypto core and tamper detection, vault operations, the policy engine and the enforced daemon gate (including peer-UID-stamped audit and high-tier fail-closed behaviour), the AI judge — run against a fake transport, so the suite never touches the network — and the encrypted-at-rest guarantees for both the policy (`vault.enc`) and the keyring (`keyring.enc`).
+**115 tests** (plus an `#[ignore]`d concurrency stress benchmark) cover the crypto core and tamper detection, vault operations, the master keyslot model (wrap/unwrap a data key under the master, rekey, wrong-master rejection), the policy engine and the enforced daemon gate (including peer-UID-stamped audit and high-tier fail-closed behaviour), the AI judge — run against a fake transport, so the suite never touches the network — and the encrypted-at-rest guarantees for both the policy (`vault.enc`) and the keyring (`keyring.enc`).
 
 CI runs the full suite on **Ubuntu, Fedora, macOS, and Windows** on every push and pull request. A heavier concurrency simulation runs on demand:
 

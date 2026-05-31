@@ -4,6 +4,7 @@
 |---|---|
 | Encryption | AES-256-GCM |
 | Key derivation | Argon2id (64 MB memory, 3 iterations) — GPU-resistant |
+| Unlock (keyslot model) | A random 32-byte data key encrypts each vault; it is wrapped under a random master key (MK) in `<vault>/keyslot.enc`, and MK is wrapped under your **master passphrase** (Argon2id) in `.svault/master.enc`. One passphrase unlocks every vault; changing it rewraps only MK, never any vault ciphertext |
 | Metadata integrity | HMAC-SHA256 — tampering with the public `meta.yaml` is detected |
 | Policy at rest | The full policy surface (classification, caller rules, access, the vault's judge assignment) is AES-256-GCM **encrypted inside `vault.enc`** — unreadable at rest, so an agent can't read it to plan a bypass |
 | Global config at rest | The judge registry, every judge's **API key**, their criteria/thresholds, and operational knobs are AES-256-GCM **encrypted inside `keyring.enc`** under its own passphrase — no plaintext config file, no plaintext key file |
@@ -11,11 +12,11 @@
 | Session file | Created atomically with mode `0600`, never at permissive permissions |
 | Vault file | Safe to commit to git — encrypted at rest |
 
-**The passphrase is the root of trust** — or the recovery code, which is an equal-strength second key. A strong passphrase combined with Argon2id makes brute force impractical on current hardware; the recovery code is 160 bits of randomness.
+**The master passphrase is the root of trust** — or a vault's recovery code, which is an equal-strength second keyslot into that vault. A strong master passphrase combined with Argon2id makes brute force impractical on current hardware; the recovery code is 160 bits of randomness. The vault data keys themselves are random and never derived from the passphrase, so the passphrase only ever unwraps the master key.
 
 ## What's safe to commit
 
-`vault.enc`, `meta.yaml`, `recovery.enc`, and `keyring.enc` are safe to commit to git — they are useless without the passphrase or recovery code. (`recovery.enc` holds the vault key wrapped under the recovery code; see [Recovery](recovery.md). `keyring.enc` is the encrypted global config — judge registry, API keys, knobs — under its own passphrase.) The `.session`, the keyring's `.keyring.session`, `audit.log`, `usage.log`, the daemon's `daemon.sock` / `daemon.pid` / `daemon.log`, and any local lock state are always gitignored (`.svault/` itself is gitignored, and a per-vault `.gitignore` is written at create time and self-heals to add the log lines on first use) and created with mode `0600` (owner read/write only).
+`vault.enc`, `meta.yaml`, `recovery.enc`, `keyslot.enc`, `master.enc`, and `keyring.enc` are safe to commit to git — they are useless without the master passphrase or a recovery code. (`keyslot.enc` holds the vault's data key wrapped under the master key; `master.enc` holds the master key wrapped under your passphrase; `recovery.enc` holds the vault data key wrapped under the recovery code — see [Recovery](recovery.md). `keyring.enc` is the encrypted global config — judge registry, API keys, knobs.) The `.session`, the master session `.master.session`, the keyring's `.keyring.session`, `audit.log`, `usage.log`, the daemon's `daemon.sock` / `daemon.pid` / `daemon.log`, and any local lock state are always gitignored (`.svault/` itself is gitignored, and a per-vault `.gitignore` is written at create time and self-heals to add the log lines on first use) and created with mode `0600` (owner read/write only).
 
 ## Session state: file vs daemon
 

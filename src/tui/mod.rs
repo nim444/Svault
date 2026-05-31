@@ -101,16 +101,13 @@ pub enum Pending {
     List,
     Secrets,
     Settings,
-    /// A renamed import: re-sign `meta.name` to the form's name once the
-    /// passphrase opens the freshly-imported vault.
-    FinishImport,
 }
 
 /// The focusable fields of the create form, in display order. Handlers match on
 /// the field (not a bare index) so the draw order and the key logic can never
 /// drift apart. Storage and login method are fixed (local / passphrase) today,
 /// so they are shown as a static note rather than a pickable field.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CreateField {
     Name,
     Description,
@@ -121,24 +118,22 @@ pub enum CreateField {
     AutolockTimer,
     DefaultTier,
     Judge,
-    Passphrase,
-    Confirm,
+    /// First-time master passphrase (set-on-create) + its confirmation.
+    MasterNew,
+    MasterConfirm,
+    /// Existing master passphrase, when a master is set but locked.
+    MasterUnlock,
 }
 
-impl CreateField {
-    pub const ORDER: [CreateField; 11] = [
-        CreateField::Name,
-        CreateField::Description,
-        CreateField::AllowMode,
-        CreateField::AllowList,
-        CreateField::RateLimit,
-        CreateField::Autolock,
-        CreateField::AutolockTimer,
-        CreateField::DefaultTier,
-        CreateField::Judge,
-        CreateField::Passphrase,
-        CreateField::Confirm,
-    ];
+/// The master-passphrase tail of the create form depends on machine state.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MasterStep {
+    /// Master already unlocked this session — no passphrase fields needed.
+    Ready,
+    /// A master is set but locked — ask for it (one field).
+    Unlock,
+    /// First run, no master yet — set one (passphrase + confirm).
+    Set,
 }
 
 pub struct CreateForm {
@@ -155,16 +150,26 @@ pub struct CreateForm {
     pub confirm: String,
     pub focus: usize,
     pub error: Option<String>,
+    /// What the master tail must do (computed once when the form opens).
+    pub master_step: MasterStep,
+    /// The full field order including the master tail, in display order.
+    pub order: Vec<CreateField>,
 }
 
 impl CreateForm {
-    const FIELDS: usize = CreateField::ORDER.len();
-
     fn new() -> Self {
         let default_name = std::env::current_dir()
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
             .unwrap_or_else(|| "my-vault".to_string());
+        let master_step = if crate::master::is_unlocked() {
+            MasterStep::Ready
+        } else if crate::master::exists() {
+            MasterStep::Unlock
+        } else {
+            MasterStep::Set
+        };
+        let order = Self::order_for(master_step);
         Self {
             name: default_name,
             description: String::new(),
@@ -179,11 +184,42 @@ impl CreateForm {
             confirm: String::new(),
             focus: 0,
             error: None,
+            master_step,
+            order,
         }
     }
 
+    /// The field order for a given master step: the nine base fields plus the
+    /// master tail (none / one unlock field / set + confirm).
+    pub fn order_for(step: MasterStep) -> Vec<CreateField> {
+        let mut order = vec![
+            CreateField::Name,
+            CreateField::Description,
+            CreateField::AllowMode,
+            CreateField::AllowList,
+            CreateField::RateLimit,
+            CreateField::Autolock,
+            CreateField::AutolockTimer,
+            CreateField::DefaultTier,
+            CreateField::Judge,
+        ];
+        match step {
+            MasterStep::Ready => {}
+            MasterStep::Unlock => order.push(CreateField::MasterUnlock),
+            MasterStep::Set => {
+                order.push(CreateField::MasterNew);
+                order.push(CreateField::MasterConfirm);
+            }
+        }
+        order
+    }
+
+    fn fields(&self) -> usize {
+        self.order.len()
+    }
+
     pub fn current(&self) -> CreateField {
-        CreateField::ORDER[self.focus]
+        self.order[self.focus]
     }
 
     /// Whether the focused field accepts typed/pasted text (drives the caret).
@@ -205,8 +241,8 @@ impl CreateForm {
             CreateField::AllowList => &mut self.allow_list,
             CreateField::RateLimit => &mut self.rate_limit,
             CreateField::AutolockTimer => &mut self.autolock_timer,
-            CreateField::Passphrase => &mut self.passphrase,
-            CreateField::Confirm => &mut self.confirm,
+            CreateField::MasterNew | CreateField::MasterUnlock => &mut self.passphrase,
+            CreateField::MasterConfirm => &mut self.confirm,
             _ => return None,
         })
     }
@@ -959,18 +995,22 @@ impl App {
                             self.set_status(MsgKind::Ok, format!("Imported '{target}'"));
                             self.screen = Screen::List;
                         } else {
-                            // Name collided → re-sign meta.name once the
-                            // passphrase opens the freshly-imported vault.
+                            // Name collided. The import is keyed by a random data
+                            // key and its machine-specific keyslot is not bundled —
+                            // bring it under the master via its recovery code, which
+                            // also re-signs meta.name to match the new directory.
                             self.set_status(
                                 MsgKind::Info,
-                                format!("'{orig}' exists — importing as '{target}'; enter passphrase to finish"),
+                                format!("'{orig}' exists — importing as '{target}'; enter its recovery code to finish"),
                             );
-                            self.screen = Screen::Unlock(UnlockForm {
+                            self.screen = Screen::Recover(RecoverForm {
                                 vault_dir: dir,
                                 name: target,
-                                passphrase: String::new(),
+                                code: String::new(),
+                                new_pass: String::new(),
+                                confirm: String::new(),
+                                focus: 0,
                                 error: None,
-                                pending: Pending::FinishImport,
                             });
                         }
                     }
@@ -1022,43 +1062,100 @@ impl App {
     }
 
     fn submit_recover(&mut self, mut form: RecoverForm) {
-        if let Err(e) = crate::passphrase::meets_floor(&form.new_pass) {
-            form.error = Some(e);
-            form.new_pass.clear();
-            form.confirm.clear();
-            form.focus = 1;
-            self.screen = Screen::Recover(form);
-            return;
-        }
-        if form.new_pass != form.confirm {
-            form.error = Some("Passphrases do not match".into());
-            form.new_pass.clear();
-            form.confirm.clear();
-            form.focus = 1;
-            self.screen = Screen::Recover(form);
-            return;
-        }
-        match crate::recovery::recover_and_rekey(&form.vault_dir, &form.code, &form.new_pass) {
-            Ok(_) => {
-                crate::usage::human(&form.vault_dir, "recover", None);
-                session::lock(&form.vault_dir).ok();
-                self.refresh_vaults();
-                self.set_status(
-                    MsgKind::Ok,
-                    format!(
-                        "Passphrase reset for '{}'. Recovery code unchanged.",
-                        form.name
-                    ),
-                );
-                self.screen = Screen::List;
-            }
+        // The recovery code unwraps the vault's data key directly (it never
+        // changed). We then re-attach the vault to the master.
+        let dek = match crate::recovery::unlock_with_code(&form.vault_dir, &form.code) {
+            Ok(k) => k,
             Err(e) => {
                 form.error = Some(format!("{e}"));
                 form.code.clear();
                 form.focus = 0;
                 self.screen = Screen::Recover(form);
+                return;
+            }
+        };
+        // The passphrase fields set the master on first run, or open the
+        // existing one to wrap the recovered key under it.
+        let setting = !crate::master::exists();
+        if setting {
+            if let Err(e) = crate::passphrase::meets_floor(&form.new_pass) {
+                form.error = Some(e);
+                form.new_pass.clear();
+                form.confirm.clear();
+                form.focus = 1;
+                self.screen = Screen::Recover(form);
+                return;
+            }
+            if form.new_pass != form.confirm {
+                form.error = Some("Master passphrases do not match".into());
+                form.new_pass.clear();
+                form.confirm.clear();
+                form.focus = 1;
+                self.screen = Screen::Recover(form);
+                return;
             }
         }
+        let master = if setting {
+            match crate::master::Master::init(&form.new_pass) {
+                Ok(m) => m,
+                Err(e) => {
+                    form.error = Some(format!("{e}"));
+                    self.screen = Screen::Recover(form);
+                    return;
+                }
+            }
+        } else {
+            match crate::master::Master::open(&form.new_pass) {
+                Ok(m) => m,
+                Err(_) => {
+                    form.error = Some("Wrong master passphrase".into());
+                    form.new_pass.clear();
+                    form.confirm.clear();
+                    form.focus = 1;
+                    self.screen = Screen::Recover(form);
+                    return;
+                }
+            }
+        };
+        let _ = crate::master::unlock_session(master.key_bytes());
+        // Open with the recovered key so a renamed import can re-sign meta.name
+        // to match its directory (a no-op for a normal recover), then wrap the
+        // key under the master and cache the session.
+        let vault = match Vault::open_with_key(&form.vault_dir, dek) {
+            Ok(v) => v,
+            Err(e) => {
+                form.error = Some(format!("{e}"));
+                self.screen = Screen::Recover(form);
+                return;
+            }
+        };
+        let leaf = form
+            .vault_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        if !leaf.is_empty() && vault.meta.name != leaf {
+            let mut meta = vault.meta.clone();
+            meta.name = leaf;
+            let _ = vault.save_meta(&meta);
+        }
+        if let Err(e) = master.wrap_dek(&form.vault_dir, vault.key()) {
+            form.error = Some(format!("{e}"));
+            self.screen = Screen::Recover(form);
+            return;
+        }
+        let _ = session::unlock_with_key(&form.vault_dir, vault.key().bytes());
+        crate::usage::human(&form.vault_dir, "recover", None);
+        self.refresh_vaults();
+        self.set_status(
+            MsgKind::Ok,
+            format!(
+                "'{}' re-attached to your master passphrase. Recovery code unchanged.",
+                form.name
+            ),
+        );
+        self.screen = Screen::List;
     }
 
     // ── List screen ─────────────────────────────────────────────────────────
@@ -1291,12 +1388,12 @@ impl App {
                 self.screen = Screen::List;
                 return Ok(());
             }
-            KeyCode::Tab | KeyCode::Down => form.focus = (form.focus + 1) % CreateForm::FIELDS,
+            KeyCode::Tab | KeyCode::Down => form.focus = (form.focus + 1) % form.fields(),
             KeyCode::BackTab | KeyCode::Up => {
-                form.focus = (form.focus + CreateForm::FIELDS - 1) % CreateForm::FIELDS
+                form.focus = (form.focus + form.fields() - 1) % form.fields()
             }
             KeyCode::Enter => {
-                if form.focus == CreateForm::FIELDS - 1 {
+                if form.focus == form.fields() - 1 {
                     return self.submit_create(form);
                 }
                 form.focus += 1;
@@ -1344,21 +1441,65 @@ impl App {
             self.screen = Screen::Create(form);
             return Ok(());
         }
-        if form.passphrase.is_empty() {
-            form.error = Some("Passphrase is required".into());
-            self.screen = Screen::Create(form);
-            return Ok(());
-        }
-        if let Err(e) = crate::passphrase::meets_floor(&form.passphrase) {
-            form.error = Some(e);
-            self.screen = Screen::Create(form);
-            return Ok(());
-        }
-        if form.passphrase != form.confirm {
-            form.error = Some("Passphrases do not match".into());
-            self.screen = Screen::Create(form);
-            return Ok(());
-        }
+        // Resolve the master passphrase that wraps this vault's data key:
+        // reuse the session, prompt the existing master, or set one on first run.
+        let master = match form.master_step {
+            MasterStep::Ready => match crate::master::open_from_session() {
+                Some(m) => m,
+                None => {
+                    form.error = Some("master session expired — reopen the create screen".into());
+                    self.screen = Screen::Create(form);
+                    return Ok(());
+                }
+            },
+            MasterStep::Unlock => {
+                if form.passphrase.is_empty() {
+                    form.error = Some("Master passphrase is required".into());
+                    self.screen = Screen::Create(form);
+                    return Ok(());
+                }
+                match crate::master::Master::open(&form.passphrase) {
+                    Ok(m) => {
+                        let _ = crate::master::unlock_session(m.key_bytes());
+                        m
+                    }
+                    Err(_) => {
+                        form.error = Some("Wrong master passphrase".into());
+                        form.passphrase.clear();
+                        self.screen = Screen::Create(form);
+                        return Ok(());
+                    }
+                }
+            }
+            MasterStep::Set => {
+                if form.passphrase.is_empty() {
+                    form.error = Some("Master passphrase is required".into());
+                    self.screen = Screen::Create(form);
+                    return Ok(());
+                }
+                if let Err(e) = crate::passphrase::meets_floor(&form.passphrase) {
+                    form.error = Some(e);
+                    self.screen = Screen::Create(form);
+                    return Ok(());
+                }
+                if form.passphrase != form.confirm {
+                    form.error = Some("Master passphrases do not match".into());
+                    self.screen = Screen::Create(form);
+                    return Ok(());
+                }
+                match crate::master::Master::init(&form.passphrase) {
+                    Ok(m) => {
+                        let _ = crate::master::unlock_session(m.key_bytes());
+                        m
+                    }
+                    Err(e) => {
+                        form.error = Some(format!("{e}"));
+                        self.screen = Screen::Create(form);
+                        return Ok(());
+                    }
+                }
+            }
+        };
 
         let allow_agent = match form.allow_mode {
             0 => AllowAgent::Bool(true),
@@ -1388,8 +1529,17 @@ impl App {
         };
         vault_policy.judge.enabled = Some(form.judge);
 
-        match Vault::init(&vault_dir, &form.passphrase, meta, vault_policy) {
+        // Random data key encrypts the vault; wrap it under the master so the
+        // single master passphrase opens it.
+        let dek = crate::master::new_dek();
+        match Vault::init_with_key(&vault_dir, dek, meta, vault_policy) {
             Ok(vault) => {
+                if let Err(e) = master.wrap_dek(&vault_dir, vault.key()) {
+                    form.error = Some(format!("could not wrap vault under master: {e}"));
+                    self.screen = Screen::Create(form);
+                    return Ok(());
+                }
+                let _ = session::unlock_with_key(&vault_dir, vault.key().bytes());
                 // Generate and store the recovery code, then show it once.
                 let code = crate::recovery::generate_code();
                 if let Err(e) = crate::recovery::write(&vault_dir, vault.key(), &code) {
@@ -1519,22 +1669,14 @@ impl App {
     fn key_unlock(&mut self, mut form: UnlockForm, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Esc => {
-                // Cancelling a renamed import leaves a vault whose dir name and
-                // meta.name disagree — drop it so nothing half-imported lingers.
-                if matches!(form.pending, Pending::FinishImport) {
-                    let _ = std::fs::remove_dir_all(&form.vault_dir);
-                    self.refresh_vaults();
-                    self.set_status(MsgKind::Warn, "Import cancelled");
-                }
                 self.screen = Screen::List;
             }
             KeyCode::Backspace => {
                 form.passphrase.pop();
                 self.screen = Screen::Unlock(form);
             }
-            KeyCode::Enter => match Vault::open(&form.vault_dir, &form.passphrase) {
+            KeyCode::Enter => match self.unlock_via_master(&form.vault_dir, &form.passphrase) {
                 Ok(vault) => {
-                    session::unlock_with_key(&form.vault_dir, vault.key().bytes())?;
                     crate::usage::human(&form.vault_dir, "unlock", None);
                     self.refresh_vaults();
                     self.set_status(MsgKind::Ok, format!("Vault '{}' unlocked", form.name));
@@ -1548,19 +1690,10 @@ impl App {
                                 &vault.policy,
                             ));
                         }
-                        Pending::FinishImport => {
-                            // Re-sign meta.name so it matches the (suffixed) dir.
-                            let mut meta = vault.meta.clone();
-                            meta.name = form.name.clone();
-                            vault.save_meta(&meta)?;
-                            self.refresh_vaults();
-                            self.set_status(MsgKind::Ok, format!("Imported as '{}'", form.name));
-                            self.screen = Screen::List;
-                        }
                     }
                 }
-                Err(_) => {
-                    form.error = Some("Wrong passphrase".into());
+                Err(e) => {
+                    form.error = Some(e);
                     form.passphrase.clear();
                     self.screen = Screen::Unlock(form);
                 }
@@ -1573,6 +1706,37 @@ impl App {
             _ => self.screen = Screen::Unlock(form),
         }
         Ok(())
+    }
+
+    /// Open a vault via the master passphrase: open (or set) the master, unwrap
+    /// the vault's data key from its keyslot, cache the session, and return the
+    /// open vault. The single place the TUI turns a typed master passphrase into
+    /// an unlocked vault. Returns a user-facing error string on failure.
+    fn unlock_via_master(
+        &mut self,
+        vault_dir: &Path,
+        passphrase: &str,
+    ) -> std::result::Result<Vault, String> {
+        let master = if crate::master::exists() {
+            crate::master::Master::open(passphrase)
+                .map_err(|_| "Wrong master passphrase".to_string())?
+        } else {
+            // No master yet (e.g. a legacy/imported vault on a fresh machine):
+            // set one now from the typed passphrase.
+            crate::passphrase::meets_floor(passphrase)?;
+            crate::master::Master::init(passphrase).map_err(|e| format!("{e}"))?
+        };
+        let _ = crate::master::unlock_session(master.key_bytes());
+
+        if !crate::master::vault_has_keyslot(vault_dir) {
+            return Err("vault is not wrapped under the master (no keyslot)".to_string());
+        }
+        let dek = master
+            .unwrap_dek(vault_dir)
+            .map_err(|_| "could not unwrap the vault key with this master".to_string())?;
+        session::unlock_with_key(vault_dir, dek.bytes())
+            .map_err(|e| format!("could not cache session: {e}"))?;
+        Vault::open_with_key(vault_dir, dek).map_err(|e| format!("{e}"))
     }
 
     // ── Secret list screen ────────────────────────────────────────────────────
@@ -2597,12 +2761,19 @@ mod tests {
             .unwrap();
     }
 
+    // Tests force the first-run "set master" step so the field order is
+    // deterministic (the live order depends on whether a master exists on disk).
     fn idx(field: CreateField) -> usize {
-        CreateField::ORDER.iter().position(|f| *f == field).unwrap()
+        CreateForm::order_for(MasterStep::Set)
+            .iter()
+            .position(|f| *f == field)
+            .unwrap()
     }
 
     fn create_at(field: CreateField) -> Screen {
         let mut form = CreateForm::new();
+        form.master_step = MasterStep::Set;
+        form.order = CreateForm::order_for(MasterStep::Set);
         form.focus = idx(field);
         Screen::Create(form)
     }
@@ -2631,8 +2802,18 @@ mod tests {
     }
 
     #[test]
-    fn create_field_order_matches_field_count() {
-        assert_eq!(CreateField::ORDER.len(), CreateForm::FIELDS);
+    fn create_field_order_has_the_right_master_tail() {
+        // Nine base fields, plus the master tail per step.
+        assert_eq!(CreateForm::order_for(MasterStep::Ready).len(), 9);
+        let unlock = CreateForm::order_for(MasterStep::Unlock);
+        assert_eq!(unlock.len(), 10);
+        assert_eq!(unlock.last(), Some(&CreateField::MasterUnlock));
+        let set = CreateForm::order_for(MasterStep::Set);
+        assert_eq!(set.len(), 11);
+        assert_eq!(
+            &set[9..],
+            &[CreateField::MasterNew, CreateField::MasterConfirm]
+        );
         assert_eq!(SettingsField::ORDER.len(), SettingsForm::FIELDS);
     }
 
@@ -2647,7 +2828,9 @@ mod tests {
         assert!(!form.focus_is_text());
         form.focus = idx(CreateField::Judge);
         assert!(!form.focus_is_text());
-        form.focus = idx(CreateField::Passphrase);
+        form.master_step = MasterStep::Set;
+        form.order = CreateForm::order_for(MasterStep::Set);
+        form.focus = idx(CreateField::MasterNew);
         assert!(form.focus_is_text());
     }
 
@@ -2804,7 +2987,7 @@ mod tests {
     #[test]
     fn down_wraps_from_last_create_field_to_first() {
         let mut form = CreateForm::new();
-        form.focus = CreateForm::FIELDS - 1;
+        form.focus = form.order.len() - 1;
         let mut app = bare_app(Screen::Create(form));
         press(&mut app, KeyCode::Down);
         let Screen::Create(form) = &app.screen else {
@@ -2815,7 +2998,7 @@ mod tests {
 
     #[test]
     fn paste_appends_to_the_focused_field() {
-        let mut app = bare_app(create_at(CreateField::Passphrase));
+        let mut app = bare_app(create_at(CreateField::MasterNew));
         app.on_paste("Str0ng!Pass#99".to_string());
         let Screen::Create(form) = &app.screen else {
             panic!("expected create screen")

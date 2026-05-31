@@ -7,18 +7,32 @@ vault, see [Vault selection](#vault-selection) for how it's resolved.
 
 ```bash
 svault                             # launch the interactive TUI (no subcommand)
+svault master init [--force]       # set the master passphrase (one secret unlocks every vault)
+svault master rekey [--force]      # change the master passphrase (no vault is re-encrypted)
+svault master status               # is the master set / unlocked, how many vaults wrapped
 svault create [--force]            # create an encrypted vault (name, description, agents, rate limit, auto-lock)
 svault settings [VAULT]            # view or change a vault's settings
-svault unlock   [VAULT]            # unlock a vault and cache its derived key for the session
+svault unlock   [VAULT]            # unlock — no VAULT opens every vault via the master; VAULT opens just one
 svault lock     [VAULT]            # clear a vault's cached key
-svault lock     --all              # lock every vault
+svault lock     --all              # lock every vault and the master session
 svault status                      # show the lock state of all vaults
 svault vaults                      # list all vaults with metadata (storage:name prefix)
 ```
 
+### The master passphrase
+
+Svault has **one master passphrase**, not one per vault. A random 32-byte data
+key encrypts each vault; that key is wrapped under the master in
+`<vault>/keyslot.enc`, and the master key itself is wrapped under your passphrase
+in `.svault/master.enc`. So **unlock once and every vault opens**. `master rekey`
+rewrites only the small master slot — no vault ciphertext is touched. This is the
+keyslot model (LUKS / 1Password style): additional unlock methods — a YubiKey
+touch, the recovery code — are just more slots over the same key.
+
 `create` walks you through naming the vault, choosing a [storage backend](storage-backends.md),
-and setting a passphrase; `--force` skips the passphrase strength floor for
-scripted use. On success it prints a one-time recovery code (see [Recovery](recovery.md)).
+and (on first run) setting the master passphrase — it no longer asks for a
+per-vault passphrase. `--force` skips the passphrase strength floor for scripted
+use. On success it prints a one-time recovery code (see [Recovery](recovery.md)).
 
 ## Secrets
 
@@ -119,7 +133,7 @@ file. An empty value clears the judge's key so it falls back to
 See [Recovery](recovery.md) for how the recovery key and bundle work.
 
 ```bash
-svault recover [VAULT] [--force]         # use the recovery code to reset a lost passphrase
+svault recover [VAULT] [--force]         # use the recovery code to re-attach the vault to your master
 svault export  [VAULT] [--out FILE]      # write a portable encrypted bundle (default: <name>.svault-export.json)
 svault import  <FILE> [--name NEW]       # restore a vault (auto-suffixes / --name on collision)
 ```
@@ -159,7 +173,8 @@ You're in `~/code/billing-api` and want a vault for its API keys.
 ```bash
 $ cd ~/code/billing-api
 $ svault create
-  # name defaults to the directory (billing-api); pick a strong passphrase.
+  # name defaults to the directory (billing-api). On first run you set the
+  # master passphrase (one secret for every vault); later vaults reuse it.
   # On success svault prints a one-time RECOVERY CODE — save it now.
 
 $ svault secret add STRIPE_SECRET_KEY --scope payments --tier high \
@@ -179,7 +194,7 @@ postgres://app:s3cr3t@db.internal:5432/billing
 
 ## 2. Unlock once, use all session
 
-`unlock` caches the vault's derived key (not the passphrase) so you aren't re-prompted on every read.
+`unlock` prompts the master passphrase, unwraps each vault's data key, and caches it (not the passphrase) so you aren't re-prompted on every read. With no vault argument it opens every vault at once.
 
 ```bash
 $ svault unlock billing-api
