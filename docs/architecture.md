@@ -8,27 +8,41 @@ flowchart TD
     D --> POL["Policy checks<br/>reason → capability → rate limit<br/>burst detection"]
     POL --> TIER{"Sensitivity tier"}
     TIER -->|low| OUT
-    TIER -->|medium / high| JUDGE["AI judge (OpenRouter)<br/>scores the reason"]
+    TIER -->|medium / high| JUDGE["AI judge (OpenRouter)<br/>the vault's assigned judge,<br/>from the encrypted keyring"]
     JUDGE --> OUT["audit (peer UID) → return value"]
     OUT --> ENC["(.svault/&lt;vault&gt;/vault.enc<br/>AES-256-GCM encrypted, safe to commit)"]
 ```
 
-Since 0.9.0 this pipeline runs **inside the daemon** (the CLI re-runs it locally
-when no daemon is up) — the enforced choke point, not advisory. The `reason` field
-is required by the [policy engine](policy-engine.md); for medium/high-tier secrets
-the [AI judge](security.md#ai-judge) scores it. An AI that can't plausibly explain
-why it needs a secret is refused. Since 0.9.2 the whole policy surface — secret
-classification (scope/tier), caller rules, access fallback, and judge overrides —
+This pipeline runs **inside the daemon** — the enforced choke point, not advisory —
+and the CLI re-runs it locally when no daemon is up. The `reason` field is required
+by the [policy engine](policy-engine.md); for medium- and high-tier secrets the
+[AI judge](security.md#ai-judge) scores it. An AI that can't plausibly explain why
+it needs a secret is refused. The whole policy surface — secret classification
+(scope/tier), caller rules, access fallback, and the vault's judge assignment —
 lives AES-256-GCM **encrypted inside `vault.enc`**, not in the plaintext
 `meta.yaml`, so a same-UID agent can't read it at rest to plan a passing request.
+
+There is no plaintext config file. All **global** config — the registry of **named
+judges** (each with its own model, thresholds, free-text criteria, and API key)
+plus operational knobs (lock timers, daemon max-connections, backend) — lives
+AES-256-GCM **encrypted in `.svault/keyring.enc`** under its own passphrase,
+unlocked once per session. A vault is assigned a judge by name (encrypted in its
+policy) and falls back to the keyring's default judge; the judge acts only when the
+keyring is unlocked, so until then the static tier rules apply (high = human-only).
 
 ## On-disk layout
 
 ```
 .svault/
+  keyring.enc        ← AES-256-GCM encrypted global config: the named-judge
+                       registry (model/thresholds/criteria/API key each) +
+                       operational knobs                  (safe to commit, owner-only)
+  .keyring.session   ← keyring derived-key cache while unlocked (gitignored, mode 0600)
+  usage.log          ← global judge changes, folded into vault timelines (gitignored, 0600)
   my-project/
     vault.enc     ← AES-256-GCM encrypted secrets + the
-                    full policy surface                   (safe to commit)
+                    full policy surface (incl. judge
+                    assignment)                           (safe to commit)
     meta.yaml     ← name, storage backend, description,
                     settings (no policy)                  (safe to commit, HMAC-signed)
     recovery.enc  ← vault key wrapped under the recovery
@@ -40,7 +54,8 @@ lives AES-256-GCM **encrypted inside `vault.enc`**, not in the plaintext
 ```
 
 - **`vault.enc`**, **`meta.yaml`**, and **`recovery.enc`** are safe to commit — useless without the passphrase or recovery code. See [Recovery](recovery.md).
-- **`.session`**, **`audit.log`**, and **`usage.log`** are always gitignored and created with mode `0600` (owner read/write only). The per-vault `.gitignore` is self-healing — recording the first usage event adds any missing log lines, so vaults created before usage logging are covered too.
+- **`keyring.enc`** is the single encrypted-at-rest store for global config (judges, their API keys, and operational knobs), unlocked under its own passphrase. Like a vault, it's useless without that passphrase; the per-judge keys and criteria are unreadable at rest.
+- **`.session`**, **`.keyring.session`**, **`audit.log`**, and **`usage.log`** are always gitignored and created with mode `0600` (owner read/write only). The per-vault `.gitignore` is self-healing — recording the first usage event adds any missing log lines, so vaults created before usage logging are covered too.
 - **`usage.log`** is the activity stream behind the TUI `v` view: who did what, when, and through which surface (the `source`: `cli` / `tui` / `gui` / `mcp`) — human vs agent via the actor, never any secret value. Actor + source distinguish e.g. a human at the CLI from an agent via MCP. `audit.log` carries the same `source` field. See [Interactive mode](tui.md#activity-timeline).
 
 ## Authentication options

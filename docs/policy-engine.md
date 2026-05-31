@@ -3,9 +3,9 @@
 This is what makes Svault *AI-aware*. There are two paths to a secret:
 
 - **`svault secret get`** — the **human path**. Passphrase, no questions asked (audited).
-- **`svault get`** — the **agent path**. A structured request an AI must justify, run through a pipeline — and, since 0.9.0, **enforced inside the daemon** so it can't be bypassed by talking to the socket directly.
+- **`svault get`** — the **agent path**. A structured request an AI must justify, run through a pipeline and **enforced inside the daemon** so it can't be bypassed by talking to the socket directly.
 
-## Enforced, not advisory (0.9.0)
+## Enforced, not advisory
 
 The agent path is evaluated **where the key lives** — the daemon. `svault get`
 sends a structured `GetGated` request; the daemon evaluates policy, consults the
@@ -21,7 +21,7 @@ Every decision is audited and stamped with the connecting process's **peer UID**
 > is **not** a sandbox against a hostile *same-UID* process, which can read the
 > daemon's memory directly — that boundary is documented in [security.md](security.md).
 
-## Step-by-step: set up & change policy and the judge
+## Step-by-step: set up and change policy and the judge
 
 A full setup is four moves. Each is independent — do only what you need, and
 re-run any step later to change things.
@@ -79,22 +79,32 @@ vault's `allow_agent` / `rate_limit`.
 
 ### 3. Turn on the AI judge (optional, for medium/high)
 
-The judge is **off until a key is present**. Store an OpenRouter key, enable it,
-and verify — no secret is touched:
+There is no plaintext config and no key file. Judges live in the AES-256-GCM
+**encrypted keyring** (`.svault/keyring.enc`) under its own passphrase. You can
+define **multiple named judges**, each with its own model, thresholds, free-text
+**criteria**, and API key. Create the keyring, add a judge, enable the judge
+globally, then unlock — no secret is touched:
 
 ```bash
-svault judge set-key        # paste the key (hidden), or: echo "$KEY" | svault judge set-key
-svault judge status         # confirm: key present + model/thresholds
+svault keyring init          # set the keyring passphrase (one-time)
+svault judge add strict      # prompts: model, thresholds, criteria, then the key (hidden)
+svault judge enable          # flip the global on/off switch (on)
+svault keyring unlock        # caches a 0600 session key so the judge is live this session
+svault judge status          # keyring + global switch + judge registry
 # Dry-run — pass a realistic --vault and the descriptions to see how they sway it:
-svault judge test --reason "run the nightly db migration" --scope database --tier high \
+svault judge test --judge strict \
+  --reason "run the nightly db migration" --scope database --tier high \
   --vault billing-api --vault-description "production billing service" \
   --description "production Postgres connection string"
 ```
 
-Enable it for the machine in `.svault/config.yaml` (`judge.enabled: true`) or per
-vault at `svault create` (and in TUI settings). **Change** the model/thresholds by
-editing `[judge]` in that file; **rotate or remove** the key with `svault judge
-set-key` again or `svault judge remove-key`.
+The first judge added becomes the keyring's **default**. A vault opts in to the
+judge via its per-vault toggle at `svault create` (and in TUI settings); it uses the
+keyring's default judge unless assigned a specific one. **Change** a judge's
+model/thresholds/criteria with `svault judge edit <name>`; **rotate or clear** its
+key with `svault judge set-key <name>` (a cleared key falls back to the opt-in
+`$SVAULT_OPENROUTER_KEY`). Until the keyring is unlocked the judge is off and the
+static tier rules apply.
 
 ### 4. Make a request as the agent
 
@@ -134,8 +144,9 @@ flowchart TD
 ```
 
 On **allow**, the value is printed to stdout (status goes to stderr, so an agent
-capturing stdout gets only the value). On **deny**, it exits non-zero with a
-generic message; the detailed reason is logged for the human, not returned.
+capturing stdout gets only the value). On **deny**, `svault get` exits non-zero with
+the generic message `denied: request not authorized for this secret`; the detailed
+reason is logged for the human, not returned.
 
 ## Sensitivity tiers
 
@@ -148,8 +159,9 @@ the AI judge **enabled**:
 | `medium` | **Judge-gated.** Allowed if the judge scores >= the allow threshold. If the judge is unavailable: **fail-open**, audit-flagged `judge-unavailable` |
 | `high` | **Judge-gated**, stricter threshold. If the judge is unavailable: **fail-closed** (deny) |
 
-With the judge **disabled** (no key / `enabled = false`), it falls back to the
-pre-0.9.0 rule: low/medium allowed (medium flagged), **high = human-only**.
+With the judge **disabled** (keyring locked, global switch off, no resolved key, or
+the vault's per-vault `judge.enabled = false`), behaviour falls back to the static
+tier rules: low and medium allowed (medium flagged), **high = human-only**.
 
 ## Per-secret classification (encrypted)
 
@@ -193,15 +205,21 @@ storage.)
 
 ## The AI judge
 
-See [security.md](security.md#ai-judge) for setup. In short: store an OpenRouter
-key with `svault judge set-key` (or set `$SVAULT_OPENROUTER_KEY`), enable the
-judge in `.svault/config.yaml` (or per vault at create time), and the daemon will
-score the `reason` on every medium/high request. Verify your setup without
-touching a secret:
+See [security.md](security.md#ai-judge) for setup. In short: judges live in the
+AES-256-GCM-encrypted keyring (`.svault/keyring.enc`). Create it (`svault keyring
+init`), add one or more **named judges** (`svault judge add <name>` — each carries
+its own model, thresholds, free-text criteria, and API key), turn the judge on
+globally (`svault judge enable`), and unlock the keyring (`svault keyring unlock`).
+Each vault opts in via its per-vault toggle and uses the keyring's **default**
+judge unless assigned a specific one. The daemon then scores the `reason` on every
+medium/high request from the unlocked keyring. Verify a judge without touching a
+secret:
 
 ```bash
-svault judge set-key                                                              # store the key 0600
-svault judge test --reason "run the nightly database migration" --scope database --tier high
+svault keyring init                                                               # one-time
+svault judge add strict                                                           # model + criteria + key (encrypted)
+svault judge enable && svault keyring unlock
+svault judge test --judge strict --reason "run the nightly database migration" --scope database --tier high
 ```
 
 ## Helper commands

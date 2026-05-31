@@ -31,7 +31,7 @@ cp target/release/svault /usr/local/bin/   # Linux / macOS
 A one-line installer is planned:
 
 ```bash
-curl -fsSL https://svault.soluzy.net/install.sh | bash
+curl -fsSL https://svault.soluzy.app/install.sh | sh
 ```
 
 ## Requirements
@@ -41,11 +41,11 @@ curl -fsSL https://svault.soluzy.net/install.sh | bash
 
 ## Supported platforms
 
-CI builds and tests on every push and pull request across:
+Svault's full test suite runs in CI on every push and pull request across all four supported platforms:
 
-| Platform | Status |
+| Platform | Notes |
 |---|---|
-| Ubuntu  | Tested in CI |
-| Fedora  | Tested in CI |
-| macOS   | Tested in CI |
-| Windows | Tested in CI |
+| Ubuntu  | Full daemon support |
+| Fedora  | Full daemon support |
+| macOS   | Full daemon support |
+| Windows | All commands except the Unix-only [daemon](daemon.md) |

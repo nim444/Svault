@@ -1,15 +1,24 @@
 # Command reference
 
+Every command operates on the vaults under `.svault/`. Where a command takes a
+vault, see [Vault selection](#vault-selection) for how it's resolved.
+
+## Vault lifecycle
+
 ```bash
 svault                             # launch the interactive TUI (no subcommand)
-svault create                      # create encrypted vault (name, description, agents, rate limit, auto-lock)
+svault create [--force]            # create an encrypted vault (name, description, agents, rate limit, auto-lock)
 svault settings [VAULT]            # view or change a vault's settings
-svault unlock   [VAULT]            # unlock vault, cache derived key for the session
-svault lock     [VAULT]            # clear the cached key
+svault unlock   [VAULT]            # unlock a vault and cache its derived key for the session
+svault lock     [VAULT]            # clear a vault's cached key
 svault lock     --all              # lock every vault
-svault status                      # show lock state of all vaults
+svault status                      # show the lock state of all vaults
 svault vaults                      # list all vaults with metadata (storage:name prefix)
 ```
+
+`create` walks you through naming the vault, choosing a [storage backend](storage-backends.md),
+and setting a passphrase; `--force` skips the passphrase strength floor for
+scripted use. On success it prints a one-time recovery code (see [Recovery](recovery.md)).
 
 ## Secrets
 
@@ -20,14 +29,13 @@ svault secret list          [-v VAULT]   # list secret names (never values)
 svault secret remove <NAME> [-v VAULT]   # delete a secret
 ```
 
-`secret add` also **classifies** the secret (scope + sensitivity tier +
-`--description`) into the vault's AES-256-GCM **encrypted** policy (not the plaintext
-`meta.yaml`); the flags drive non-interactive use,
-otherwise you're prompted (defaulting to the vault's `default_tier`).
+`secret add` **classifies** the secret as it stores it: the scope, sensitivity
+tier, and `--description` are written into the vault's AES-256-GCM **encrypted**
+policy (never the plaintext `meta.yaml`). The flags drive non-interactive use;
+omit them and you're prompted, defaulting to the vault's `default_tier`.
 `--require-reason` makes the AI judge run for that secret even at low tier, and
-`--description` records what the secret is for so the judge can check the stated
-reason against it. (Every secret/get/settings command takes `-v <vault>` since you
-can have several — local today, remote planned.)
+`--description` records what the secret is for, so the judge can weigh each
+request's stated reason against it.
 
 ## Policy engine — the agent path
 
@@ -44,41 +52,74 @@ svault policy init                 # seed caller rules into the vault's encrypte
 svault policy check <caller>       # what a caller can access + recent activity (unlocks the vault)
 ```
 
-## AI judge (OpenRouter)
+## The keyring
 
-For medium/high-tier secrets the daemon scores the caller's reason with an LLM.
-Configure `[judge]` in `.svault/config.yaml`; the key comes from
-`$SVAULT_OPENROUTER_KEY` or a `0600` key file (never committable config).
+All global config — the judge registry, each judge's API key, and operational
+knobs (lock timers, daemon `max_connections`, backend) — lives in a single
+**AES-256-GCM-encrypted keyring** at `.svault/keyring.enc`, under its own
+passphrase (Argon2id). There is **no plaintext `.svault/config.yaml`** and **no
+`~/.config/svault/openrouter.key`** — both are gone. Unlock the keyring once per
+session (a `0600` session caches its derived key, like a vault); until it's
+unlocked the judge is off and the static tier rules apply.
 
 ```bash
-svault judge set-key      # prompt for the key, store it 0600 (or: echo $KEY | svault judge set-key)
-svault judge enable       # turn the judge on globally (writes .svault/config.yaml); `disable` to turn off
-svault judge status       # show where the key resolves from + model config (never prints the key)
-svault judge test --reason "run the nightly migration" --scope database --tier high \
-  --vault billing-api --vault-description "production billing service" \
-  --description "production Postgres connection string"   # --vault/--description optional
-svault judge remove-key   # delete the stored key file
+svault keyring init       # create the encrypted keyring (prompts for a passphrase) and unlock it
+svault keyring unlock     # cache the keyring's derived key for this session
+svault keyring lock       # clear the session — the judge goes back to off
+svault keyring rekey      # change the keyring passphrase
+svault keyring status     # show locked/unlocked, global on/off, default judge, and the judge names
 ```
 
-The judge acts only when it's **enabled globally** (`svault judge enable`, or the
-TUI `J` screen) **and** a key is configured; a per-vault `meta.judge.enabled =
-false` can still opt one vault out. All of this — key, enable, model, thresholds,
-and a live test — is also drivable from the TUI (`J` on the vault list).
+The daemon reads the operational knobs (lock/connection/backend) from the keyring
+at start — built-in defaults until unlocked — and changes to those apply at the
+next daemon start. The judge itself activates as soon as the keyring is unlocked.
 
-`judge test` builds a sample request and asks the live model — nothing is read or
-written. Pass a realistic `--vault` name: the model sees it, so a default like
-`test` can make it (correctly) distrust a "production" reason. `--description`
-(secret purpose) and `--vault-description` let you preview how those sway the verdict.
+## AI judge (OpenRouter)
 
-`set-key` writes `~/.config/svault/openrouter.key` (mode `0600`). If
-`$SVAULT_OPENROUTER_KEY` is set it takes precedence over the file.
+The judge is a registry of **multiple named judges** inside the keyring. Each has
+its own model, base URL, timeout, `allow_threshold`/`high_threshold`, free-text
+**criteria** (injected into that judge's prompt), and API key (encrypted in the
+keyring; an empty key falls back to the opt-in `$SVAULT_OPENROUTER_KEY` env var,
+never a file). A vault is **assigned** a judge by name (stored encrypted in the
+vault policy); if unassigned it uses the keyring's default judge.
+
+```bash
+svault judge add <name>          # create a judge (prompts for model, thresholds, criteria, key)
+svault judge edit <name>         # change a judge's model/url/timeout/thresholds/criteria
+svault judge remove <name>       # delete a judge
+svault judge list                # show all judges, the default (*), and per-judge key status
+svault judge set-default <name>  # pick the judge used by vaults with no explicit assignment
+svault judge set-key <name>      # set/clear one judge's key (or: echo $KEY | svault judge set-key <name>)
+svault judge enable              # turn the judge on globally; `disable` to turn it off
+svault judge status              # same as `svault keyring status`
+svault judge test [--judge <name>] --reason "run the nightly migration" --scope database --tier high \
+  --vault billing-api --vault-description "production billing service" \
+  --description "production Postgres connection string"   # --judge/--vault/--description optional
+```
+
+The judge acts only when the keyring is **unlocked**, it's **enabled globally**
+(`svault judge enable`, or the TUI `shift-J` screen), **and** the resolved judge
+has a key; a per-vault `judge.enabled = false` can still opt one vault out. From
+the TUI (`shift-J` on the vault list) you can create or unlock the keyring, toggle
+the global switch, add/edit/view judges, set the default, set/clear a judge's key,
+test, and remove a judge — the full lifecycle, equivalent to these commands.
+
+`judge test` builds a sample request and asks the live model (the default judge,
+or `--judge <name>`) — nothing is read or written. Pass a realistic `--vault`
+name: the model sees it, so a default like `test` can make it (correctly)
+distrust a "production" reason. `--description` (secret purpose) and
+`--vault-description` let you preview how those sway the verdict.
+
+`set-key <name>` stores the key **encrypted in the keyring**, never in a plaintext
+file. An empty value clears the judge's key so it falls back to
+`$SVAULT_OPENROUTER_KEY`, which takes effect only when a judge has no stored key.
 
 ## Recovery & portability
 
 See [Recovery](recovery.md) for how the recovery key and bundle work.
 
 ```bash
-svault recover [VAULT]                   # use the recovery code to reset a lost passphrase
+svault recover [VAULT] [--force]         # use the recovery code to reset a lost passphrase
 svault export  [VAULT] [--out FILE]      # write a portable encrypted bundle (default: <name>.svault-export.json)
 svault import  <FILE> [--name NEW]       # restore a vault (auto-suffixes / --name on collision)
 ```
@@ -98,7 +139,7 @@ svault daemon run                  # foreground server (debugging)
 ## Platform integration (planned)
 
 ```bash
-svault install [--platform claude|cursor|...]   # wire into an AI platform (Step 5)
+svault install [--platform claude|cursor|...]   # wire into an AI platform (not yet implemented)
 ```
 
 ## Vault selection
@@ -169,7 +210,9 @@ $ svault policy init
 $ svault policy check claude
 
 # (optional) turn the AI judge on for this machine:
-$ svault judge set-key                     # store the OpenRouter key; enable [judge] in .svault/config.yaml
+$ svault keyring init                      # create + unlock the encrypted keyring
+$ svault judge add billing                 # define a judge (model, thresholds, criteria, key)
+$ svault judge enable                      # turn the judge on globally
 
 # The agent's request (this is the line an agent runs):
 $ svault get DATABASE_URL \
@@ -180,9 +223,14 @@ $ svault get DATABASE_URL \
 ```
 
 A request is denied (and logged) if the caller lacks the scope, the scope doesn't
-match the secret, the rate limit is exceeded, the reason is missing/implausible,
-or the judge scores it below the tier threshold. High-tier secrets are
-judge-gated (fail-closed) — or human-only when the judge is off.
+match the secret, the rate limit is exceeded, the reason is missing or
+implausible, or the judge scores it below the tier threshold. High-tier secrets
+are judge-gated (fail-closed) — or human-only when the judge is off. The caller
+sees only a generic message; the real reason lives in the audit log:
+
+```
+denied: request not authorized for this secret
+```
 
 ## 4. Move a vault to another machine
 
@@ -235,7 +283,7 @@ ok: Vault 'billing-api' unlocked
   Key held by the daemon (in memory, no file written). Run 'svault lock' to clear it.
 
 # Reads are now served from memory — no prompt, no .session file:
-$ svault secret get STRIPE_KEY -v billing-api
+$ svault secret get STRIPE_SECRET_KEY -v billing-api
 sk_live_...
 
 $ svault daemon status

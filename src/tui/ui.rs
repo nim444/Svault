@@ -11,8 +11,8 @@ use ratatui::{
 
 use super::theme;
 use super::{
-    tier_label, App, ClassifyForm, CreateForm, JudgeField, JudgeForm, MsgKind, Screen,
-    SecretAddForm, SecretScreen, SettingsForm, UnlockForm,
+    tier_label, App, ClassifyForm, CreateForm, InitForm, JudgeEditForm, JudgeEntry, JudgeForm,
+    MsgKind, Screen, SecretAddForm, SecretScreen, SettingsForm, UnlockForm,
 };
 
 const CYAN: Color = theme::ACCENT;
@@ -191,12 +191,20 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 "↑/↓ field   enter save   esc cancel",
             ),
             Screen::Judge(form) => {
-                if form.key_entry.is_some() {
-                    ("type/paste key   enter store   esc cancel", "enter store   esc cancel")
+                if form.entry.is_some() {
+                    (
+                        "type/paste   tab move   enter confirm   esc cancel",
+                        "enter confirm   esc cancel",
+                    )
+                } else if !form.unlocked {
+                    (
+                        "enter unlock / create the keyring   esc back",
+                        "enter unlock   esc back",
+                    )
                 } else {
                     (
-                        "↑/↓ field   space toggle   enter edit/run/save   del remove key   esc back",
-                        "↑/↓ field   enter act   esc back",
+                        "↑/↓ move   space toggle   a add   e edit   v view   k key   d default   t test   x remove   esc back",
+                        "↑/↓ move   a add   e edit   esc back",
                     )
                 }
             }
@@ -248,9 +256,11 @@ fn draw_help(frame: &mut Frame, area: Rect, screen: &Screen) {
         ],
         Screen::Judge(_) => &[
             ("↑/↓", "move between rows"),
-            ("space / ←→", "toggle the judge on/off"),
-            ("enter", "edit field · set key · run test · save"),
-            ("del", "remove the stored OpenRouter key"),
+            ("enter", "unlock / create the keyring · view a judge"),
+            ("space / ←→", "toggle the judge on/off (global)"),
+            ("a / e", "add a judge · edit the selected judge"),
+            ("v / k", "view detail · set the selected judge's API key"),
+            ("d / t / x", "set default · test · remove judge"),
             ("esc", "back to vault list"),
         ],
         // Default to the list bindings — the main hub.
@@ -685,34 +695,89 @@ fn draw_classify(frame: &mut Frame, area: Rect, form: &ClassifyForm) {
 }
 
 fn draw_judge(frame: &mut Frame, area: Rect, form: &JudgeForm) {
-    // Action rows render their effect as the "value" so the screen reads as a
-    // single list (config fields then actions).
-    let fields = [
-        ("Enabled (global)", yes_no(form.enabled).to_string()),
-        ("Model", form.model.clone()),
-        ("Allow threshold", form.allow_threshold.clone()),
-        ("High threshold", form.high_threshold.clone()),
-        ("Timeout (s)", form.timeout.clone()),
-        ("OpenRouter key", form.key_status.clone()),
-        (
-            "Test judge",
-            "press enter to dry-run a sample request".to_string(),
-        ),
-        (
-            "Save config",
-            "press enter to write .svault/config.yaml".to_string(),
-        ),
-    ];
-    let focus = JudgeField::ORDER
-        .iter()
-        .position(|f| *f == form.current())
-        .unwrap_or(0);
-    let mut lines = field_lines(&fields, focus, form.focus_is_text());
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "  The key is stored 0600 at ~/.config/svault/openrouter.key — never in config.",
-        Style::default().fg(DIM),
-    )));
+    let mut lines: Vec<Line> = Vec::new();
+    if !form.created {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  No keyring yet.",
+            Style::default().fg(theme::WARN),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  Press enter to create it (its own passphrase encrypts your judges + keys).",
+            Style::default().fg(DIM),
+        )));
+    } else if !form.unlocked {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Keyring is locked.",
+            Style::default().fg(theme::WARN),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  Press enter to unlock and manage judges.",
+            Style::default().fg(DIM),
+        )));
+    } else {
+        let sel = |i: usize| if form.focus == i { ">" } else { " " };
+        lines.push(Line::from(vec![
+            Span::raw(format!(" {} ", sel(0))),
+            Span::styled("AI judge (global)   ", Style::default().fg(theme::ACCENT)),
+            Span::styled(
+                yes_no(form.enabled).to_string(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "      default judge: {}",
+                form.default_judge.as_deref().unwrap_or("(none)")
+            ),
+            Style::default().fg(DIM),
+        )));
+        lines.push(Line::from(""));
+        if form.judges.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  No judges yet — press a to add one.",
+                Style::default().fg(DIM),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "    {:<16} {:<24} {:>6} {:>5}  KEY",
+                    "NAME", "MODEL", "ALLOW", "HIGH"
+                ),
+                Style::default().fg(DIM),
+            )));
+            for (i, j) in form.judges.iter().enumerate() {
+                let focused = form.focus == i + 1;
+                let mark = if focused { ">" } else { " " };
+                let def = if form.default_judge.as_deref() == Some(j.name.as_str()) {
+                    "*"
+                } else {
+                    " "
+                };
+                let key = if j.has_key { "set" } else { "env/none" };
+                let style = if focused {
+                    Style::default()
+                        .fg(theme::ACCENT)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        " {}{}{:<15} {:<24} {:>6} {:>5}  {}",
+                        mark, def, j.name, j.model, j.allow, j.high, key
+                    ),
+                    style,
+                )));
+            }
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  space on/off   a add   e edit   v view   k key   d default   t test   x remove",
+            Style::default().fg(DIM),
+        )));
+    }
     if let Some((kind, msg)) = &form.test_result {
         let color = match kind {
             MsgKind::Ok => theme::OK,
@@ -744,39 +809,235 @@ fn draw_judge(frame: &mut Frame, area: Rect, form: &JudgeForm) {
         area,
     );
 
-    // Key-entry modal (masked) sits on top when active.
-    if let Some(buf) = &form.key_entry {
-        let lines = vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                "  Paste your OpenRouter API key (sk-or-...)",
-                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("  > "),
-                Span::styled(mask(buf), Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                "  enter  store 0600    esc  cancel",
-                Style::default().fg(DIM),
-            )),
-        ];
-        let popup = centered_rect(64, 40, area);
-        frame.render_widget(Clear, popup);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Set OpenRouter key ")
-            .border_style(Style::default().fg(CYAN));
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(block)
-                .wrap(Wrap { trim: false }),
-            popup,
-        );
+    // Sub-mode overlay on top.
+    match &form.entry {
+        Some(JudgeEntry::Passphrase(b)) => {
+            draw_masked_popup(frame, area, " Unlock keyring ", "  Keyring passphrase", b)
+        }
+        Some(JudgeEntry::Key { judge, buf }) => draw_masked_popup(
+            frame,
+            area,
+            " Set judge key ",
+            &format!("  OpenRouter key for '{judge}' (sk-or-…, blank clears)"),
+            buf,
+        ),
+        Some(JudgeEntry::Init(init)) => draw_judge_init(frame, area, init),
+        Some(JudgeEntry::Edit(ed)) => draw_judge_edit(frame, area, ed),
+        Some(JudgeEntry::View(name)) => draw_judge_view(frame, area, form, name),
+        None => {}
     }
+}
+
+/// A single masked-input popup (unlock passphrase, judge API key).
+fn draw_masked_popup(frame: &mut Frame, area: Rect, title: &str, label: &str, buf: &str) {
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            label.to_string(),
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  > "),
+            Span::styled(mask(buf), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  enter  confirm    esc  cancel",
+            Style::default().fg(DIM),
+        )),
+    ];
+    let popup = centered_rect(64, 40, area);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title.to_string())
+        .border_style(Style::default().fg(CYAN));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+/// One labelled, focusable input row used by the judge add/edit and init popups.
+fn entry_row(label: &str, value: String, focused: bool, masked: bool) -> Line<'static> {
+    let cursor = if focused { ">" } else { " " };
+    let shown = if masked { mask(&value) } else { value };
+    let label_style = if focused {
+        Style::default()
+            .fg(theme::ACCENT)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(DIM)
+    };
+    let mut spans = vec![
+        Span::raw(format!("  {cursor} ")),
+        Span::styled(format!("{label:<11}"), label_style),
+        Span::styled(shown, Style::default().add_modifier(Modifier::BOLD)),
+    ];
+    if focused {
+        spans.push(Span::styled(
+            " ",
+            Style::default().add_modifier(Modifier::REVERSED),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// Create-a-keyring popup: passphrase + confirm.
+fn draw_judge_init(frame: &mut Frame, area: Rect, init: &InitForm) {
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Its own passphrase encrypts every judge and API key.",
+            Style::default().fg(DIM),
+        )),
+        Line::from(""),
+        entry_row("Passphrase", init.pass.clone(), init.focus == 0, true),
+        entry_row("Confirm", init.confirm.clone(), init.focus == 1, true),
+        Line::from(""),
+    ];
+    if let Some(err) = &init.error {
+        lines.push(Line::from(Span::styled(
+            format!("  {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    lines.push(Line::from(Span::styled(
+        "  tab switch    enter create    esc cancel",
+        Style::default().fg(DIM),
+    )));
+    let popup = centered_rect(66, 46, area);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Create keyring ")
+        .border_style(Style::default().fg(CYAN));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+/// Add/edit-a-judge popup: name, model, url, timeout, thresholds, criteria.
+fn draw_judge_edit(frame: &mut Frame, area: Rect, ed: &JudgeEditForm) {
+    let title = if ed.original.is_some() {
+        " Edit judge "
+    } else {
+        " Add judge "
+    };
+    let mut lines = vec![
+        Line::from(""),
+        entry_row("Name", ed.name.clone(), ed.focus == 0, false),
+        entry_row("Model", ed.model.clone(), ed.focus == 1, false),
+        entry_row("Base URL", ed.base_url.clone(), ed.focus == 2, false),
+        entry_row("Timeout s", ed.timeout.clone(), ed.focus == 3, false),
+        entry_row("Allow ≥", ed.allow.clone(), ed.focus == 4, false),
+        entry_row("High ≥", ed.high.clone(), ed.focus == 5, false),
+        entry_row("Criteria", ed.criteria.clone(), ed.focus == 6, false),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Criteria: extra rules added to this judge's prompt (optional).",
+            Style::default().fg(DIM),
+        )),
+        Line::from(Span::styled(
+            "  Set the API key with k after saving.",
+            Style::default().fg(DIM),
+        )),
+        Line::from(""),
+    ];
+    if let Some(err) = &ed.error {
+        lines.push(Line::from(Span::styled(
+            format!("  {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    lines.push(Line::from(Span::styled(
+        "  tab/↑↓ move    enter save    esc cancel",
+        Style::default().fg(DIM),
+    )));
+    let popup = centered_rect(72, 70, area);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(CYAN));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
+}
+
+/// Read-only detail of one judge (includes its criteria).
+fn draw_judge_view(frame: &mut Frame, area: Rect, form: &JudgeForm, name: &str) {
+    let row = form.judges.iter().find(|j| j.name == name);
+    let mut lines = vec![Line::from("")];
+    if let Some(j) = row {
+        let field = |k: &str, v: String| {
+            Line::from(vec![
+                Span::styled(format!("  {k:<11}"), Style::default().fg(DIM)),
+                Span::styled(v, Style::default().add_modifier(Modifier::BOLD)),
+            ])
+        };
+        let is_default = form.default_judge.as_deref() == Some(j.name.as_str());
+        lines.push(field("name", j.name.clone()));
+        lines.push(field(
+            "default",
+            if is_default { "yes" } else { "no" }.to_string(),
+        ));
+        lines.push(field("model", j.model.clone()));
+        lines.push(field("base url", j.base_url.clone()));
+        lines.push(field("timeout", format!("{}s", j.timeout_secs)));
+        lines.push(field("allow ≥", j.allow.to_string()));
+        lines.push(field("high ≥", j.high.to_string()));
+        lines.push(field(
+            "api key",
+            if j.has_key { "set" } else { "env / none" }.to_string(),
+        ));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  criteria",
+            Style::default().fg(DIM),
+        )));
+        let criteria = if j.criteria.trim().is_empty() {
+            "(none)".to_string()
+        } else {
+            j.criteria.clone()
+        };
+        lines.push(Line::from(Span::styled(
+            format!("  {criteria}"),
+            Style::default(),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!("  no judge named '{name}'"),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  e edit    any other key to close",
+        Style::default().fg(DIM),
+    )));
+    let popup = centered_rect(72, 70, area);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Judge: {name} "))
+        .border_style(Style::default().fg(CYAN));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
 }
 
 fn draw_recovery_code(frame: &mut Frame, area: Rect, code: &str) {

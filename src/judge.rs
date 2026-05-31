@@ -16,7 +16,7 @@
 use anyhow::{anyhow, Result};
 use std::time::Duration;
 
-use crate::config::JudgeConfig;
+use crate::keyring::JudgeDef;
 use crate::policy::Tier;
 
 /// What the judge said about one request.
@@ -113,36 +113,52 @@ impl JudgeTransport for OpenRouterTransport {
     }
 }
 
-/// A ready-to-use judge: a transport plus the resolved thresholds and the
-/// global default model. Built once at daemon start (and per-call in the CLI
-/// fallback). Per-vault model overrides are applied by the caller.
+/// A ready-to-use judge: a transport plus the resolved thresholds, model, and
+/// this judge's free-text criteria. Built per named judge from its [`JudgeDef`]
+/// when a request needs it.
 pub struct JudgeRuntime {
     pub model: String,
     pub allow_threshold: u8,
     pub high_threshold: u8,
+    /// Extra rules added to the system prompt for this judge (may be empty).
+    pub criteria: String,
     pub transport: Box<dyn JudgeTransport>,
 }
 
 impl JudgeRuntime {
-    /// Build a runtime from config, resolving the API key. Returns `None` when
-    /// the judge is disabled or no key is available (caller then runs the static
-    /// tier rules).
-    pub fn from_config(cfg: &JudgeConfig) -> Option<Self> {
-        if !cfg.enabled {
-            return None;
-        }
-        let key = crate::config::openrouter_key(cfg)?;
+    /// Build a runtime from one named judge's definition, resolving its API key:
+    /// the judge's stored key if set, else `$SVAULT_OPENROUTER_KEY`. Returns
+    /// `None` when no key is available (caller then runs the static tier rules).
+    pub fn from_def(def: &JudgeDef) -> Option<Self> {
+        let key = resolve_key(def)?;
         let transport = OpenRouterTransport::new(
             key,
-            cfg.base_url.clone(),
-            Duration::from_secs(cfg.timeout_secs),
+            def.base_url.clone(),
+            Duration::from_secs(def.timeout_secs),
         );
         Some(Self {
-            model: cfg.model.clone(),
-            allow_threshold: cfg.allow_threshold,
-            high_threshold: cfg.high_threshold,
+            model: def.model.clone(),
+            allow_threshold: def.allow_threshold,
+            high_threshold: def.high_threshold,
+            criteria: def.criteria.clone(),
             transport: Box::new(transport),
         })
+    }
+}
+
+/// Resolve a judge's API key: its own stored key wins; otherwise an explicit,
+/// opt-in `$SVAULT_OPENROUTER_KEY` (env, never a plaintext file).
+fn resolve_key(def: &JudgeDef) -> Option<zeroize::Zeroizing<String>> {
+    let stored = def.api_key.trim();
+    if !stored.is_empty() {
+        return Some(zeroize::Zeroizing::new(stored.to_string()));
+    }
+    let env = std::env::var("SVAULT_OPENROUTER_KEY").ok()?;
+    let env = env.trim();
+    if env.is_empty() {
+        None
+    } else {
+        Some(zeroize::Zeroizing::new(env.to_string()))
     }
 }
 
@@ -182,12 +198,24 @@ fn user_prompt(ctx: &JudgeContext) -> String {
     s
 }
 
-/// Ask the judge about one request. `model` lets the caller pass a per-vault
-/// override; pass `rt.model.clone()` for the default.
+/// Ask the judge about one request. `model` is the model id to call (normally
+/// `rt.model`). The judge's own `criteria` are appended to the system prompt so
+/// each named judge scores against its own rules.
 pub fn evaluate(rt: &JudgeRuntime, model: &str, ctx: &JudgeContext) -> JudgeVerdict {
-    match rt.transport.chat(model, SYSTEM_PROMPT, &user_prompt(ctx)) {
+    let system = system_prompt(&rt.criteria);
+    match rt.transport.chat(model, &system, &user_prompt(ctx)) {
         Ok(content) => parse_verdict(&content),
         Err(e) => JudgeVerdict::Unavailable { err: e.to_string() },
+    }
+}
+
+/// The base system prompt plus this judge's extra criteria (if any).
+fn system_prompt(criteria: &str) -> String {
+    let criteria = criteria.trim();
+    if criteria.is_empty() {
+        SYSTEM_PROMPT.to_string()
+    } else {
+        format!("{SYSTEM_PROMPT}\n\nAdditional criteria for this judge — weigh these when deciding:\n{criteria}")
     }
 }
 
@@ -243,6 +271,7 @@ mod tests {
             model: "test".into(),
             allow_threshold: 60,
             high_threshold: 80,
+            criteria: String::new(),
             transport: Box::new(FakeTransport(reply)),
         }
     }
@@ -311,6 +340,16 @@ mod tests {
             evaluate(&rt(Err("timeout".into())), "test", &ctx()),
             JudgeVerdict::Unavailable { .. }
         ));
+    }
+
+    #[test]
+    fn criteria_are_appended_to_the_system_prompt() {
+        let bare = system_prompt("");
+        assert_eq!(bare, SYSTEM_PROMPT);
+        let with = system_prompt("  Only billing reasons.  ");
+        assert!(with.starts_with(SYSTEM_PROMPT));
+        assert!(with.contains("Additional criteria for this judge"));
+        assert!(with.contains("Only billing reasons."));
     }
 
     #[test]

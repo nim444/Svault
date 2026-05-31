@@ -1,261 +1,257 @@
 # Svault — Build Plan
 
+Svault is an AI-aware secret manager written in Rust: a single native binary
+(`svault`, crate `svault-ai`) with no runtime dependencies. It encrypts secrets
+at rest, holds unlocked keys in a memory-only daemon, and gates agent access
+through an enforced policy engine and an optional AI judge.
+
+This document is the engineering plan: the current state at **0.9.3** and the
+work remaining to reach a stable **1.0.0**. Shipped versions are detailed in
+[CHANGELOG.md](CHANGELOG.md); the public roadmap lives in
+[docs/roadmap.md](docs/roadmap.md).
+
+> **Version policy.** The project stays on **0.9.x** until everything is built
+> and independently reviewed. **1.0.0 is reserved for the first stable, audited
+> release** — it has not shipped and is the target the current work builds
+> toward, not a date.
+
+## Current state (0.9.3)
+
+The CLI is feature-complete for its 1.0.0 scope. Every layer below is implemented,
+tested, and shipping.
+
+**Encrypted local vaults.** AES-256-GCM secret storage with Argon2id key
+derivation. Secret values are zeroized from memory on drop (`ZeroizeOnDrop` on
+the vault key and secret store). The committable `vault.enc` and the public,
+HMAC-SHA256-signed `meta.yaml` carry no secret values, so tampering is
+detectable and the files are safe to commit.
+
+**Interactive TUI.** Running `svault` with no subcommand launches a full Ratatui
+dashboard — vault list with live lock state, form-based create, lock-aware
+unlock/lock, a settings editor, and a secret browser (add / view / delete) once
+a vault is unlocked. Every operation is also a scriptable subcommand.
+
+**Recovery and portability.** A 160-bit recovery code is generated at create
+time, with the vault key wrapped under it in `recovery.enc`; `svault recover`
+resets a lost passphrase without invalidating the code. `svault export` /
+`import` move a vault between machines as a checksummed (`sha256`), encrypted
+bundle; import refuses to overwrite an existing name.
+
+**Memory-only daemon (Unix).** `svault daemon run|start|stop|status|doctor`
+holds unlocked keys in memory and serves reads over a `0600` Unix socket — no
+`.session` file while it runs. Auto-lock enforces an idle timeout and a hard-max
+cap, zeroizing evicted keys. Each connection is bonded to its peer UID
+(`getpeereid`); a non-owner peer is refused. The passphrase never crosses the
+socket: the client derives and validates the key locally. Windows has no daemon
+and uses the file-session fallback (the CLI is otherwise fully supported and
+tested on Windows in CI).
+
+**Enforced policy engine.** Policy is evaluated *inside* the daemon, which is the
+single choke point — the CLI runs the identical gate locally when no daemon is
+up, so there is no unguarded read path. The agent path (`svault get`) is a
+structured `GetGated` request evaluated through a fixed pipeline:
+
+    reason present → scope/capability check → sensitivity tier → rate limit / burst → AI judge
+
+Each access is audited and stamped with the unforgeable **peer UID**, not the
+self-asserted caller string. Per-secret classification (`scope`, `tier`,
+`require_reason`, `description`) drives the decision; tiers are `low`
+(auto-allow), `medium` (judge-gated, fail-open with an audit flag), and `high`
+(judge-gated, fail-closed). With the judge off, `high` is human-only.
+
+**AI judge (OpenRouter).** For medium/high-tier secrets, the daemon asks a cheap,
+fast LLM whether the caller's stated reason plausibly justifies the request,
+given the secret's scope, tier, and description and the caller's recent activity.
+Synchronous (`ureq`, bundled rustls — no async runtime). Off until a key is
+configured, so upgrading never silently calls an external API.
+
+**Policy and config encrypted at rest (0.9.2 → 0.9.3).** Two releases closed the
+reconnaissance path that signing alone left open — a same-UID agent could *read*
+the tiers, scopes, descriptions, caller rules, and judge thresholds, then craft
+a request designed to pass.
+
+- *0.9.2* moved the entire policy surface — per-secret classification,
+  `allow_agent`/`rate_limit`, the per-vault judge override, the default tier, and
+  caller rules — into an AES-256-GCM-encrypted payload inside `vault.enc`
+  (`VaultPayload v2`). The public `meta.yaml` retains only non-sensitive
+  metadata. Denials to the caller are now generic (`request not authorized for
+  this secret`); the real reason — judge score and rationale, scope/caller
+  mismatch, rate limit — is recorded only in the audit log, so a caller cannot
+  hill-climb toward a passing request.
+- *0.9.3* removed the last two plaintext artifacts: the judge config in
+  `.svault/config.yaml` and the OpenRouter key file. All global config and the
+  judge registry now live in a single AES-256-GCM-encrypted **keyring**
+  (`.svault/keyring.enc`) under its own passphrase, unlocked once per session.
+  The judge is no longer single and global: you can define **multiple named
+  judges**, each with its own model, base URL, timeout, allow/high thresholds,
+  free-text **criteria** injected into its prompt, and **API key**; pick a
+  default and assign one per vault. There are no plaintext `config.yaml` or
+  `openrouter.key` files anymore.
+
+**Quality.** 108 tests pass (plus one ignored concurrency stress benchmark). CI
+runs on Ubuntu, Fedora, macOS, and Windows, with `cargo fmt --check`, `cargo
+clippy -D warnings`, and a `cargo audit` advisory gate.
+
+### Security boundary (stated, not over-claimed)
+
+Svault's encrypted-at-rest design closes the read-the-files reconnaissance path:
+secrets, policy, classification, caller rules, judge thresholds, criteria, and
+API keys are all unreadable at rest. It is **not** a sandbox against a hostile
+same-UID process that reads the unlocked daemon's memory (or the `0600` session)
+directly — that remains inherent to the documented same-UID trust model. This
+boundary must stay stated plainly in the docs and never be over-claimed.
+
+### Security-review history
+
+Releases 0.5.0 through 0.9.0 were driven by a release-gated security process:
+each `0.x.0` got one or more independent, model-agnostic reviews, with all
+findings de-duplicated into a decision register. The full carry-forward lives in
+`docs/security-review/`. Highlights of what those reviews closed:
+
+- **0.6.0** — daemon connection ceiling + per-connection read timeout (#8),
+  poison-recovery on the key-store lock (#13), truncated-`vault.enc` guard (#20),
+  session caches the derived key rather than the passphrase (#4); logged
+  concurrency stress run.
+- **0.7.0** — `cargo audit` CI gate (#9/#10), client-side key derivation so the
+  passphrase never crosses the socket (#3), daemon peer-UID bond (#1), owner-only
+  files/dirs + atomic socket (#14/#16), graceful shutdown (#17), zeroized secrets
+  (#6), release checksums + SLSA provenance (#11), passphrase entropy floor (#12).
+- **0.8.0** — owner-only TUI export and import dir (N-3/N-4), `0600` rotated
+  `daemon.log` (N-10), daemon transport zeroization (N-6), `sigaction` shutdown
+  (N-9).
+- **0.9.0** — the headline release: policy moved from advisory to **enforced**
+  inside the daemon, and the AI judge landed, closing the gap (#2/#5/#22,
+  N-1/N-2/N-5) all prior reviews named as the 1.0.0 blocker.
+
+## Path to 1.0.0
+
+Three pieces remain before the first stable, audited release.
+
+### 1. Final independent security review — Next
+
+A final review pass over the enforced, encrypted-policy engine and the keyring,
+following the established release-gated review process. This is the gate on the
+1.0.0 label.
+
+### 2. Distribution / install channels — In progress
+
+All channels reuse the four prebuilt binaries that the release workflow
+(`release.yml`, on `v*` tags) already produces — macOS arm64/x64, Linux x64,
+Windows x64. Standing constraint: publishing to external registries is done
+manually by the maintainer (Claude does not run `cargo publish` or push to
+registries).
+
+**Done**
+
+- **crates.io** — published as `svault-ai`, binary `svault` (`cargo install
+  svault-ai`, builds from source).
+- **GitHub Releases** — `release.yml` builds and uploads four target archives on
+  each `v*` tag (the artifact source every channel below points at), with a
+  matching `.sha256` and SLSA provenance per archive.
+
+**Planned — first pass (Mac / Linux / Rust users and agents)**
+
+- **Install script** — `install.sh`: detect OS and arch, resolve the latest (or
+  pinned) release, download and verify the matching archive, extract `svault`
+  onto PATH. Served from `svault.soluzy.app/install.sh`
+  (`curl -fsSL https://svault.soluzy.app/install.sh | sh`); the primary install
+  link in the README and on the website.
+- **cargo-binstall** — add `[package.metadata.binstall]` mapping `pkg-url` /
+  `pkg-fmt` to the release asset names so `cargo binstall svault-ai` fetches a
+  prebuilt binary instead of compiling.
+- **Homebrew tap** — own `Soluzy/homebrew-tap` with `Formula/svault.rb`
+  (per-arch `url` + `sha256`), auto-bumped on each `v*` tag. Install:
+  `brew install soluzy/tap/svault`. An own tap, not homebrew-core.
+- **Docker image** — `Dockerfile` (Debian-slim or distroless/scratch for static)
+  pushed to `ghcr.io/soluzy/svault` on each tag, targeting the AI-agent and CI
+  use case where agents and pipelines run in containers.
+
+**Planned — later (niche audiences, more upkeep)**
+
+- **Scoop** (Windows) — manifest in an own bucket (`Soluzy/scoop-bucket`).
+- **WinGet** — manifest PR to `microsoft/winget-pkgs` per release.
+- **AUR** (Arch) — `PKGBUILD` `-bin` package pointing at the release binary.
+- **Nix** — flake output and/or a nixpkgs derivation.
+
+**Deliberately skipped (for now)**
+
+- **homebrew-core** and other curated repos — their notability/age bar rejects
+  young projects; revisit with traction. The own tap covers the need.
+- **npm wrapper** — a `bin`-shim so JS-ecosystem agents can `npx svault`; only if
+  real demand appears.
+
+> Website hub: `svault.soluzy.app` hosts `install.sh` and a tabbed install block
+> (brew / curl / cargo / docker).
+
+### 3. Remaining polish — Planned
+
+Final documentation, UX, and consistency passes surfaced during the review and
+distribution work.
+
+## Beyond 1.0.0
+
+These are deliberately sequenced after a stable, audited CLI.
+
+### 2.0.0 — Desktop GUI (Tauri)
+
+`svault-gui`, a cross-platform desktop app (macOS, Linux, Windows) built with
+Tauri — lightweight, single binary, offline, no runtime deps. Planned surface:
+
+- Vault dashboard (list, lock/unlock state, last accessed).
+- Lock/unlock panel and visual auto-lock settings (idle timeout, hard-max cap).
+- Session monitor with an auto-lock countdown.
+- Secret management (names only, never values; add/remove).
+- Policy viewer (what a caller can access, from the unlocked vault's encrypted
+  policy) and an audit-log viewer.
+- System-tray status, notifications, and a settings UI (daemon socket path, log
+  level).
+
+### 3.0.0 — AI-platform access (MCP)
+
+- `svault mcp` — an MCP server exposing `svault_get_secret(name, scope, reason)`,
+  routed through the same enforced gate.
+- `svault install` — auto-detect the platform and write MCP config.
+- **Claude Code** — MCP server plus a PreToolUse hook (blocks direct `.env`
+  reads) and a PostToolUse hook (scans output for leaked credentials).
+- **Cursor, Copilot, VS Code, Aider** — MCP server.
+- `--project` flag — project-scoped, git-committable install.
+
+### Cloud anomaly-scoring tier (optional)
+
+A hosted endpoint (e.g. `svault.soluzy.net/api/score`) that scores request
+justifications for anomaly detection, with optional paid plans for higher
+volumes and a shared audit dashboard. Optional and post-1.0.
+
+## Deferred / not planned
+
+- **Extra unlock methods** (YubiKey HMAC-SHA1, TOTP, macOS Touch ID / Face ID) —
+  designed but deferred; passphrase is the supported method today. The intended
+  UX is multi-select at create time (any combination) with method config in
+  `meta.yaml`.
+- **External backends** (cloud / self-hosted / S3) — `local` is the only wired
+  backend; the others are recorded placeholders in `meta.yaml` for future remote
+  sync.
+- **Secret rotation.**
+- **Windows daemon** — the daemon is Unix-only (Unix socket + `setsid`); Windows
+  uses the file-session fallback.
+- **Linux biometrics** — would need libpam + libfprint.
+
 ## Stack
 
-- **Rust** — single native binary, no runtime deps
-- `clap` — CLI argument parsing
-- `ratatui` — Terminal UI framework (TUI) for interactive CLI (Step 1+)
-- `crossterm` — Cross-platform terminal backend for Ratatui
-- `console` + `dialoguer` — rich terminal output and prompts (fallback for non-TUI mode)
-- `aes-gcm` — AES-256-GCM encryption
-- `argon2` — Argon2id key derivation (GPU-resistant)
-- `hmac` + `sha2` — HMAC-SHA256 meta.yaml integrity + TOTP (Google Authenticator)
-- `zeroize` — secrets zeroed from memory on drop
-- `totp-rs` — Time-based OTP (TOTP) generation + validation for Google Authenticator (Step 3)
-- `qrcode` — QR code generation for TOTP enrollment (Step 3)
-- `yubico` — YubiKey HMAC-SHA1 challenge-response (Step 3)
-- `security-framework` — macOS Touch ID / Face ID via Keychain (Step 3, macOS only)
-- `tauri` — Cross-platform GUI client (Rust + WebView, Step 4)
-- `serde_json` — JSON serialization for GUI ↔ daemon communication (Step 4)
+- **Rust** — single native binary, no runtime dependencies.
+- `clap` — CLI argument parsing.
+- `ratatui` + `crossterm` — interactive terminal UI; `console` + `dialoguer` for
+  non-TUI prompts.
+- `aes-gcm` — AES-256-GCM encryption.
+- `argon2` — Argon2id key derivation (GPU-resistant).
+- `hmac` + `sha2` — HMAC-SHA256 `meta.yaml` integrity and checksums.
+- `zeroize` — secrets wiped from memory on drop.
+- `ureq` (bundled rustls) — synchronous OpenRouter calls for the AI judge.
+- `libc` (Unix) — `setsid` to detach the daemon, `getpeereid` for the peer-UID
+  bond, `sigaction` for shutdown signals.
 
-## Progress
-
-> Shipped versions are tracked in [CHANGELOG.md](CHANGELOG.md); the public-facing
-> roadmap lives in [docs/roadmap.md](docs/roadmap.md). This file is the detailed
-> internal build plan.
-
-### [DONE] Step 1 — Local encrypted vault
-- [x] `svault create` — interactive setup: storage backend (local default; Soluzy cloud / self-hosted / S3 — placeholders, coming soon) / name / description / allow_agent / rate_limit / auto-lock / auto-lock timer (default 1d) / login method / passphrase (`init` kept as alias)
-- [x] Storage backend recorded in `meta.yaml` (`storage:`) and shown as a `storage:name` prefix in `svault vaults` / `svault status` / TUI; vault names must be unique (duplicate create rejected)
-- [x] `svault settings [--vault NAME]` — view and edit a vault's settings, re-signs meta.yaml
-- [x] `svault secret add | get | list | remove` — all accept `--vault NAME`; prompts which vault when several exist
-- [x] Login method field — passphrase today; yubikey + google auth reserved for later steps
-- [x] AES-256-GCM encryption, Argon2id key derivation
-- [x] HMAC-SHA256 signed `meta.yaml` — tampering is detectable
-- [x] `ZeroizeOnDrop` on `VaultKey` and secret store — memory wiped on drop
-- [x] `vault.enc` + `meta.yaml` safe to commit (encrypted / signed, no secret values)
-- [x] Session-based lock/unlock simulation (file-based, mode 0600, atomic write)
-- [x] `svault status` — lock state of all vaults
-- [x] Per-vault `.gitignore` written at init — `.session` can never be accidentally committed
-- [x] 18 unit tests — all passing (crypto, vault, session, passphrase)
-
-#### [DONE] Enhancement: Interactive TUI (Ratatui)
-- [x] **Ratatui-powered TUI** — run `svault` with no subcommand to launch it (all subcommands still work for scripting)
-  - [x] Vault list (home) — arrow keys / j/k to navigate, lock state shown inline (locked / unlocked)
-  - [x] `c` create — form-based setup (name, description, allow agent select, agent list, rate limit, auto-lock toggle, auto-lock timer, login method select, passphrase + confirm)
-  - [x] `u` unlock / `l` lock — lock-aware: locked vaults route through a passphrase prompt and resume the pending action on success
-  - [x] `s` settings — edit form (description, allow agent, rate limit, auto-lock, timer, login method), re-signs `meta.yaml`
-  - [x] enter → secret browser — `a` add (set), enter/`g` view (get, masked toggle), `d` delete with confirm; requires an unlocked vault
-  - [x] Cached session passphrase reused everywhere — no re-prompt while unlocked; `l` from any screen locks and wipes the session
-  - [x] Plain-ASCII status line (ok / warning / error / note), context key hints in the footer
-
-#### [DONE] Docs reorganization
-- [x] README rebuilt as a lean landing page — badges, doc index table, collapsible `<details>` sections, Mermaid diagrams (overview, policy pipeline, architecture)
-- [x] Long-form docs split into `docs/` — `installation`, `tui`, `commands`, `policy-engine`, `storage-backends`, `security`, `architecture`, `roadmap`
-- [x] `CHANGELOG.md` added (Keep a Changelog + SemVer)
-
-### [DONE] Step 2 — Policy engine
-- [x] `svault.policy.yaml` — committable root file defining callers (scopes + rate limit) and per-vault secret scope/tier; `svault policy init` scaffolds it
-- [x] `svault get <NAME> --scope <S> --reason "<R>" [--caller C]` — structured request; caller from `--caller`, else `$SVAULT_CALLER`, else `default`
-- [x] Policy checks: reason present → capability (scope) check → tier → rate limit → burst detection
-- [x] Sensitivity tiers: `low` (auto-approve) / `medium` (allow + flagged in audit) / `high` (denied for agents — humans use `secret get`)
-- [x] `svault policy check <caller>` — show scopes, accessible secrets, rate limit, recent activity
-- [x] Append-only audit log at `.svault/<vault>/audit.log` (gitignored); fallback to `meta.yaml` `allow_agent`/`rate_limit` when no policy file
-- [x] 15 new unit tests (audit + policy) — suite now 33, all passing
-
-### [DONE] Step 3 — Daemon + recovery
-
-> Rescoped: the extra auth methods (YubiKey, TOTP, Touch ID/Face ID) are **deferred** to a later step. Step 3 delivered recovery and the daemon; both are shipped.
-
-#### [DONE] Recovery — code + export/import
-- [x] Recovery code generated at `svault create` (160-bit), vault key wrapped under it in `recovery.enc` (committable/portable, like `vault.enc`)
-- [x] `svault recover [VAULT]` — unlock with the code and reset a lost passphrase (re-keys `vault.enc`, re-signs `meta.yaml`, re-wraps `recovery.enc`; code stays stable)
-- [x] `svault export [VAULT] [--out FILE]` / `svault import <FILE>` — portable, checksummed (`sha256`) encrypted bundle; import refuses to overwrite an existing name
-- [x] `VaultKey::from_bytes` + `Vault::open_with_key` (Argon2-free open path, reused by recovery and the upcoming daemon)
-- [x] 10 new tests (key-from-bytes, open-with-key, re-key, recovery write/unlock + wrong code, export checksum) — suite now 44
-
-#### [DONE/DEFERRED] original Step 3 checklist
-- [ ] **Multi-select auth at init** — *(deferred)* `svault init` prompts user to choose/combine auth methods:
-  - [ ] Passphrase (always available, works everywhere)
-  - [ ] YubiKey (HMAC-SHA1 challenge-response, hardware-backed)
-  - [ ] Google Authenticator (Time-based OTP, TOTP, phone-based)
-  - [ ] Touch ID / Face ID (macOS Keychain, biometric unlock)
-  - [ ] Users can enable any combination (e.g., Passphrase + YubiKey, Passphrase + OTP, Touch ID + Passphrase, all four)
-  - [ ] Store auth config in `meta.yaml` (which methods are enabled for this vault)
-- [x] **Real daemon (Unix)** — `svault daemon run|start|stop|status|doctor`; unlock once, keys held in memory, served over a `0600` Unix socket, no `.session` file while up. `daemon doctor` health-checks liveness / socket perms / stale files. Windows falls back to the file session. See [docs/daemon.md](docs/daemon.md).
-- [x] **Auto-lock** — idle timeout (default 15 min, reset on read) + hard-max cap (default 8h), configurable in `.svault/config.yaml`; ticker evicts + zeroizes expired keys.
-- [x] **Source/surface tracking** — `usage.log` + `audit.log` record a `source` (`cli`/`tui`/`gui`/`mcp`) alongside the actor; TUI activity view shows a VIA column.
-- [x] 9 new tests (daemon protocol/auto-lock/integration/concurrency + usage source stamping) — suite now 74.
-- [ ] `svault unlock` — interactive prompt shows enabled methods, user selects which to use *(deferred — tied to the extra auth methods above)*
-  - [ ] Passphrase-only vault: `svault unlock` prompts for passphrase
-  - [ ] YubiKey-enabled vault: `svault unlock --yubikey` — HMAC-SHA1 challenge-response
-    - Challenge stored in `meta.yaml` at init (not secret)
-    - YubiKey slot 2 configured for HMAC-SHA1
-    - Response → Argon2id → vault key. Hardware never exposes the HMAC secret.
-  - [ ] OTP-enabled vault: `svault unlock --otp <code>` — 6-digit TOTP from Google Authenticator
-    - Secret seed stored encrypted in `meta.yaml` (useless without vault key)
-    - On init: QR code displayed, user scans with Google Authenticator / Authy / Microsoft Authenticator
-  - [ ] Touch ID / Face ID (macOS): `svault unlock --biometric` — fingerprint or face recognition
-    - Uses macOS Keychain to store vault key securely
-    - Prompts for biometric unlock, Keychain handles auth
-    - Falls back to passphrase if biometric fails
-    - macOS only; ignored on Linux/Windows
-  - [ ] Multi-method unlock: `svault unlock --yubikey --otp <code> --phrase --biometric` — user selects combination
-- [ ] Recovery fallback at init — passphrase OR recovery key if hardware methods are lost
-- [x] Auto-lock: idle timeout (default 15 min) — reset on every secret request *(daemon)*
-- [x] Hard max lock (default 8h) — re-locks unconditionally regardless of activity *(daemon)*
-- [x] On lock: secrets wiped from memory immediately (`zeroize`) *(daemon keys are `Zeroizing`)*
-- [x] Both timers configurable in `.svault/config.yaml`
-
-### [DONE] Security hardening (0.6.0)
-
-> Acts on the 0.5.0 security-review register. Full carry-forward status for all
-> 22 findings is in [docs/security-review/findings/0.6.0.md](docs/security-review/findings/0.6.0.md);
-> the logged stress run is in [docs/security-review/stress/0.6.0.md](docs/security-review/stress/0.6.0.md).
-
-- [x] **#4 — session caches the derived key, not the passphrase** — `.session` now stores the 32-byte derived key (hex, mode 0600) on every platform incl. the TUI; a stolen session no longer leaks the reusable passphrase. *(Remaining: Windows ACL/DPAPI + route TUI through the daemon — deferred.)*
-- [x] **#8 — daemon connection ceiling** — configurable `daemon.max_connections` (default 512) + 30s per-connection read timeout + slot accounting that survives panics. Validated by a logged concurrency stress simulation (128k concurrent reads, 0 wrong values).
-- [x] **#13 — daemon survives a poisoned mutex** — key-store lock taken with poison recovery so a panicking handler can't down the daemon.
-- [x] **#20 — truncated `vault.enc` errors instead of panicking** — checked length guard on the salt slice.
-- [x] **Connect resilience** — `daemon::send` retries the socket connect with short backoff (absorbs OS listener-backlog drops under burst).
-- [x] Suite now 82 (+1 ignored stress benchmark); clippy clean.
-
-### [DONE] Security-review hardening (0.7.0)
-
-> Acts on the 0.7.0 review register ([findings/0.7.0.md](docs/security-review/findings/0.7.0.md)).
-
-- [x] `cargo audit` CI gate + `ratatui` 0.30 (#9/#10); client-side key derivation so the passphrase never crosses the socket (#3); daemon peer-UID bond (#1); owner-only files/dirs + atomic socket (#14/#16); graceful shutdown (#17); zeroized secrets (#6); release checksums + SLSA provenance (#11); passphrase entropy floor (#12).
-
-### [DONE] Review-response (0.8.0)
-
-- [x] Owner-only TUI export (N-3) + import dir (N-4); `0600` rotated `daemon.log` (N-10); daemon transport zeroization (N-6); `sigaction` shutdown signals (N-9). Idempotent `release.yml` publish step.
-
-### [DONE] Enforced policy engine + AI judge (0.9.0)
-
-> The headline release: the policy engine moves from advisory to **enforced**, and the AI judge lands. Closes #2/#5/#22 + N-1/N-2/N-5.
-
-- [x] **Policy + audit inside the daemon** — the agent path is a `GetGated` request; the daemon evaluates policy, consults the judge, audits (stamped with the unforgeable **peer UID**), then returns a value. The socket is the single choke point; the CLI runs the identical gate locally when no daemon is up. No unguarded read path (#2, N-1, N-5).
-- [x] **Signed per-secret classification** — `scope`/`tier`/`require_reason` live in the HMAC-signed `meta.yaml` (`svault secret add --scope --tier --require-reason`), so a same-UID attacker can't downgrade a tier without the key (#5/#22). Vault create sets a `default_tier` + per-vault judge toggle.
-- [x] **Anchored, fail-closed policy discovery** — `svault.policy.yaml` holds callers only; discovery stops at the project root (#5); an unparseable policy denies rather than allow-all (N-2).
-- [x] **AI judge (OpenRouter)** — blocking `ureq` (bundled rustls, no async), default `google/gemini-2.5-flash`; tier-dependent fail modes (medium fail-open + audit flag, high fail-closed). Off until a key is configured. Manage the key with `svault judge set-key` / `status` / `remove-key` (0600 file or `$SVAULT_OPENROUTER_KEY`); `svault judge test` dry-runs setup. New modules `gate.rs` + `judge.rs`.
-- [x] Suite now 98 (+1 ignored stress benchmark); clippy + `cargo fmt --check` clean.
-
-### [DONE] Policy + judge in the TUI (0.9.1)
-
-> Surfaces the 0.9.0 engine in the interactive UI — no new security surface, it manages the same signed meta + `0600` key file the CLI does.
-
-- [x] **`J` judge-management screen** — toggle the judge globally, edit model / allow- & high-thresholds / timeout (persisted via new `SvaultConfig::save()` → owner-only `.svault/config.yaml`), set the OpenRouter key (masked entry → `0600`), remove it (`Del`), and run a live `test`.
-- [x] **Per-secret classification in the browser** — secrets render as a table (`TIER · SCOPE · REASON? · DESCRIPTION`); `c` reclassifies a secret (re-signs `meta.yaml`, value untouched).
-- [x] **`svault judge enable` / `disable`** — CLI parity for the global switch; `svault create` nudges what's still needed when a vault opts into the judge.
-- [x] **Audit** — `secret.classify` + global `judge.config`/`judge.key.set`/`judge.key.remove` events; the activity timeline folds the global events in. Suite now 101; clippy + `cargo fmt --check` clean.
-
-### [DONE] Policy encrypted at rest (0.9.2)
-
-> Closes the policy-reconnaissance path. Through 0.9.1 only secret *values* were
-> encrypted; the whole policy surface sat in the plaintext (HMAC-signed)
-> `meta.yaml` plus the committable `svault.policy.yaml`, so a same-UID agent could
-> *read* every tier/scope/description/caller and craft a request designed to pass.
-> Honest boundary: this defeats reading the files to plan a bypass; it is **not** a
-> sandbox against a hostile same-UID process reading the unlocked daemon's memory.
-
-- [x] **Policy moved into the encrypted payload** — per-secret classification (scope/tier/`require_reason`/description), `allow_agent` + `rate_limit`, the per-vault judge override, `default_tier`, and **caller rules** all live in `policy::VaultPolicyData`, stored AES-256-GCM-encrypted inside `vault.enc` (`VaultPayload { version: 2, secrets, policy }`). The public `meta.yaml` now carries only non-sensitive metadata (name, description, storage, created-at, version, settings) and stays HMAC-signed.
-- [x] **Caller rules are per-vault and encrypted** — the committable `svault.policy.yaml` is gone; `svault policy init` seeds callers into a vault's encrypted policy and `svault policy check <caller>` unlocks the vault to read them.
-- [x] **Generic denials to the caller** — every denied `svault get` returns the single opaque `gate::GENERIC_DENY` string (`denied: request not authorized for this secret`); the real reason (judge score + rationale, scope/caller mismatch, rate limit) is recorded only in the audit log.
-- [x] **Policy view/edit requires an unlocked vault** — `svault settings`, `svault secret add`, the TUI classification table, and `svault policy check`/`init` all open the vault first; the vault list no longer shows allow-agent / rate-limit columns.
-- [x] TUI judge-management shortcut labelled **`shift-J`** (`j` is list-down).
-- [x] On-disk payload bumped to **v2**; no migration (no released users) — vaults are created fresh. Suite now 103 (+1 ignored stress benchmark); clippy + `cargo fmt --check` clean.
-
-### [TODO] 2.0.0 — GUI client (Tauri)
-> Version plan: the CLI is hardened to a stable **1.0.0** first; the GUI is a
-> deliberate **2.0.0**, and Claude / AI-platform access is **3.0.0**. 0.7.0+ is
-> security hardening (see the [findings register](docs/security-review/findings/0.6.0.md)).
-- [ ] `svault-gui` — cross-platform desktop app (macOS, Linux, Windows)
-  - [ ] **Vault dashboard** — list all vaults, show lock/unlock status, last accessed
-  - [ ] **Lock/unlock panel** — quick unlock with selected auth methods (passphrase, biometric, etc.)
-  - [ ] **Auto-lock settings** — visual controls for idle timeout (default 15 min) and hard max lock (default 8h)
-  - [ ] **Session monitor** — show active sessions, locked/unlocked state, auto-lock countdown timer
-  - [ ] **Secret management** — view secret names (never values), add/remove secrets with GUI
-  - [ ] **Policy viewer** — inspect what a caller can access (from the unlocked vault's encrypted policy)
-  - [ ] **Status notifications** — system tray icon, notifications for lock/unlock, timeouts
-  - [ ] **Settings UI** — configure Svault defaults, daemon socket path, log level
-  - [ ] **Audit log viewer** — see who accessed what (from policy logs)
-  - [ ] Built with Tauri: lightweight, single binary, works offline, no runtime deps
-
-### [TODO] 3.0.0 — Claude / AI-platform access (MCP)
-- [ ] `svault mcp` — start MCP server exposing `svault_get_secret(name, scope, reason)`
-- [ ] `svault install` — auto-detect platform, write MCP config
-- [ ] Claude Code: MCP server + PreToolUse hook (blocks direct `.env` reads) + PostToolUse hook (scans output for leaked credentials)
-- [ ] Cursor, Codex, Copilot, Aider, VS Code: MCP server
-- [ ] `--project` flag — project-scoped install, files are git-committable
-- [ ] GUI client integration — optional: Svault GUI can show active MCP sessions
-
-### [IN PROGRESS] Distribution — install channels
-
-> All channels reuse the four prebuilt binaries the release workflow (`release.yml`, on `v*` tags) already produces — macOS arm64/x64, Linux x64, Windows x64 — so most are low-effort. **crates.io is shipped** (`cargo install svault-ai`). Standing constraint: Claude does **not** run `cargo publish` or push to external registries — the user publishes manually.
-
-#### [DONE]
-- [x] **crates.io** — published as `svault-ai`, binary `svault` (`cargo install svault-ai`, builds from source)
-- [x] **GitHub Releases** — `release.yml` builds + uploads 4 target archives on each `v*` tag (the artifact source every channel below points at)
-
-#### [TODO] First pass (Mac / Linux / Rust users + agents)
-- [ ] **Install script** — `install.sh`: detect OS + arch, resolve latest (or pinned) release, download the matching archive, verify, extract `svault` onto PATH. Served from `svault.soluzy.app/install.sh`; usage `curl -fsSL https://svault.soluzy.app/install.sh | sh`. The primary install link in README + website.
-- [ ] **cargo-binstall** — add `[package.metadata.binstall]` to `Cargo.toml` mapping the `pkg-url`/`pkg-fmt` to the release asset naming, so `cargo binstall svault-ai` fetches a prebuilt binary instead of compiling. Near-zero effort; verify against an actual tag's asset names.
-- [ ] **Homebrew tap** — create `Soluzy/homebrew-tap` repo with `Formula/svault.rb` (downloads the release tarball, per-arch `url`+`sha256`). Add a CI job (in `release.yml` or the tap repo) to auto-bump the formula version + checksums on each `v*` tag. Install: `brew install soluzy/tap/svault`. Use an **own tap**, not homebrew-core.
-- [ ] **Docker image** — `Dockerfile` (`FROM debian:slim` + copied Linux binary, or `scratch`/`distroless` for static); push to `ghcr.io/soluzy/svault` on each tag via a release-workflow job. Targets the AI-agent / CI use case (agents and pipelines run in containers).
-
-#### [TODO] Later (niche audiences, more upkeep)
-- [ ] **Scoop** (Windows) — manifest in an own bucket repo (`Soluzy/scoop-bucket`); easier than WinGet.
-- [ ] **WinGet** — manifest PR to `microsoft/winget-pkgs` per release; broader Windows reach.
-- [ ] **AUR** (Arch) — `PKGBUILD` (`-bin` package pointing at the release binary).
-- [ ] **Nix** — flake output and/or a nixpkgs derivation.
-
-#### Deliberately skipped (for now)
-- [ ] **homebrew-core** and other official/curated repos — notability + age bar rejects young projects; revisit once there's traction. Own tap covers the need meanwhile.
-- [ ] **npm wrapper** — a `bin`-shim package so JS-ecosystem agents can `npx svault`; only if real demand appears.
-
-> Website hub: `svault.soluzy.app` hosts `install.sh` and a tabbed Install block (brew / curl / cargo / docker), the standard CLI landing-page pattern.
-
-### [TODO] Cloud tier (optional)
-- [ ] `svault.soluzy.net/api/score` — Claude Haiku scores justification for anomaly detection
-- [ ] Personal plan $1–2/month — 10k scored requests/month
-- [ ] Team plan $8–15/month — shared audit dashboard, Slack alerts
-
-## Auth method comparison
-
-| Method | UX | Security | Notes |
-|---|---|---|---|
-| Passphrase | Type passphrase | Strong if long | Always available, works anywhere |
-| YubiKey | Touch key | Strong, hardware-backed | Fast daily use, requires YubiKey |
-| Google Authenticator (TOTP) | Scan QR + enter 6-digit code | Medium-strong, time-based | Works on phone, no hardware needed |
-| Touch ID / Face ID (macOS) | Fingerprint or face scan | Strong, biometric | Fastest unlock, macOS only |
-| Passphrase + YubiKey | Touch + type | Strongest (2FA) | Hardware + knowledge, high-security vaults |
-| Passphrase + TOTP | Type + enter 6-digit code | Very strong (2FA) | No hardware needed, something-you-know + something-you-have |
-| Passphrase + Touch ID | Type + biometric (macOS) | Very strong (2FA) | Knowledge + biometric, fastest on Mac |
-| YubiKey + Touch ID (macOS) | Touch key + fingerprint | Strongest (2FA hardware) | Hardware + biometric, maximum portability |
-| All four (Passphrase + YubiKey + TOTP + Touch ID) | Type + key + code + biometric | Maximum security | All factors; requires YubiKey + macOS |
-| Multi-select custom | User chooses enabled methods at init | Configurable | Flexible per-vault security posture |
-
-## Build sequence (by version)
-
-Done: Step 1 (vault) · Step 1+ (TUI) · Step 2 (policy engine) · Step 3
-(daemon + recovery) · 0.6.0–0.8.0 (security hardening) · 0.9.0 (enforced policy
-engine + AI judge) · 0.9.1 (policy + judge in the TUI) · 0.9.2 (policy encrypted
-at rest, generic denials).
-
-1. **→ 1.0.0** — a final independent review of the enforced, encrypted-policy
-   engine plus the install channels below → the first stable, audited CLI.
-   **(current focus)**
-2. **2.0.0** — GUI client (Tauri desktop app for vault management)
-3. **3.0.0** — Claude / AI-platform access: MCP server + platform hooks
-   (Claude Code, Cursor, Copilot, VS Code, Aider)
-4. **Cloud tier** (optional) — justification scoring + premium plans
-
-## What's NOT planned (yet)
-
-- External backends (Vaultwarden, Infisical, AWS SM — v0.2)
-- Secret rotation
-- Windows daemon — the daemon is Unix-only (Unix socket + `setsid`); Windows uses the file session fallback (CLI is otherwise fully supported and tested on Windows in CI)
-- Linux biometric support (fingerprint readers — possible future, needs libpam + libfprint)
+Planned for later milestones: `tauri` + `serde_json` (2.0.0 GUI), and the
+deferred auth crates (`totp-rs`, `qrcode`, `yubico`, `security-framework`).
 
 ## Run locally
 
