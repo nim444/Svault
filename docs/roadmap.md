@@ -1,12 +1,12 @@
 # Roadmap
 
-Svault is an AI-aware secret manager built CLI-first. The core is hardened and
-proven as a command-line tool before any wider surface is added — a secret
-manager has to be trustworthy at its base first. The remaining pre-1.0 work makes
+Svault is a secret access layer for cooperative AI agents, built CLI-first. The
+core is hardened and proven as a command-line tool before any wider surface is
+added — a secret manager has to be trustworthy at its base first. The remaining pre-1.0 work makes
 that proven core **agent-ready**: a single way to unlock, conditional access,
 anomaly defence that escalates to a human, and a local MCP surface. Each reuses
 the existing daemon choke point rather than introducing a new trust model. A
-desktop GUI and remote/cloud surfaces come only after 1.0.
+desktop GUI comes only after 1.0.
 
 For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 (stack, step checklists, design notes), see [PLAN.md](../PLAN.md).
@@ -19,11 +19,10 @@ For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 | Unified unlock (0.9.4 – 0.9.5) | Shipped | One master passphrase opens every vault (0.9.4) **and the keyring** (0.9.5) — per-vault and keyring passphrases removed; all keyslots over a random data key |
 | Layered source (0.9.6) | Shipped | Source split into a frontend-agnostic `core` plus `cli` / `tui` / `daemon` frontends (a library crate), with `mcp` / `gui` placeholders — structural only, no behavior change |
 | Agent surface — MCP (0.9.7) | Shipped | `svault mcp` — a local stdio MCP server exposing the gated `svault_get_secret` / `svault_list_vaults` tools to AI agents, with a capability descriptor that advertises the request interface, not the decision criteria |
-| Conditional access + escalation (0.9.8) | Next | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
+| Hardware-key unlock + hardening (0.9.8) | Shipped | YubiKey (FIDO2 hmac-secret) unlock as an alternative keyslot (passphrase or touch, not 2FA); a 6-hour re-auth cap on every unlock path; a first-run onboarding flow with an app-level TUI sign-in / logout; storage is local-only and the docs are repositioned honestly |
+| Conditional access + escalation (0.9.9) | Next | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
 | Stable release (1.0.0) | Target | Final independent security review of the full agent-ready surface + distribution channels, then the first stable release |
-| YubiKey keyslot (post-1.0) | Planned | A YubiKey HMAC-SHA1 touch as an alternative unlock slot over the same master key (passphrase or touch, not 2FA) — postponed past 1.0 |
 | Desktop GUI (2.0.0) | Planned | Tauri vault manager + system tray |
-| Remote / cloud (3.0.0+) | Planned | Remote MCP with OAuth, more platforms, and optional anomaly scoring via Claude Haiku |
 
 The project is intentionally staying on the 0.9.x line. **1.0.0 is reserved for
 when everything is finished and independently reviewed** — it is the target, not
@@ -118,8 +117,8 @@ secrets to type. The fix is the **keyslot model** (the same idea as LUKS or
 1Password):
 
 - Each store gets a **random data key** that encrypts its contents. That data key
-  is wrapped in one or more **keyslots** — a master passphrase and the existing
-  recovery code (a YubiKey slot is planned post-1.0). Per-vault and keyring
+  is wrapped in one or more **keyslots** — a master passphrase, the existing
+  recovery code, and (since the hardening pass) a YubiKey. Per-vault and keyring
   passphrases go away.
 - **Any one slot opens the store.** `svault unlock` opens every vault **and the
   keyring** at once; `svault lock --all` clears them and the master session.
@@ -145,8 +144,7 @@ thin wrapper over `cli::run()`, split into a frontend-agnostic **`core`** (crypt
 vault storage, the policy engine, the AI judge, keyring/master, recovery, audit,
 …) and the **frontends** that drive it: `daemon/`, `tui/`, `cli/`, plus `mcp/` and
 `gui/` placeholders. This lets the planned MCP and GUI surfaces reuse `core`
-without touching the CLI or TUI. (The YubiKey keyslot that previously held the
-0.9.6 slot is **postponed to post-1.0** — see [Planned (post-1.0)](#planned-post-10).)
+without touching the CLI or TUI.
 
 ### Agent surface — MCP (0.9.7, shipped)
 
@@ -169,7 +167,33 @@ without touching the CLI or TUI. (The YubiKey keyslot that previously held the
   Claude Code `.env`-read / credential-scan hooks), and a `svault_list_secrets`
   tool — both still planned.
 
-### Conditional access + anomaly escalation (0.9.8)
+### Hardware-key unlock + hardening (0.9.8, shipped)
+
+- **YubiKey keyslot** — a hardware slot over the master key via the **FIDO2
+  hmac-secret** extension (touch, plus the YubiKey PIN if one is set), additive
+  over the same master key with no data re-encrypted. Enroll with `svault master
+  yubikey enroll`; thereafter `svault unlock` and the TUI (`Ctrl+Y`) offer the key,
+  and the master passphrase or recovery code still open everything if the key is
+  lost. Type the passphrase **or** touch the key — either is sufficient, never a
+  two-step 2FA. Manage with `svault master yubikey enroll | remove | status`.
+- **6-hour re-auth cap** — every unlock path now re-prompts the master at least
+  every 6 hours. File sessions (CLI/TUI) carry an unlock timestamp and expire at
+  the cap (they previously never expired); the daemon's in-memory hard cap, which
+  backs the MCP path, dropped from 8h to the same 6h. This bounds the window in
+  which an already-unlocked vault — including one an agent was prompted into at the
+  CLI — can be read before a human must re-authenticate.
+- **First-run onboarding + app-level sign-in (TUI)** — opening the TUI with no
+  master set walks through a disclaimer you accept, setting the master passphrase,
+  the one-time recovery code, and an optional YubiKey enrollment. Thereafter the
+  TUI has a sign-in gate (master passphrase or `Ctrl+Y`) shown on launch when the
+  login session isn't active or has expired past the 6h cap, and `o` logs out
+  (clears the login session, leaving the vaults and all data unchanged).
+- **Honest repositioning** — the framing leads with "the principled way to give
+  cooperative agents secret access" and states the same-UID boundary up front,
+  rather than implying isolation. The never-wired cloud/self-hosted/s3 storage
+  placeholders and the cloud roadmap were removed; storage is local-only.
+
+### Conditional access + anomaly escalation (0.9.9)
 
 - **Conditional access** — a secret can carry conditions in its encrypted policy:
   allowed time windows (e.g. only Fri 10:00–12:00 while CI runs) and required
@@ -200,16 +224,6 @@ DACL, a tamper-evident audit sink, and tunable Argon2id parameters.
 
 ## Planned (post-1.0)
 
-### YubiKey keyslot
-
-A **YubiKey keyslot** via `svault master enroll-yubikey` (HMAC-SHA1
-challenge-response, KeePassXC-style) — additive over the same master key, no data
-re-encrypted: type the master passphrase **or** touch the YubiKey, either is
-sufficient (not a two-step 2FA). Built behind a `ChallengeResponse` trait with a
-fake responder for CI and verified on real hardware before it ships. Originally
-slated for 0.9.6; **postponed to after 1.0** so the 1.0 review focuses on the
-agent-ready surface rather than hardware-token unlock.
-
 ### 2.0.0 — Desktop GUI (Tauri)
 
 - Vault dashboard with lock/unlock, auto-lock controls, and a session monitor.
@@ -217,16 +231,6 @@ agent-ready surface rather than hardware-token unlock.
   log viewer.
 - System tray icon and notifications; a lightweight single binary that works
   offline.
-
-### 3.0.0+ — Remote / cloud
-
-- **Remote MCP with OAuth** — the fuller `auth.md` / MCP-OAuth story, so an agent
-  on another machine can be authenticated and authorized, not just a same-UID
-  local process.
-- **Cloud anomaly scoring (optional)** — the per-vault usage log (human and agent
-  activity, no secret values) is the local foundation; `api/score` has Claude
-  Haiku score request justifications, with a personal plan and a team plan
-  (shared audit dashboard, Slack alerts).
 
 ## Distribution
 

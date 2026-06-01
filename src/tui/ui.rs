@@ -12,8 +12,8 @@ use ratatui::{
 use super::theme;
 use super::{
     judge_name_label, tier_label, App, ClassifyForm, CreateForm, InitForm, JudgeEditForm,
-    JudgeEntry, JudgeForm, MsgKind, Screen, SecretAddForm, SecretScreen, SettingsForm, UnlockForm,
-    VaultRow,
+    JudgeEntry, JudgeForm, LoginForm, MsgKind, OnboardForm, OnboardStep, Screen, SecretAddForm,
+    SecretScreen, SettingsForm, UnlockForm, VaultRow,
 };
 
 const CYAN: Color = theme::ACCENT;
@@ -34,6 +34,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     match &mut app.screen {
         Screen::List => draw_list(frame, chunks[1], &app.vaults, &mut app.list_state),
+        Screen::Login(form) => draw_login(frame, chunks[1], form),
+        Screen::Onboard(form) => draw_onboard(frame, chunks[1], form),
         Screen::Create(form) => draw_create(frame, chunks[1], form),
         Screen::Settings(form) => draw_settings(frame, chunks[1], form),
         Screen::Unlock(form) => draw_unlock(frame, chunks[1], form),
@@ -58,6 +60,44 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.confirm_quit {
         draw_quit(frame, chunks[1]);
     }
+    // A blocking YubiKey op is queued (run right after this frame) — show a modal
+    // so the user knows to touch the key while the call blocks the TUI.
+    if app.pending_fido.is_some() {
+        draw_touch(frame, chunks[1]);
+    }
+}
+
+// ── YubiKey touch prompt ─────────────────────────────────────────────────────
+
+fn draw_touch(frame: &mut Frame, area: Rect) {
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Touch your YubiKey",
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  The key is blinking — tap the sensor to continue.",
+            Style::default().fg(theme::TEXT),
+        )),
+        Line::from(Span::styled(
+            "  (enrolling asks for a second tap)",
+            Style::default().fg(DIM),
+        )),
+    ];
+    let popup = centered_rect(54, 32, area);
+    frame.render_widget(Clear, popup);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" YubiKey ")
+        .border_style(Style::default().fg(CYAN));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        popup,
+    );
 }
 
 // ── Quit confirmation ────────────────────────────────────────────────────────────
@@ -98,7 +138,7 @@ fn draw_header(frame: &mut Frame, area: Rect, daemon_running: bool) {
     // Left: title + subtitle.
     let title = Line::from(vec![
         Span::styled(" Svault ", theme::title()),
-        Span::styled("— AI-aware secret manager", theme::label_dim()),
+        Span::styled("— secret access for AI agents", theme::label_dim()),
     ]);
     frame.render_widget(Paragraph::new(title), inner);
 
@@ -156,9 +196,35 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         match &app.screen {
             Screen::List => (
-                "↑/↓ move   enter open   c create   u unlock   l lock   s settings   shift-J judge   m mcp   v activity   e export   i import   r recover   d daemon   h/? help   q quit",
-                "↑/↓ move   enter open   shift-J judge   m mcp   h/? help   q quit",
+                "↑/↓ move   enter open   c create   u unlock   l lock   o logout   s settings   shift-J judge   m mcp   v activity   e export   i import   r recover   d daemon   h/? help   q quit",
+                "↑/↓ move   enter open   u unlock   o logout   shift-J judge   h/? help   q quit",
             ),
+            Screen::Login(form) => (
+                if form.yubikey {
+                    "type master passphrase   enter sign in   ctrl+y yubikey   esc quit"
+                } else {
+                    "type master passphrase   enter sign in   esc quit"
+                },
+                "enter sign in   esc quit",
+            ),
+            Screen::Onboard(form) => match form.step {
+                super::OnboardStep::Disclaimer => (
+                    "enter  I understand — continue        esc  quit",
+                    "enter continue   esc quit",
+                ),
+                super::OnboardStep::Passphrase => (
+                    "type passphrase   ↑/↓ or tab  switch field   enter  next / confirm   esc  quit",
+                    "enter next   esc quit",
+                ),
+                super::OnboardStep::Recovery => (
+                    "y  I've saved the recovery code — continue",
+                    "y continue",
+                ),
+                super::OnboardStep::Yubikey => (
+                    "type PIN if your key has one   enter  enroll YubiKey   esc  skip",
+                    "enter enroll   esc skip",
+                ),
+            },
             Screen::Activity(_) => ("↑/↓ scroll   esc / b back   q quit", "↑/↓ scroll   esc back"),
             Screen::Create(_) => (
                 "↑/↓ field   ←/→ change   space toggle   enter next/create   esc cancel",
@@ -168,8 +234,12 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 "↑/↓ field   ←/→ change   space toggle   enter next/save   esc cancel",
                 "↑/↓ field   enter next   esc cancel",
             ),
-            Screen::Unlock(_) => (
-                "type master passphrase   enter unlock   esc cancel",
+            Screen::Unlock(form) => (
+                if form.yubikey {
+                    "type master passphrase   enter unlock   ctrl+y yubikey   esc cancel"
+                } else {
+                    "type master passphrase   enter unlock   esc cancel"
+                },
                 "enter unlock   esc cancel",
             ),
             Screen::Secrets(scr) => {
@@ -280,6 +350,10 @@ fn draw_help(frame: &mut Frame, area: Rect, screen: &Screen) {
             ("enter", "open a vault's secrets"),
             ("c", "create a new vault"),
             ("u / l", "unlock / lock the selected vault"),
+            (
+                "o",
+                "log out of all vaults (locks them); unlocking re-prompts the master",
+            ),
             (
                 "s",
                 "edit settings (description, agents, rate limit, auto-lock)",
@@ -1361,6 +1435,13 @@ fn draw_unlock(frame: &mut Frame, area: Rect, form: &UnlockForm) {
             Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)),
         ]),
     ];
+    if form.yubikey {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  YubiKey enrolled — type the PIN (if any), then Ctrl+Y to unlock by touch.",
+            Style::default().fg(CYAN),
+        )));
+    }
     if let Some(err) = &form.error {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -1373,6 +1454,220 @@ fn draw_unlock(frame: &mut Frame, area: Rect, form: &UnlockForm) {
         .title(" Unlock ")
         .border_style(Style::default().fg(DIM));
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+// ── Login gate ───────────────────────────────────────────────────────────────
+
+fn draw_login(frame: &mut Frame, area: Rect, form: &LoginForm) {
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Sign in to Svault",
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "  Enter your master passphrase to continue.",
+            Style::default().fg(DIM),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  Master passphrase  > "),
+            Span::styled(
+                mask(&form.passphrase),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)),
+        ]),
+    ];
+    if form.yubikey {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  YubiKey enrolled — type the PIN (if any), then Ctrl+Y to sign in by touch.",
+            Style::default().fg(CYAN),
+        )));
+    }
+    if let Some(err) = &form.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Sign in ")
+        .border_style(Style::default().fg(CYAN));
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+// ── First-run onboarding ─────────────────────────────────────────────────────
+
+fn draw_onboard(frame: &mut Frame, area: Rect, form: &OnboardForm) {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(DIM);
+    let accent = Style::default().fg(CYAN).add_modifier(Modifier::BOLD);
+
+    let (title, mut lines): (&str, Vec<Line>) = match form.step {
+        OnboardStep::Disclaimer => (
+            " Welcome to Svault — Step 1 of 3 ",
+            vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Svault gives cooperative AI agents structured, policy-gated, audited",
+                    Style::default(),
+                )),
+                Line::from(Span::styled(
+                    "  access to your secrets, and encrypts everything at rest.",
+                    Style::default(),
+                )),
+                Line::from(""),
+                Line::from(Span::styled("  Be honest about the boundary:", accent)),
+                Line::from(Span::styled(
+                    "  Svault is NOT a sandbox against a hostile process running as your own",
+                    Style::default(),
+                )),
+                Line::from(Span::styled(
+                    "  user — such a process can read an unlocked session directly. It raises",
+                    Style::default(),
+                )),
+                Line::from(Span::styled(
+                    "  the bar for agents that mostly play by the rules and gives you an audit",
+                    Style::default(),
+                )),
+                Line::from(Span::styled(
+                    "  trail when one doesn't. There are no accounts and no cloud — everything",
+                    Style::default(),
+                )),
+                Line::from(Span::styled(
+                    "  stays on this machine, and your master passphrase is the root of trust.",
+                    Style::default(),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Press Enter to acknowledge this and continue.",
+                    dim,
+                )),
+            ],
+        ),
+        OnboardStep::Passphrase => {
+            let caret = |focused: bool| if focused { "> " } else { "  " };
+            (
+                " Set your master passphrase — Step 2 of 3 ",
+                vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  One passphrase unlocks every vault. Choose a strong one — it is the",
+                        Style::default(),
+                    )),
+                    Line::from(Span::styled(
+                        "  root of trust and cannot be recovered except via the recovery code.",
+                        dim,
+                    )),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled(format!("  {}Passphrase  ", caret(form.focus == 0)), dim),
+                        Span::styled(mask(&form.passphrase), bold),
+                        Span::styled(
+                            if form.focus == 0 { " " } else { "" },
+                            Style::default().add_modifier(Modifier::REVERSED),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled(format!("  {}Confirm     ", caret(form.focus == 1)), dim),
+                        Span::styled(mask(&form.confirm), bold),
+                        Span::styled(
+                            if form.focus == 1 { " " } else { "" },
+                            Style::default().add_modifier(Modifier::REVERSED),
+                        ),
+                    ]),
+                ],
+            )
+        }
+        OnboardStep::Recovery => {
+            let code = form.recovery_code.as_deref().unwrap_or("(unavailable)");
+            (
+                " Save your recovery code ",
+                vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  This one-time code is the ONLY way back in if you forget the master",
+                        Style::default(),
+                    )),
+                    Line::from(Span::styled(
+                        "  passphrase. It is shown once. Write it down and store it offline.",
+                        Style::default(),
+                    )),
+                    Line::from(""),
+                    Line::from(vec![
+                        Span::styled("  Master recovery code   ", dim),
+                        Span::styled(code.to_string(), accent),
+                    ]),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Press 'y' once you have saved it to continue.",
+                        dim,
+                    )),
+                ],
+            )
+        }
+        OnboardStep::Yubikey => {
+            let device = if form.yubikey_present {
+                Span::styled("connected", Style::default().fg(CYAN))
+            } else {
+                Span::styled("not connected", dim)
+            };
+            (
+                " Optional: enroll a YubiKey — Step 3 of 3 ",
+                vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Optionally add a YubiKey as an alternative way to unlock (a touch",
+                        Style::default(),
+                    )),
+                    Line::from(Span::styled(
+                        "  instead of typing the passphrase). It's passphrase OR touch — never",
+                        Style::default(),
+                    )),
+                    Line::from(Span::styled(
+                        "  required, and the passphrase always still works.",
+                        dim,
+                    )),
+                    Line::from(""),
+                    Line::from(vec![Span::styled("  Device   ", dim), device]),
+                    Line::from(vec![
+                        Span::styled("  PIN      ", dim),
+                        Span::styled(mask(&form.pin), bold),
+                        Span::styled(" ", Style::default().add_modifier(Modifier::REVERSED)),
+                        Span::styled("  (leave blank if your key has no PIN)", dim),
+                    ]),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter to enroll (you'll touch the key twice), or Esc to skip.",
+                        dim,
+                    )),
+                ],
+            )
+        }
+    };
+
+    if let Some(err) = &form.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("  {err}"),
+            Style::default().fg(Color::Red),
+        )));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(CYAN));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 // ── Secrets ────────────────────────────────────────────────────────────────────

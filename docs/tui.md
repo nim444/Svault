@@ -10,6 +10,23 @@ The TUI is a Ratatui-powered dashboard over the same vaults the CLI uses; anythi
 
 Press `?` on the vault list or in the secret browser for an on-screen keybinding cheat sheet. Paste works in every text field (passphrases, recovery codes, bundle paths), and newlines are stripped automatically.
 
+## First run — onboarding
+
+The very first time you open the TUI (no master passphrase set yet), it walks through a short onboarding instead of dropping you straight into vault creation:
+
+1. **Disclaimer** — a one-screen, honest summary of what Svault does and its boundary (it gates and audits cooperative agents and encrypts at rest; it is **not** a sandbox against a hostile same-UID process). Press `Enter` to acknowledge and continue (`Esc` quits).
+2. **Master passphrase** — set the one passphrase that unlocks everything (with confirmation, subject to the strength floor).
+3. **Recovery code** — the one-time master recovery code is shown once; save it offline and press `y` to continue.
+4. **YubiKey (optional)** — if you want, enroll a YubiKey now as an alternative unlock; type its PIN (if it has one) and press `Enter` to enroll (a "Touch your YubiKey" modal appears — tap twice), or `Esc` to skip. You can always enroll later with `svault master yubikey enroll`.
+
+After onboarding you land on the vault list, signed in.
+
+## Sign in & logout
+
+The TUI has an app-level **sign-in** gated by the master passphrase. When you open the TUI and a master is set but you are not signed in this run — a fresh launch, or the login session expired past the **6-hour** cap — it shows a **Sign in** screen first: type the master passphrase and press `Enter`, or press `Ctrl+Y` to sign in with an enrolled YubiKey (type the PIN first if your key has one). `Esc` quits.
+
+Pressing `o` on the vault list **logs out**: it clears the login session and returns to the Sign in screen. Logout signs you out only — it does **not** lock or change the vaults' own state, the keyring, the daemon, the judge, or any data; signing back in returns you to the list as it was.
+
 ## Home — vault list
 
 The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` / `unlocked`), and **DESCRIPTION** columns. The selected row carries a `>` marker and a subtle background. The header's right side shows the **daemon indicator**: `daemon running` (green) or `daemon off` (dim). See [Daemon](daemon.md).
@@ -19,8 +36,9 @@ The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` 
 | `↑` / `↓` or `j` / `k` | Move between vaults |
 | `Enter` | Open the secret browser for the selected vault |
 | `c` | Create a new vault |
-| `u` | Unlock the selected vault |
+| `u` | Unlock the selected vault (type the master passphrase; if a YubiKey is enrolled, the unlock screen also accepts `Ctrl+Y` to unlock by touch — a "Touch your YubiKey" modal appears while the key blinks) |
 | `l` | Lock the selected vault (wipes the cached session) |
+| `o` | Log out — clear the login session and return to the Sign in screen (does not lock or change the vaults) |
 | `s` | Edit the selected vault's settings |
 | `shift-J` | Manage the AI judges — create/unlock the keyring, global on/off, add/edit/view judges, set default, set/clear a judge's key, test, remove (see below) |
 | `m` | MCP server — readiness, the `svault mcp` config snippet, and a one-key writer for `.mcp.json` (see below) |
@@ -53,7 +71,7 @@ The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` 
     - **master set but locked**: a single *Master passphrase* field to open it
     - **master already unlocked**: no passphrase field at all
 
-`←` / `→` cycle the pickers (allow-agent mode, default tier, assigned judge) and toggle auto-lock or the AI judge; `space` also cycles or toggles the focused picker; typing or pasting edits text fields; `Tab` and the arrows move between fields. A caret marks the field you're editing. Settings (`s`) edits the same access and auto-lock fields plus the default tier, the judge toggle, and the assigned judge. There is **no per-vault passphrase** — every vault is unlocked by the one master passphrase (keyslot model). Storage is `local` today and appears as a static note rather than a selectable field, so the form never offers a choice that does nothing (remotes are on the [roadmap](roadmap.md)).
+`←` / `→` cycle the pickers (allow-agent mode, default tier, assigned judge) and toggle auto-lock or the AI judge; `space` also cycles or toggles the focused picker; typing or pasting edits text fields; `Tab` and the arrows move between fields. A caret marks the field you're editing. Settings (`s`) edits the same access and auto-lock fields plus the default tier, the judge toggle, and the assigned judge. There is **no per-vault passphrase** — every vault is unlocked by the one master passphrase (keyslot model). Storage is `local` and appears as a static note rather than a selectable field, so the form never offers a choice that does nothing.
 
 After the vault is created, the **recovery code** is shown once on its own screen. It is not stored in plaintext and is never shown again — save it (password manager or offline paper), then press `y` to confirm and return to the vault list. If this create also set the master passphrase for the first time, the same screen shows a second, labelled **master recovery code** (resets a forgotten master, reopens every store) — save both. See [Recovery](recovery.md).
 

@@ -139,9 +139,9 @@ socket — so it widens capability without changing the trust model.
 used to have its own passphrase and the keyring another; that was too many to
 type. The **keyslot model** (LUKS / 1Password-style): each store gets a random
 **data key** that encrypts its contents, wrapped in one or more **keyslots** — a
-master passphrase and the existing recovery code (a YubiKey slot is planned
-post-1.0). Per-vault and keyring passphrases go away. **Any one slot opens the
-store**; `svault unlock` opens every vault **and the keyring** at once.
+master passphrase, the existing recovery code, and a YubiKey (FIDO2 hmac-secret).
+Per-vault and keyring passphrases go away. **Any one slot opens the store**;
+`svault unlock` opens every vault **and the keyring** at once.
 
 *Shipped in 0.9.4 (vaults):* the `master` module — a random master key (MK)
 wrapped under the passphrase in `.svault/master.enc`, each vault's random data key
@@ -182,7 +182,20 @@ encrypted, server-side). See `docs/mcp.md`. *Still planned:* `svault install`
 auto-config (plus Claude Code `.env`-read / credential-scan hooks) and a
 `svault_list_secrets` tool.
 
-**Conditional access + anomaly escalation (0.9.8).** Add **conditions** to a
+**Hardware-key unlock + hardening (0.9.8, shipped).** A **YubiKey** keyslot over
+the master key via the FIDO2 hmac-secret extension (`src/core/yubikey.rs`;
+`master.yubikey.enc` + a non-secret `.meta`), enrolled with `svault master yubikey
+enroll` and offered at `svault unlock` and in the TUI (`Ctrl+Y`) — passphrase **or**
+touch, never 2FA, with the master/recovery still opening everything if the key is
+lost. A **6-hour re-auth cap** shared by every session (`core::session::
+MAX_SESSION_SECS`): file sessions now carry an unlock timestamp and expire (they
+never did), and the daemon hard cap dropped 8h→6h. A **first-run onboarding** flow
+in the TUI (disclaimer → master passphrase → recovery code → optional YubiKey) plus
+an app-level **sign-in / logout** gate. Storage is **local-only** (the never-wired
+cloud placeholders and the cloud roadmap were removed) and the docs are
+repositioned to lead with honest cooperative-agent framing.
+
+**Conditional access + anomaly escalation (0.9.9).** Add **conditions** to a
 secret's encrypted policy — allowed time windows (e.g. only Fri 10:00–12:00 while
 CI runs) and required caller(s) — evaluated early in the existing `reason → scope
 → tier → rate/burst → judge` pipeline; outside the window the agent gets the same
@@ -275,31 +288,10 @@ Tauri — lightweight, single binary, offline, no runtime deps. Planned surface:
 - System-tray status, notifications, and a settings UI (daemon socket path, log
   level).
 
-### 3.0.0+ — Remote / cloud
-
-Local MCP ships pre-1.0 (see [Path to 1.0.0](#path-to-100)); what remains for
-later is the remote and hosted surface:
-
-- **Remote MCP with OAuth** — the fuller WorkOS-`auth.md` / MCP-OAuth story so an
-  agent on another machine can be authenticated and authorized, not just a
-  same-UID local process.
-- **Cloud anomaly-scoring tier (optional)** — a hosted endpoint (e.g.
-  `api/score`) that scores request justifications for anomaly detection, with
-  optional paid plans for higher volumes and a shared audit dashboard.
-
 ## Deferred / not planned
 
-- **YubiKey unlock (post-1.0)** — master-passphrase unlock shipped via the keyslot
-  model (0.9.4 – 0.9.5). A YubiKey keyslot (`svault master enroll-yubikey`,
-  HMAC-SHA1 challenge-response, KeePassXC-style — additive over the same MK, no
-  data re-encrypted: passphrase *or* touch, not 2FA, behind a `ChallengeResponse`
-  trait with a CI fake and real-hardware verification) is **postponed to after
-  1.0**, so the 1.0 review stays focused on the agent-ready surface.
 - **TOTP and macOS Touch ID / Face ID** — the keyslot model could host them as
   extra slots later, but they are not on the path to 1.0.
-- **External backends** (cloud / self-hosted / S3) — `local` is the only wired
-  backend; the others are recorded placeholders in `meta.yaml` for future remote
-  sync.
 - **Secret rotation.**
 - **Windows daemon** — the daemon is Unix-only (Unix socket + `setsid`); Windows
   uses the file-session fallback.

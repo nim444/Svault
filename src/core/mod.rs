@@ -22,6 +22,7 @@ pub mod secfile;
 pub mod session;
 pub mod usage;
 pub mod vault;
+pub mod yubikey;
 
 #[cfg(test)]
 pub mod testlock;

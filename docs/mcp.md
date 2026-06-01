@@ -108,7 +108,7 @@ A raw stdio transcript (what a client exchanges with the server):
 
 ```jsonc
 → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"svault","version":"0.9.7"},"instructions":"Svault gates access to secrets…"}}
+← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"svault","version":"0.9.8"},"instructions":"Svault gates access to secrets…"}}
 
 → {"jsonrpc":"2.0","method":"notifications/initialized"}        // notification, no reply
 
@@ -132,7 +132,7 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   | svault mcp
-# ← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05",…,"serverInfo":{"name":"svault","version":"0.9.7"}}}
+# ← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05",…,"serverInfo":{"name":"svault","version":"0.9.8"}}}
 # ← {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"svault_list_vaults",…},{"name":"svault_get_secret",…}]}}
 ```
 

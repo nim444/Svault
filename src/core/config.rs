@@ -14,7 +14,9 @@ pub struct LockConfig {
     /// Re-lock after this many seconds of inactivity. Default: 15 minutes.
     #[serde(default = "default_idle_timeout")]
     pub idle_timeout_secs: u64,
-    /// Hard limit — re-lock unconditionally. Default: 8 hours.
+    /// Hard limit — re-lock unconditionally. Default: 6 hours, shared with the
+    /// file-session cap so every unlock path re-prompts the master on the same
+    /// schedule.
     #[serde(default = "default_max_unlocked")]
     pub max_unlocked_secs: u64,
 }
@@ -23,7 +25,7 @@ fn default_idle_timeout() -> u64 {
     15 * 60
 }
 fn default_max_unlocked() -> u64 {
-    8 * 60 * 60
+    crate::core::session::MAX_SESSION_SECS
 }
 
 impl Default for LockConfig {

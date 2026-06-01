@@ -1,9 +1,9 @@
 [package]
 name = "svault-ai"
-version = "0.9.7"
+version = "0.9.8"
 edition = "2021"
 authors = ["Soluzy <nima@soluzy.ro>"]
-description = "AI-aware secret access layer — enforces structured requests and detects suspicious patterns"
+description = "Secret access layer for cooperative AI agents — structured, policy-gated, audited credential access"
 license = "Apache-2.0"
 repository = "https://github.com/Soluzy/Svault"
 homepage = "https://github.com/Soluzy/Svault"
@@ -55,6 +55,11 @@ ureq = { version = "2", features = ["json", "tls"] }
 # Error handling
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
+
+# YubiKey / FIDO2 unlock — pure-Rust CTAP2 over USB HID, hmac-secret extension.
+# No system libfido2 needed. Used to derive a stable secret that wraps the
+# master key in an independent keyslot (passphrase OR YubiKey opens it).
+ctap-hid-fido2 = "3.5"
 
 # Unix daemon — setsid (detach) + kill (liveness / stop). Unix only.
 [target.'cfg(unix)'.dependencies]

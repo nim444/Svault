@@ -2,7 +2,7 @@
 
 # Svault
 
-**The secret manager that knows an AI is asking.**
+**The principled way to give cooperative AI agents secret access.**
 
 [![lint](https://github.com/Soluzy/Svault/actions/workflows/lint.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/lint.yml)
 [![ubuntu](https://github.com/Soluzy/Svault/actions/workflows/ubuntu.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/ubuntu.yml)
@@ -20,9 +20,11 @@
 
 ![Svault Banner](https://raw.githubusercontent.com/Soluzy/Svault/main/docs/banner.jpg)
 
-Svault is an **AI-aware secret access layer** written in Rust. It sits between AI agents and your credentials — enforcing structured requests, detecting suspicious patterns, and making sure an agent has a real reason before it touches anything sensitive.
+Svault is a **secret access layer for AI agents**, written in Rust. It sits between an agent and your credentials and makes every request structured, policy-gated, and audited: the agent must say *which* secret, in *what* scope, and *why* — and a sensitive request is scored by an AI judge before any value is returned.
 
-> **Why Svault?** Every existing secret manager (1Password, Infisical, HashiCorp Vault) treats an AI agent the same as a human or a script. Svault doesn't. It knows the difference.
+> **The boundary, stated up front.** Svault is built for **cooperative and semi-trusted agents**. It encrypts secrets at rest and gives you an enforced, tamper-resistant gate over agent access plus an audit trail. It is **not** a sandbox against a hostile process running as your own user — that process can read an unlocked session directly. Svault raises the bar for agents that mostly play by the rules and gives you the audit trail when one doesn't; it does not pretend to contain a determined local attacker. If that distinction matters to you, you're exactly who it's for. See the [threat model](docs/security.md#threat-model).
+
+> **Why not just 1Password / Infisical / HashiCorp Vault?** Those treat an AI agent like any other client. Svault makes the agent path first-class — structured requests, per-secret policy and tiers, an AI judge for sensitive reads, and an audit record stamped with the caller's real (un-forgeable) UID.
 
 ```mermaid
 flowchart LR
@@ -46,10 +48,9 @@ flowchart LR
 | [MCP server](docs/mcp.md) | `svault mcp` — gated secret access for AI agents (Claude Code, Cursor) |
 | [Recovery & portability](docs/recovery.md) | Recovery code for a lost passphrase, export/import bundles |
 | [Daemon](docs/daemon.md) | Optional Unix daemon — keys in memory, auto-lock, `daemon start/stop/status/doctor` |
-| [Storage backends](docs/storage-backends.md) | Local today; cloud / self-hosted / S3 placeholders |
+| [Architecture](docs/architecture.md) | How it works, on-disk layout, storage and vault naming, auth methods |
 | [Security model](docs/security.md) | Crypto, memory safety, what's safe to commit |
 | [Security review & audit](docs/security-review/) | Independent review per release + the bulletproofing process |
-| [Architecture](docs/architecture.md) | How it works, on-disk layout, auth methods |
 | [Roadmap](docs/roadmap.md) | Where Svault is headed |
 | [Changelog](CHANGELOG.md) | What's shipped, version by version |
 
@@ -163,20 +164,13 @@ The bundle carries no machine-specific state and every byte is encrypted or sign
 </details>
 
 <details>
-<summary><b>Storage backends</b></summary>
+<summary><b>Storage</b></summary>
 
 <br>
 
-| Backend | Status |
-|---|---|
-| `local` | Available (default) |
-| `cloud` | Coming soon — Soluzy SaaS |
-| `self-hosted` | Coming soon — your own server |
-| `s3` | Coming soon — S3 / MinIO |
+Every vault is stored **locally** — an encrypted vault on this machine. The backend is recorded in `meta.yaml` as `storage: local` and shown as a `local:` prefix everywhere a vault is listed. Vault names must be unique.
 
-The chosen backend is recorded in `meta.yaml` and shown as a `storage:name` prefix everywhere a vault is listed. Vault names must be unique.
-
-**Details → [docs/storage-backends.md](docs/storage-backends.md)**
+**Details → [docs/architecture.md](docs/architecture.md#storage-and-vault-naming)**
 
 </details>
 
@@ -238,11 +232,10 @@ flowchart TD
 | **Unified unlock** | Shipped (0.9.4 – 0.9.5) | One master passphrase wraps a random data key per store (keyslot model); per-vault passphrases removed (0.9.4) and the keyring brought under the master too (0.9.5); `svault master init / rekey / status` |
 | **Layered source** | Shipped (0.9.6) | Source split into a frontend-agnostic `core` plus `cli` / `tui` / `daemon` frontends (a library crate), with `mcp` / `gui` placeholders — structural only, so future frontends reuse `core` |
 | **Local MCP** | Shipped (0.9.7) | `svault mcp` — a local stdio MCP server exposing gated `svault_get_secret` / `svault_list_vaults` to AI agents; serves only unlocked state, never the passphrase, with a capability descriptor that advertises the request interface, not the decision criteria |
-| **Conditional access + escalation** | Next (0.9.8) | Time-window / caller conditions in the encrypted policy; brute-force / anomaly seals a secret and escalates to a human (agents never self-clear) |
+| **Hardware-key unlock + hardening** | Shipped (0.9.8) | YubiKey (FIDO2 hmac-secret) unlock — an alternative keyslot over the master key (passphrase or touch, not 2FA); a 6-hour re-auth cap on every unlock path; first-run onboarding + an app-level TUI sign-in / logout; storage local-only |
+| **Conditional access + escalation** | Next (0.9.9) | Time-window / caller conditions in the encrypted policy; brute-force / anomaly seals a secret and escalates to a human (agents never self-clear) |
 | **1.0.0** | Target | A final independent review of the full agent-ready surface and install channels (script, Homebrew, Docker), then the first stable release |
-| **YubiKey keyslot** | Post-1.0 | A YubiKey HMAC-SHA1 touch as an alternative unlock — another keyslot over the same master key (passphrase or touch, not 2FA); postponed past 1.0 |
 | **2.0.0** | Planned | Desktop GUI (Tauri) + system tray |
-| **3.0.0+ / Cloud** | Planned | Remote MCP with OAuth, more platforms, optional anomaly scoring via Claude Haiku |
 
 Svault is currently on the **0.9.x** line, working through the agent-ready path; 1.0.0 is reserved for the reviewed, stable release. Per-release detail lives in the [changelog](CHANGELOG.md).
 
