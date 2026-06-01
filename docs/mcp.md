@@ -98,8 +98,9 @@ The server runs in the working directory it's launched from and resolves
 `./.svault`, so launch it from the project that owns the vault (or pass `vault` on
 each call when several exist).
 
-> Automatic config writing via `svault install` is planned; for now add the
-> snippet above by hand.
+> You can also write this entry from the **TUI**: run `svault`, press `m` for the
+> MCP screen, then `w` to drop (and merge) the `svault` server into `./.mcp.json`.
+> Full `svault install` auto-config across platforms is still planned.
 
 ## Example session
 

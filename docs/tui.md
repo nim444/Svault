@@ -23,6 +23,7 @@ The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` 
 | `l` | Lock the selected vault (wipes the cached session) |
 | `s` | Edit the selected vault's settings |
 | `shift-J` | Manage the AI judges — create/unlock the keyring, global on/off, add/edit/view judges, set default, set/clear a judge's key, test, remove (see below) |
+| `m` | MCP server — readiness, the `svault mcp` config snippet, and a one-key writer for `.mcp.json` (see below) |
 | `v` | View the vault's activity timeline (human + agent usage) |
 | `e` | Export the selected vault to a timestamped `<name>-<YYYYMMDD-HHMMSS>.svault-export.json` in the current directory (repeated exports never overwrite); the status line shows the full path to the file |
 | `i` | Import a vault from a bundle file (prompts for the path) |
@@ -74,6 +75,29 @@ Once unlocked, the screen shows the global on/off switch, the default judge, and
 - `x` — **remove** the selected judge.
 
 `↑` / `↓` move between rows; `Esc` goes back. The whole judge lifecycle is now available here, equivalent to the `svault keyring` / `svault judge` commands (which remain for scripting; the global switch is also `svault judge enable` / `disable`). Toggling the switch, adding or editing a judge, setting or clearing a key, setting the default, and removing a judge are all recorded to the activity timeline (see below).
+
+## MCP server
+
+`m` (on the vault list) opens the **MCP** screen — the place to wire and arm
+`svault mcp`, the [local MCP server](mcp.md) that exposes gated secret access to AI
+agents (Claude Code, Cursor, …).
+
+The server itself is **launched by the agent platform** (it owns a stdio pipe), so
+there's nothing to "start" here — a full-screen TUI and a stdio JSON-RPC server
+can't share the same terminal. What this screen does is the part that matters from
+the keyboard:
+
+- **Readiness** — shows whether the daemon is running and which vaults are
+  unlocked. An agent can only fetch from an unlocked vault; if none are unlocked
+  the screen says so (press `Esc`, then `u`).
+- **Config snippet** — the exact `.mcp.json` entry to add to Claude Code / Cursor.
+- `w` — **write** that entry into `./.mcp.json` in the current folder, merging it
+  in (any other MCP servers already configured are preserved). The status line
+  shows the path written.
+- `d` — start/stop the daemon without leaving the screen, so keys stay in memory.
+- `Esc` / `b` — back to the vault list.
+
+See [mcp.md](mcp.md) for the server's security model, tools, and a transcript.
 
 ## Activity timeline
 

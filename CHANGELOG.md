@@ -29,6 +29,10 @@ probe its way in.
   and judge prompts stay server-side and encrypted).
 - New [docs/mcp.md](docs/mcp.md): security model, tools, wiring into Claude Code /
   Cursor, and a raw transcript.
+- **TUI MCP screen** (`m` on the vault list) — shows readiness (daemon + unlocked
+  vaults), the `.mcp.json` config snippet, and `w` to write/merge that entry into
+  `./.mcp.json` (preserving any other servers). The stdio server is still launched
+  by the agent platform; this screen wires and arms it.
 
 ### Changed
 - The gated agent path is now one shared core function, `core::gate::gated_get`
