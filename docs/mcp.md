@@ -122,6 +122,23 @@ A raw stdio transcript (what a client exchanges with the server):
 ← {"jsonrpc":"2.0","id":4,"result":{"content":[{"type":"text","text":"request not authorized for this secret"}],"isError":true}}   // high tier, denied
 ```
 
+## Verify it from a shell
+
+You can drive the server by hand to confirm it's wired correctly — pipe a couple
+of JSON-RPC lines into `svault mcp`:
+
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  | svault mcp
+# ← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05",…,"serverInfo":{"name":"svault","version":"0.9.7"}}}
+# ← {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"svault_list_vaults",…},{"name":"svault_get_secret",…}]}}
+```
+
+A real `svault_get_secret` call needs an unlocked vault (see the
+[walkthrough](walkthrough.md#10-hand-it-to-an-agent-over-mcp)).
+
 ## Limitations
 
 - **Unix daemon recommended.** Without the daemon, the server uses the file
