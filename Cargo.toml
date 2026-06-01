@@ -56,10 +56,18 @@ ureq = { version = "2", features = ["json", "tls"] }
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 
-# YubiKey / FIDO2 unlock — pure-Rust CTAP2 over USB HID, hmac-secret extension.
-# No system libfido2 needed. Used to derive a stable secret that wraps the
-# master key in an independent keyslot (passphrase OR YubiKey opens it).
-ctap-hid-fido2 = "3.5"
+# YubiKey / FIDO2 unlock — CTAP2 over USB HID, hmac-secret extension. Optional and
+# OFF by default: its `hidapi` dependency needs libudev on Linux, which would
+# otherwise break the default build, `cargo install`, and docs.rs. Enable with
+# `--features yubikey` (Linux also needs libudev-dev) for the real implementation;
+# without it, the unlock keyslot is a no-op stub. See src/core/yubikey.rs.
+ctap-hid-fido2 = { version = "3.5", optional = true }
+
+[features]
+default = []
+# Real YubiKey (FIDO2 hmac-secret) unlock. Off by default so the base crate
+# builds with no system dependencies; Linux additionally needs libudev-dev.
+yubikey = ["dep:ctap-hid-fido2"]
 
 # Unix daemon — setsid (detach) + kill (liveness / stop). Unix only.
 [target.'cfg(unix)'.dependencies]

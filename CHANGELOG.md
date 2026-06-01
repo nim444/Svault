@@ -33,6 +33,10 @@ logout in the TUI, and an honest repositioning of the docs. Storage is local-onl
   fallback. It's *passphrase **or** touch*, never a two-step 2FA — additive over
   the same master key, no data re-encrypted, stored in `master.yubikey.enc` (+ a
   non-secret `.meta`). Manage with `svault master yubikey enroll | remove | status`.
+  Ships as an **opt-in Cargo feature** (`yubikey`, off by default) so the base
+  crate keeps building with no system dependencies; the prebuilt release binaries
+  include it, and from source it's `cargo install svault-ai --features yubikey`
+  (Linux also needs `libudev-dev`).
 
 ### Changed
 - **6-hour re-auth hard cap on every unlock path.** File sessions (CLI/TUI) now
