@@ -200,6 +200,34 @@ value.
 svault policy check billing-worker   # scopes, reachable secrets, recent allows/denials
 ```
 
+## 10. Hand it to an agent over MCP
+
+`svault get` is the agent path from a shell. The same gate is also reachable over
+the [Model Context Protocol](mcp.md), so an MCP-aware agent (Claude Code, Cursor)
+requests secrets directly instead of reading `.env` files.
+
+The human unlocks once, then wires the server (or press `m`, then `w` in the TUI):
+
+```bash
+svault daemon start        # keys live in memory (optional but recommended)
+svault unlock billing-api  # one master passphrase opens every vault
+
+# .mcp.json (Claude Code / Cursor) — points the agent at the gated server
+# {
+#   "mcpServers": {
+#     "svault": { "command": "svault", "args": ["mcp"],
+#                 "env": { "SVAULT_CALLER": "claude-code" } }
+#   }
+# }
+```
+
+Now the agent calls the `svault_get_secret` tool with `name` / `scope` / `reason`
+— the request runs through the *same* policy + judge gate as section 7, audited
+with `source = mcp`. A weak reason is denied with the generic message; a locked
+vault tells the agent a human must run `svault unlock`; high-tier stays human-only.
+The agent never sees the master passphrase. See [mcp.md](mcp.md) for the tools, the
+security model, and a raw transcript.
+
 ## Notes
 
 - **Key safety.** Each judge's OpenRouter key is stored AES-256-GCM encrypted in

@@ -705,6 +705,9 @@ pub enum Screen {
     Classify(ClassifyForm),
     /// Manage the global AI judge (config + OpenRouter key + dry-run test).
     Judge(JudgeForm),
+    /// MCP server status + wiring: readiness, the `svault mcp` config snippet, and
+    /// a one-key writer for the local `.mcp.json`.
+    Mcp,
 }
 
 // ── App ────────────────────────────────────────────────────────────────────────
@@ -935,6 +938,7 @@ impl App {
             Screen::Activity(scr) => self.key_activity(scr, key),
             Screen::Classify(form) => self.key_classify(form, key)?,
             Screen::Judge(form) => self.key_judge(form, key)?,
+            Screen::Mcp => self.key_mcp(key),
         }
         Ok(())
     }
@@ -1223,11 +1227,31 @@ impl App {
             KeyCode::Char('v') => self.start_activity(),
             KeyCode::Char('d') => self.toggle_daemon(),
             KeyCode::Char('J') => self.screen = Screen::Judge(JudgeForm::load()),
+            KeyCode::Char('m') => self.screen = Screen::Mcp,
             KeyCode::Char('?') | KeyCode::Char('h') => self.show_help = true,
             KeyCode::Enter => self.open_secrets()?,
             _ => {}
         }
         Ok(())
+    }
+
+    /// MCP screen keys: write the client config, toggle the daemon precondition,
+    /// or go back. The server itself is launched by the agent platform (it owns a
+    /// stdio pipe), so there is nothing to "start" here — only to wire and arm.
+    fn key_mcp(&mut self, key: KeyEvent) {
+        self.screen = Screen::Mcp;
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('b') | KeyCode::Char('q') => self.screen = Screen::List,
+            KeyCode::Char('d') => self.toggle_daemon(),
+            KeyCode::Char('w') => match write_mcp_config() {
+                Ok(path) => self.set_status(MsgKind::Ok, format!("Wrote MCP config to {path}")),
+                Err(e) => {
+                    self.set_status(MsgKind::Error, format!("Could not write .mcp.json: {e}"))
+                }
+            },
+            KeyCode::Char('?') | KeyCode::Char('h') => self.show_help = true,
+            _ => {}
+        }
     }
 
     /// Export the selected vault to a timestamped bundle in the CWD, so repeated
@@ -2776,6 +2800,47 @@ impl App {
 
 // ── Free helpers ───────────────────────────────────────────────────────────────
 
+/// The `svault mcp` server entry for an MCP client config, as Claude Code, Cursor,
+/// and most clients expect it.
+fn svault_server_entry() -> serde_json::Value {
+    serde_json::json!({
+        "command": "svault",
+        "args": ["mcp"],
+        "env": { "SVAULT_CALLER": "claude-code" }
+    })
+}
+
+/// Write — or merge into — `./.mcp.json` an `mcpServers.svault` entry that launches
+/// `svault mcp`. Preserves any other servers already configured. Returns the
+/// absolute path written.
+fn write_mcp_config() -> anyhow::Result<String> {
+    let path = Path::new(".mcp.json");
+    let mut root: serde_json::Value = if path.exists() {
+        serde_json::from_slice(&std::fs::read(path)?).unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    if !root.is_object() {
+        root = serde_json::json!({});
+    }
+    let servers = root
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::json!({}));
+    if !servers.is_object() {
+        *servers = serde_json::json!({});
+    }
+    servers
+        .as_object_mut()
+        .unwrap()
+        .insert("svault".to_string(), svault_server_entry());
+    std::fs::write(path, serde_json::to_string_pretty(&root)? + "\n")?;
+    Ok(std::fs::canonicalize(path)
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".mcp.json".to_string()))
+}
+
 /// Names of the judges in the unlocked keyring (sorted), for the vault
 /// judge-assignment picker. Empty when the keyring is locked or has no judges —
 /// the picker then offers only "default".
@@ -3086,6 +3151,62 @@ mod tests {
         let orphan = Some("gone".to_string());
         assert_eq!(judge_name_label(&orphan), "gone");
         assert_eq!(cycle_judge_name(&orphan, &choices, true), None);
+    }
+
+    #[test]
+    fn mcp_screen_renders_status_command_and_config() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let mut app = bare_app(Screen::Mcp);
+        app.daemon_running = true;
+        let mut terminal = Terminal::new(TestBackend::new(110, 40)).unwrap();
+        terminal.draw(|f| super::ui::draw(f, &mut app)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("MCP"), "title");
+        assert!(text.contains("mcpServers"), "config snippet");
+        assert!(text.contains("Daemon"), "status block");
+        // No vaults unlocked in a bare app → the not-ready hint shows.
+        assert!(text.contains("Not ready"), "readiness");
+    }
+
+    #[test]
+    fn write_mcp_config_creates_then_merges_preserving_other_servers() {
+        let _cwd = crate::core::testlock::CWD_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // Fresh write creates the svault server entry.
+        let path = write_mcp_config().unwrap();
+        assert!(path.ends_with(".mcp.json"));
+        let v: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(".mcp.json").unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["svault"]["command"], "svault");
+        assert_eq!(v["mcpServers"]["svault"]["args"][0], "mcp");
+
+        // An unrelated server already in the file is preserved on the next write.
+        std::fs::write(
+            ".mcp.json",
+            serde_json::to_string(&serde_json::json!({
+                "mcpServers": { "other": { "command": "x" } }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        write_mcp_config().unwrap();
+        let v: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(".mcp.json").unwrap()).unwrap();
+        assert_eq!(v["mcpServers"]["other"]["command"], "x");
+        assert_eq!(v["mcpServers"]["svault"]["command"], "svault");
+
+        std::env::set_current_dir(prev).unwrap();
     }
 
     #[test]

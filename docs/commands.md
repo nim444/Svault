@@ -80,7 +80,13 @@ in the audit log — and both `policy` subcommands unlock the vault.
 svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # enforced, gated request
 svault policy init                 # seed caller rules into the vault's encrypted policy
 svault policy check <caller>       # what a caller can access + recent activity (unlocks the vault)
+svault mcp                         # run the local MCP server (stdio) — gated access for AI agents (see mcp.md)
 ```
+
+`svault mcp` exposes the same gated path over the [Model Context Protocol](mcp.md)
+so MCP-aware agents (Claude Code, Cursor, …) request secrets through the policy +
+judge gate instead of reading `.env` files. It serves only unlocked vaults and
+never sees the master passphrase.
 
 ## The keyring
 

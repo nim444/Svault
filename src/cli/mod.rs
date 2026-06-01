@@ -99,6 +99,8 @@ enum Commands {
         #[arg(long)]
         project: bool,
     },
+    /// Run the local MCP server (stdio): expose gated secret access to AI agents
+    Mcp,
     /// Request a secret through the policy engine — the agent path.
     Get {
         name: String,
@@ -251,6 +253,7 @@ pub fn run() -> Result<()> {
             );
             Ok(())
         }
+        Commands::Mcp => crate::mcp::run(),
         Commands::Get {
             name,
             scope,
@@ -1094,51 +1097,10 @@ fn cmd_get(
 
     // No daemon (or vault not unlocked there): run the SAME gate locally against
     // the decrypted, key-authenticated policy, then fetch from the session/prompt.
+    // `gate::gated_get` is the shared enforcement path (also used by `svault mcp`).
     let vault = open_unlocked_or_prompt(&vault_dir, &meta_preview.name)?;
-    // Resolve the judge from the unlocked keyring (the vault's assigned judge or
-    // the keyring default); None when the keyring is locked / judge off / no key.
-    let judge = keyring::open_from_session().and_then(|kr| {
-        kr.data
-            .resolve_judge(vault.policy.judge.judge.as_deref())
-            .and_then(|(_n, def)| judge::JudgeRuntime::from_def(def))
-    });
-    let req = policy::Request {
-        vault: &vault.meta.name,
-        vault_description: &vault.meta.description,
-        vault_dir: &vault_dir,
-        secret: name,
-        scope,
-        reason,
-        caller: &caller,
-    };
-    let verdict = gate::authorize(&vault.policy, &req, judge.as_ref());
-    let decision_str = if verdict.allowed() { "allow" } else { "deny" };
-    // Audit keeps the full reason; the caller only ever sees a generic denial.
-    audit::record(
-        &vault_dir,
-        &audit::Entry::now(
-            &caller,
-            name,
-            scope,
-            &verdict.tier().to_string(),
-            decision_str,
-            &verdict.note,
-            reason,
-        ),
-    )?;
-    usage::agent(
-        &vault_dir,
-        &caller,
-        &format!("get.{decision_str}"),
-        Some(name),
-    );
-
-    if !verdict.allowed() {
-        deny_and_exit(gate::GENERIC_DENY, &caller, name, scope);
-    }
-    let tier = verdict.tier();
-    match vault.get_secret(name)? {
-        Some(value) => {
+    match gate::gated_get(&vault, &vault_dir, &caller, name, scope, reason)? {
+        gate::GatedGet::Granted { value, tier } => {
             eprintln!(
                 "{} {} (caller={caller}, scope={scope}, tier={tier})",
                 style("granted:").green().bold(),
@@ -1147,7 +1109,10 @@ fn cmd_get(
             println!("{}", *value);
             Ok(())
         }
-        None => {
+        gate::GatedGet::Denied => {
+            deny_and_exit(gate::GENERIC_DENY, &caller, name, scope);
+        }
+        gate::GatedGet::NotFound => {
             eprintln!("{} Secret '{}' not found", style("error:").red(), name);
             std::process::exit(1);
         }

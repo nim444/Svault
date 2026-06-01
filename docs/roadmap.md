@@ -18,8 +18,8 @@ For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 | Everything-encrypted-at-rest (0.9.2 – 0.9.3) | Shipped | The entire policy surface and all global config moved into encrypted stores; no plaintext config or key files remain |
 | Unified unlock (0.9.4 – 0.9.5) | Shipped | One master passphrase opens every vault (0.9.4) **and the keyring** (0.9.5) — per-vault and keyring passphrases removed; all keyslots over a random data key |
 | Layered source (0.9.6) | Shipped | Source split into a frontend-agnostic `core` plus `cli` / `tui` / `daemon` frontends (a library crate), with `mcp` / `gui` placeholders — structural only, no behavior change |
-| Conditional access + escalation (0.9.7) | Next | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
-| Agent surface — MCP (0.9.8) | Planned | A local MCP server over the existing daemon socket, `svault install`, and an agent-readable capability descriptor |
+| Agent surface — MCP (0.9.7) | Shipped | `svault mcp` — a local stdio MCP server exposing the gated `svault_get_secret` / `svault_list_vaults` tools to AI agents, with a capability descriptor that advertises the request interface, not the decision criteria |
+| Conditional access + escalation (0.9.8) | Next | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
 | Stable release (1.0.0) | Target | Final independent security review of the full agent-ready surface + distribution channels, then the first stable release |
 | YubiKey keyslot (post-1.0) | Planned | A YubiKey HMAC-SHA1 touch as an alternative unlock slot over the same master key (passphrase or touch, not 2FA) — postponed past 1.0 |
 | Desktop GUI (2.0.0) | Planned | Tauri vault manager + system tray |
@@ -148,7 +148,28 @@ vault storage, the policy engine, the AI judge, keyring/master, recovery, audit,
 without touching the CLI or TUI. (The YubiKey keyslot that previously held the
 0.9.6 slot is **postponed to post-1.0** — see [Planned (post-1.0)](#planned-post-10).)
 
-### Conditional access + anomaly escalation (0.9.7)
+### Agent surface — MCP (0.9.7, shipped)
+
+- `svault mcp` runs a local MCP server (stdio JSON-RPC) that is a thin frontend
+  over the existing gate. **It never sees the master passphrase** — it serves only
+  from already-unlocked state (the daemon's keys, or the `0600` session key). The
+  human unlocks once; every `svault_get_secret(name, scope, reason, caller)` call
+  then runs through the same policy + judge gate, audited with `source = mcp`. A
+  locked vault returns "a human must run `svault unlock`" — the agent cannot open
+  it, and high-tier secrets stay human-only.
+- **Tools:** `svault_get_secret` (the gated agent path) and `svault_list_vaults`
+  (names + lock state). See [mcp.md](mcp.md) for the security model, wiring into
+  Claude Code / Cursor, and a transcript.
+- **Capability descriptor** (inspired by WorkOS `auth.md`) — the `initialize`
+  response tells an agent *how to request* a secret (which fields to send, that
+  high-tier may be human-only) **without** revealing the decision criteria (tiers,
+  thresholds, judge prompts stay encrypted and server-side). Advertise the
+  interface, never the policy an agent could game.
+- **Follow-ups:** `svault install` to auto-write each platform's MCP config (plus
+  Claude Code `.env`-read / credential-scan hooks), and a `svault_list_secrets`
+  tool — both still planned.
+
+### Conditional access + anomaly escalation (0.9.8)
 
 - **Conditional access** — a secret can carry conditions in its encrypted policy:
   allowed time windows (e.g. only Fri 10:00–12:00 while CI runs) and required
@@ -160,25 +181,6 @@ without touching the CLI or TUI. (The YubiKey keyslot that previously held the
   notify channel). An agent can never unlock a vault or clear an escalation —
   those are human-only by design, so a brute-force pattern is stopped and handed
   to a person rather than ground down into a leak.
-
-### Agent surface — MCP (0.9.8)
-
-- `svault mcp` runs a local MCP server that is a thin client of the daemon over
-  the existing peer-UID-bonded `0600` socket. **MCP auth is same-UID plus the
-  daemon's unlocked state** — the server never sees the master passphrase or any
-  key. The human unlocks once; every `svault_get_secret(name, scope, reason,
-  caller)` call then runs through the same policy + judge gate, audited with the
-  peer UID and `source = mcp`. A locked or sealed vault returns "needs human
-  unlock / escalated" — the agent cannot open it.
-- `svault install` auto-detects the platform and writes its MCP config. **Claude
-  Code** also gets a PreToolUse hook (block direct `.env` reads) and a PostToolUse
-  hook (scan output for leaked credentials); **Cursor, Copilot, VS Code, Aider**
-  get the MCP server.
-- **Agent capability descriptor** (inspired by WorkOS `auth.md`) — a way for an
-  agent to learn *how to request* a secret (which fields to send, that high-tier
-  is human-only, how to ask for escalation) **without** revealing the decision
-  criteria (tiers, thresholds, judge criteria, and time windows stay encrypted).
-  Advertise the interface, never the policy an agent could game.
 
 ## Target — 1.0.0 (stable release)
 

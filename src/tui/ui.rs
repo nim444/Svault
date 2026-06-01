@@ -13,6 +13,7 @@ use super::theme;
 use super::{
     judge_name_label, tier_label, App, ClassifyForm, CreateForm, InitForm, JudgeEditForm,
     JudgeEntry, JudgeForm, MsgKind, Screen, SecretAddForm, SecretScreen, SettingsForm, UnlockForm,
+    VaultRow,
 };
 
 const CYAN: Color = theme::ACCENT;
@@ -44,6 +45,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Screen::Activity(scr) => draw_activity(frame, chunks[1], scr),
         Screen::Classify(form) => draw_classify(frame, chunks[1], form),
         Screen::Judge(form) => draw_judge(frame, chunks[1], form),
+        Screen::Mcp => draw_mcp(frame, chunks[1], app.daemon_running, &app.vaults),
     }
 
     draw_status(frame, chunks[2], app);
@@ -154,8 +156,8 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         match &app.screen {
             Screen::List => (
-                "↑/↓ move   enter open   c create   u unlock   l lock   s settings   shift-J judge   v activity   e export   i import   r recover   d daemon   h/? help   q quit",
-                "↑/↓ move   enter open   shift-J judge   h/? help   q quit",
+                "↑/↓ move   enter open   c create   u unlock   l lock   s settings   shift-J judge   m mcp   v activity   e export   i import   r recover   d daemon   h/? help   q quit",
+                "↑/↓ move   enter open   shift-J judge   m mcp   h/? help   q quit",
             ),
             Screen::Activity(_) => ("↑/↓ scroll   esc / b back   q quit", "↑/↓ scroll   esc back"),
             Screen::Create(_) => (
@@ -220,6 +222,10 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 "↑/↓ field   enter next/recover   esc cancel",
                 "↑/↓ field   enter next   esc cancel",
             ),
+            Screen::Mcp => (
+                "w write .mcp.json   d toggle daemon   h/? help   esc back   q quit",
+                "w write   d daemon   esc back",
+            ),
         }
     };
     // Inner width = area minus the two vertical border columns.
@@ -263,6 +269,11 @@ fn draw_help(frame: &mut Frame, area: Rect, screen: &Screen) {
             ("d / t / x", "set default · test · remove judge"),
             ("esc", "back to vault list"),
         ],
+        Screen::Mcp => &[
+            ("w", "write the svault entry into ./.mcp.json"),
+            ("d", "start / stop the daemon (so keys stay in memory)"),
+            ("esc or b", "back to vault list"),
+        ],
         // Default to the list bindings — the main hub.
         _ => &[
             ("↑/↓ or j/k", "move selection"),
@@ -277,6 +288,7 @@ fn draw_help(frame: &mut Frame, area: Rect, screen: &Screen) {
                 "shift-J",
                 "manage the AI judge (key, model, thresholds, test)",
             ),
+            ("m", "MCP server — status + wiring for AI agents"),
             ("v", "view the activity timeline (human + agent)"),
             ("e / i", "export / import an encrypted bundle"),
             ("r", "recover a vault with its recovery code"),
@@ -700,6 +712,101 @@ fn draw_classify(frame: &mut Frame, area: Rect, form: &ClassifyForm) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(" Classify · {} ", form.secret))
+        .border_style(Style::default().fg(DIM));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+/// MCP screen: readiness (daemon + unlocked vaults), the launch command, and the
+/// client config snippet, with a one-key writer for `./.mcp.json`.
+fn draw_mcp(frame: &mut Frame, area: Rect, daemon_running: bool, vaults: &[VaultRow]) {
+    let unlocked: Vec<&str> = vaults
+        .iter()
+        .filter(|v| v.unlocked)
+        .map(|v| v.name.as_str())
+        .collect();
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Local MCP server — gated secret access for AI agents (Claude Code, Cursor, …).",
+            Style::default().fg(DIM),
+        )),
+        Line::from(Span::styled(
+            "  The agent platform launches `svault mcp`; you keep a vault unlocked here.",
+            Style::default().fg(DIM),
+        )),
+        Line::from(""),
+    ];
+
+    // Preconditions: the daemon (optional) and at least one unlocked vault.
+    let (dlabel, dcolor) = if daemon_running {
+        ("running", theme::OK)
+    } else {
+        (
+            "off (optional — keys then live in the session file)",
+            theme::WARN,
+        )
+    };
+    lines.push(Line::from(vec![
+        Span::styled("  Daemon:          ", Style::default().fg(DIM)),
+        Span::styled(dlabel, Style::default().fg(dcolor)),
+    ]));
+
+    let (uvalue, ucolor) = if unlocked.is_empty() {
+        ("(none — unlock a vault first)".to_string(), theme::WARN)
+    } else {
+        (unlocked.join(", "), theme::OK)
+    };
+    lines.push(Line::from(vec![
+        Span::styled("  Unlocked vaults: ", Style::default().fg(DIM)),
+        Span::styled(uvalue, Style::default().fg(ucolor)),
+    ]));
+    lines.push(Line::from(""));
+
+    if unlocked.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  Not ready — press esc, then u to unlock a vault so the server has something to serve.",
+            Style::default().fg(theme::WARN),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  Ready — agents can fetch from the unlocked vault(s) through the policy + judge gate.",
+            Style::default().fg(theme::OK),
+        )));
+    }
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(Span::styled(
+        "  Claude Code / Cursor config — add to .mcp.json (press w to write it here):",
+        Style::default().fg(DIM),
+    )));
+    for s in [
+        "    {",
+        "      \"mcpServers\": {",
+        "        \"svault\": {",
+        "          \"command\": \"svault\",",
+        "          \"args\": [\"mcp\"],",
+        "          \"env\": { \"SVAULT_CALLER\": \"claude-code\" }",
+        "        }",
+        "      }",
+        "    }",
+    ] {
+        lines.push(Line::from(Span::styled(s, Style::default().fg(CYAN))));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  w write .mcp.json into this folder    d toggle daemon    esc back",
+        Style::default().fg(DIM),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" MCP ")
         .border_style(Style::default().fg(DIM));
     frame.render_widget(
         Paragraph::new(lines)
