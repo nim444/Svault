@@ -82,6 +82,11 @@ wait past the 6h cap). Reset between sections with `rm -rf "$SVAULT_HOME/.svault
 
 ## C. The agent gate (via the deprecated `svault get` CLI)
 
+> **Shortcut:** `scripts/qa-gate.sh` automates this section plus D and the seal
+> detection in E. You answer the interactive setup prompts (master passphrase,
+> secret values) and it asserts the gate behaviors with PASS/FAIL against an
+> isolated scratch store. The steps below are the manual equivalent.
+
 > The canonical agent door is the **MCP server** — see section F, which exercises the
 > same gate end-to-end. `svault get` is **deprecated** (it prints a deprecation note to
 > stderr and will be removed), but it shares the exact gate, so this section is a fast
