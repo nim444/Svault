@@ -5,7 +5,7 @@
 //! subcommand. All secret-handling work is delegated to [`crate::core`] and the
 //! [`crate::daemon`] client; this module is presentation and orchestration only.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use dialoguer::{Confirm, Input, Password, Select};
@@ -78,6 +78,13 @@ enum Commands {
         /// (add) What this secret is for — given to the AI judge as context.
         #[arg(long)]
         description: Option<String>,
+        /// (add) Allowed access window, local time, e.g. `mon-fri 09:00-18:00`.
+        /// Repeatable; outside every window the secret is denied.
+        #[arg(long = "window")]
+        windows: Vec<String>,
+        /// (add) Restrict this secret to these callers. Repeatable.
+        #[arg(long = "require-caller")]
+        require_callers: Vec<String>,
     },
     /// List all vaults in .svault/
     Vaults,
@@ -124,6 +131,19 @@ enum Commands {
         action: String,
         /// Caller name (for `check`).
         caller: Option<String>,
+    },
+    /// List sealed secrets awaiting human approval (one vault, or all).
+    Pending {
+        /// Vault name (positional). Omit to scan every vault.
+        vault: Option<String>,
+    },
+    /// Clear a seal so agents can request the secret again (human-only).
+    Approve {
+        /// The sealed secret's name.
+        secret: String,
+        /// Vault name. Omit to use the only vault or pick interactively.
+        #[arg(long, short = 'v')]
+        vault: Option<String>,
     },
     /// Recover a vault with its recovery code and set a new passphrase
     Recover {
@@ -239,6 +259,8 @@ pub fn run() -> Result<()> {
             tier,
             require_reason,
             description,
+            windows,
+            require_callers,
         } => cmd_secret(
             &action,
             name.as_deref(),
@@ -247,6 +269,8 @@ pub fn run() -> Result<()> {
             tier.as_deref(),
             require_reason,
             description.as_deref(),
+            &windows,
+            require_callers,
         ),
         Commands::Vaults => cmd_vaults(),
         Commands::Unlock { vault } => cmd_unlock(vault.as_deref()),
@@ -269,6 +293,8 @@ pub fn run() -> Result<()> {
             vault,
         } => cmd_get(&name, &scope, &reason, caller.as_deref(), vault.as_deref()),
         Commands::Policy { action, caller } => cmd_policy(&action, caller.as_deref()),
+        Commands::Pending { vault } => cmd_pending(vault.as_deref()),
+        Commands::Approve { secret, vault } => cmd_approve(&secret, vault.as_deref()),
         Commands::Recover { vault, force } => cmd_recover(vault.as_deref(), force),
         Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
         Commands::Import { file, name } => cmd_import(&file, name.as_deref()),
@@ -839,6 +865,7 @@ fn cmd_status() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_secret(
     action: &str,
     name: Option<&str>,
@@ -847,6 +874,8 @@ fn cmd_secret(
     tier_arg: Option<&str>,
     require_reason: bool,
     description_arg: Option<&str>,
+    window_args: &[String],
+    require_callers: Vec<String>,
 ) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta_preview = VaultMeta::load_unverified(&vault_dir)?;
@@ -918,6 +947,13 @@ fn cmd_secret(
                     .allow_empty(true)
                     .interact_text()?,
             };
+            // Conditional access (0.9.9): parse any --window specs up front so a
+            // bad spec fails before we touch the policy.
+            let windows = window_args
+                .iter()
+                .map(|s| policy::AccessWindow::parse(s))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| anyhow!("invalid --window: {e}"))?;
             // Classification lives in the encrypted policy (not the plaintext
             // meta.yaml), so a same-UID agent can't read the tier/scope/purpose
             // to plan a bypass. Re-encrypts the vault; values are untouched.
@@ -929,6 +965,8 @@ fn cmd_secret(
                     tier,
                     require_reason,
                     description,
+                    windows,
+                    require_callers,
                 },
             );
             vault.save_policy(&policy)?;
@@ -1231,6 +1269,44 @@ fn cmd_policy_check(vault: &Vault, caller: &str) -> Result<()> {
         }
     }
 
+    // Conditional access (0.9.9): show any windows / required callers.
+    let conditioned: Vec<_> = pol
+        .secrets
+        .iter()
+        .filter(|(n, r)| *n != "*" && (!r.windows.is_empty() || !r.require_callers.is_empty()))
+        .collect();
+    if !conditioned.is_empty() {
+        println!();
+        println!("{}", style("Conditional access").bold());
+        for (secret, rule) in conditioned {
+            if !rule.windows.is_empty() {
+                let specs: Vec<String> = rule.windows.iter().map(|w| w.to_string()).collect();
+                println!("  {:<20} window: {}", secret, specs.join(" | "));
+            }
+            if !rule.require_callers.is_empty() {
+                println!(
+                    "  {:<20} callers: {}",
+                    secret,
+                    rule.require_callers.join(", ")
+                );
+            }
+        }
+    }
+
+    // Sealed secrets (anomaly-escalated, awaiting `svault approve`).
+    if !pol.seals.is_empty() {
+        println!();
+        println!("{}", style("Sealed — awaiting approval").bold().yellow());
+        for (secret, seal) in &pol.seals {
+            println!(
+                "  {:<20} {} ({})",
+                secret,
+                style(&seal.trigger).dim(),
+                seal.last_caller
+            );
+        }
+    }
+
     // Audit summary for this vault.
     let mut total = 0usize;
     let mut denied = 0usize;
@@ -1298,6 +1374,95 @@ fn cmd_policy_init() -> Result<()> {
         "{}",
         style("  Classify secrets with 'svault secret add' (you'll be asked for scope/tier).")
             .dim()
+    );
+    Ok(())
+}
+
+// ── Seal / escalation review ────────────────────────────────────────────────
+
+/// List sealed secrets awaiting human approval, for one vault or all. Seals live
+/// in the encrypted policy, so each vault must be unlocked (a single master
+/// prompt opens them all). A sealed secret denies every agent get until cleared.
+fn cmd_pending(vault_name: Option<&str>) -> Result<()> {
+    let dirs = match vault_name {
+        Some(_) => vec![resolve_vault_dir(vault_name)?],
+        None => list_vault_dirs(),
+    };
+    if dirs.is_empty() {
+        println!(
+            "{}",
+            style("No vaults found. Run 'svault create' to make one.").dim()
+        );
+        return Ok(());
+    }
+
+    let mut any = false;
+    for dir in &dirs {
+        let Ok(preview) = VaultMeta::load_unverified(dir) else {
+            continue;
+        };
+        let vault = open_unlocked_or_prompt(dir, &preview.name)?;
+        for (secret, seal) in &vault.policy.seals {
+            if !any {
+                println!(
+                    "{:<20} {:<16} {:<7} {:<16} {}",
+                    style("SECRET").bold(),
+                    style("VAULT").bold(),
+                    style("DENIALS").bold(),
+                    style("LAST CALLER").bold(),
+                    style("SEALED AT").bold()
+                );
+                println!("{}", style("─".repeat(78)).dim());
+                any = true;
+            }
+            println!(
+                "{:<20} {:<16} {:<7} {:<16} {}",
+                style(secret).yellow(),
+                vault.meta.name,
+                seal.denials,
+                seal.last_caller,
+                style(&seal.sealed_at).dim()
+            );
+        }
+    }
+    if any {
+        println!();
+        println!(
+            "{}",
+            style("Clear one with 'svault approve <secret> -v <vault>'.").dim()
+        );
+    } else {
+        println!(
+            "{}",
+            style("No sealed secrets — nothing pending approval.").dim()
+        );
+    }
+    Ok(())
+}
+
+/// Clear a seal so agents can request the secret again. Human-only: requires the
+/// master to read/write the encrypted policy; an agent has no path here.
+fn cmd_approve(secret: &str, vault_name: Option<&str>) -> Result<()> {
+    let vault_dir = resolve_vault_dir(vault_name)?;
+    let preview = VaultMeta::load_unverified(&vault_dir)?;
+    let vault = open_unlocked_or_prompt(&vault_dir, &preview.name)?;
+    if !vault.policy.seals.contains_key(secret) {
+        eprintln!(
+            "{} '{}' is not sealed in vault '{}'",
+            style("error:").red(),
+            secret,
+            preview.name
+        );
+        std::process::exit(1);
+    }
+    let mut policy = vault.policy.clone();
+    policy.seals.remove(secret);
+    vault.save_policy(&policy)?;
+    usage::human(&vault_dir, "seal.cleared", Some(secret));
+    println!(
+        "{} cleared the seal on '{}' — agents may request it again",
+        style("ok:").green().bold(),
+        secret
     );
     Ok(())
 }

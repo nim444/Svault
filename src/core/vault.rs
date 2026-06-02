@@ -515,6 +515,7 @@ mod tests {
                 tier: Tier::High,
                 require_reason: true,
                 description: "prod billing dsn".into(),
+                ..Default::default()
             },
         );
         pol.callers.insert(
@@ -553,6 +554,7 @@ mod tests {
                 tier: Tier::High,
                 require_reason: true,
                 description: "secret-purpose-string".into(),
+                ..Default::default()
             },
         );
         v.save_policy(&pol).unwrap();

@@ -129,20 +129,23 @@ This is backed by a per-vault `usage.log` (`.svault/<name>/usage.log`, JSON line
 
 ## Secret browser
 
-`Enter` on an unlocked vault opens its secrets, shown as a table with the policy classification that gates each one — **SECRET · TIER · SCOPE · REASON? · DESCRIPTION** (an unclassified secret reads `unset`, tier colour-coded low/medium/high):
+`Enter` on an unlocked vault opens its secrets, shown as a table with the policy classification that gates each one — **SECRET · TIER · SCOPE · REASON? · DESCRIPTION** (an unclassified secret reads `unset`, tier colour-coded low/medium/high). A **sealed** secret (anomaly-escalated) is shown in red with `SEALED — press A to approve` in its description:
 
 | Key | Action |
 |---|---|
 | `↑` / `↓` or `j` / `k` | Move between secrets |
 | `a` | Add a secret |
-| `c` | Reclassify the selected secret (scope / tier / require-reason / description) |
+| `c` | Reclassify the selected secret (scope / tier / require-reason / description / windows / required callers) |
+| `A` | Approve — clear the seal on a SEALED secret (human-only) |
 | `Enter` / `g` | View a secret value (`space` toggles masked / revealed) |
 | `d` | Delete a secret (with `y` / `n` confirm) |
 | `l` | Lock the vault and return to the list |
 | `Esc` / `b` | Back to the vault list |
 | `?` | Show the help overlay |
 
-The **add-secret** form also classifies the secret: name, value, **scope**, **description** (optional — what it is for, read by the AI judge), **tier** (low/medium/high, defaulting to the vault's default tier), and a **require-reason** toggle. `c` opens the same fields for an existing secret to **reclassify** it, re-encrypting the vault's policy without touching the value. `space` / `←` `→` cycle the tier and toggle require-reason; the text fields accept typing and paste. The classification (and the vault's caller and access rules) lives AES-256-GCM encrypted inside `vault.enc`, so it is unreadable at rest. This is the same classification you can set non-interactively with `svault secret add --scope --tier --require-reason --description`, and it is what the policy gate enforces.
+The **add-secret** form also classifies the secret: name, value, **scope**, **description** (optional — what it is for, read by the AI judge), **tier** (low/medium/high, defaulting to the vault's default tier), and a **require-reason** toggle. `c` opens the **reclassify** form, which adds two **conditional-access** fields — **windows** (comma-separated, e.g. `mon-fri 09:00-18:00`, local time) and **required callers** (comma-separated) — re-encrypting the vault's policy without touching the value. `space` / `←` `→` cycle the tier and toggle require-reason; the text fields accept typing and paste. The classification (and the vault's caller and access rules) lives AES-256-GCM encrypted inside `vault.enc`, so it is unreadable at rest. This is the same classification you can set non-interactively with `svault secret add --scope --tier --require-reason --description --window --require-caller`, and it is what the policy gate enforces.
+
+**Seal & escalate:** after repeated denials on a medium/high secret the gate seals it — agent requests are denied until you approve. Press `A` here to clear the seal (or `svault approve` / `svault pending` from the CLI for a cross-vault view). A seal never blocks you: `Enter` still reveals the value.
 
 A locked vault routes through a passphrase prompt first, then resumes the action you asked for.
 

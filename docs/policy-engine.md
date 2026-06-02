@@ -131,18 +131,23 @@ svault get DB_URL --scope database --reason "run nightly migration" --caller cla
 
 ```mermaid
 flowchart TD
-    REQ["svault get"] --> ID["Identify caller<br/>(--caller, else $SVAULT_CALLER, else default)"]
+    REQ["svault get"] --> SEAL{"Secret sealed?"}
+    SEAL -->|yes| DENY["Deny + audit"]
+    SEAL -->|no| ID["Identify caller<br/>(--caller, else $SVAULT_CALLER, else default)"]
     ID --> RSN{"Reason valid?<br/>(>=10 chars, not a placeholder)"}
-    RSN -->|no| DENY["Deny + audit"]
+    RSN -->|no| DENY
     RSN -->|yes| CAP{"Caller holds the scope<br/>& it matches the secret?"}
     CAP -->|no| DENY
-    CAP -->|yes| RATE{"Within rate limit<br/>& no burst?"}
+    CAP -->|yes| COND{"Conditions met?<br/>(required caller + time window)"}
+    COND -->|no| DENY
+    COND -->|yes| RATE{"Within rate limit<br/>& no burst?"}
     RATE -->|no| DENY
     RATE -->|yes| TIER{"Tier?"}
     TIER -->|low| ALLOW["Return value + audit"]
     TIER -->|medium / high| JUDGE{"AI judge<br/>(if configured)"}
     JUDGE -->|allow| ALLOW
     JUDGE -->|deny| DENY
+    DENY -.->|repeated denials<br/>on a medium/high secret| SEALIT["Seal + escalate to human"]
 ```
 
 On **allow**, the value is printed to stdout (status goes to stderr, so an agent
@@ -164,6 +169,54 @@ the AI judge **enabled**:
 With the judge **disabled** (keyring locked, global switch off, no resolved key, or
 the vault's per-vault `judge.enabled = false`), behaviour falls back to the static
 tier rules: low and medium allowed (medium flagged), **high = human-only**.
+
+## Conditional access (windows + required callers)
+
+A secret can carry **conditions** in its encrypted policy that narrow *when* and
+*by whom* it may be retrieved. They are checked after the scope/caller checks and,
+like every other denial, return the same generic message — an agent can't read the
+window or the required-caller list to wait for it or impersonate its way in.
+
+- **Time windows** — allowed access windows in **local machine time**, e.g. only
+  during a nightly job. Outside every window the request is denied.
+- **Required callers** — restrict a secret to specific caller identities, on top of
+  the scope/caller rules.
+
+Set them when adding a secret (repeatable flags), or later from the TUI classify
+screen (`c`):
+
+```bash
+# Only Mon–Fri 09:00–18:00, and only the 'ci' caller.
+svault secret add DEPLOY_KEY --scope deploy --tier high \
+  --window "mon-fri 09:00-18:00" --require-caller ci
+```
+
+Window spec: `mon-fri 09:00-18:00`, `fri 10:00-12:00`, or `09:00-17:00` (no day =
+any day); 24-hour `HH:MM`, start inclusive / end exclusive, same-day only (no
+cross-midnight spans). Days are `mon`..`sun`, single / range / comma-list. View a
+vault's conditions with `svault policy check <caller>`.
+
+## Seal & escalate
+
+Repeated denials are not just logged — they **seal** the secret. After
+**5 denials within 5 minutes** on a *medium or high* secret (counted across any
+caller, so rotating the `--caller` string doesn't help), Svault writes a **seal**
+into the encrypted policy. While sealed, every gated agent `get` is denied — even
+an otherwise-valid one — until a **human** clears it. An agent can never unseal a
+secret or unlock a vault; a brute-force pattern is stopped and handed to a person
+rather than ground down into a leak.
+
+A seal blocks the **agent path only**. A human still reads the secret directly with
+`svault secret get`, and is who clears the seal:
+
+```bash
+svault pending                 # list sealed secrets awaiting approval (all vaults)
+svault approve DEPLOY_KEY -v prod   # clear the seal — agents may request it again
+```
+
+In the TUI, sealed secrets are marked in the secret browser; press `A` to approve
+(clear) the selected one. Low-tier secrets never seal (they auto-allow — there is
+nothing to grind against).
 
 ## Per-secret classification (encrypted)
 
@@ -228,6 +281,8 @@ svault judge test --judge strict --reason "run the nightly database migration" -
 ## Helper commands
 
 - `svault policy init` — seed default caller rules into a vault's encrypted policy (unlocks the vault).
-- `svault policy check <caller>` — unlock the vault and show a caller's scopes, the classified secrets it can reach, its rate limit, and recent activity / denials.
+- `svault policy check <caller>` — unlock the vault and show a caller's scopes, the classified secrets it can reach, its rate limit, any conditional access (windows / required callers), sealed secrets, and recent activity / denials.
+- `svault pending [VAULT]` — list sealed secrets awaiting human approval (one vault, or all).
+- `svault approve <secret> -v <vault>` — clear a seal so agents may request the secret again (human-only).
 
 Every request is appended to `.svault/<vault>/audit.log` (gitignored, mode `0600`).

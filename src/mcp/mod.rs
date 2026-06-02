@@ -48,10 +48,12 @@ Optionally pass `vault` (required only if several vaults exist) and `caller` (yo
 agent identity). Low-sensitivity secrets are returned directly; medium/high ones are \
 evaluated by a policy engine and an AI judge against your stated reason — a vague, \
 mismatched, or fabricated reason is denied with a generic message and no value. \
-High-sensitivity secrets may be human-only. If a vault is locked, the call returns an \
-error asking a human to run `svault unlock`; you cannot unlock it yourself. Use \
-`svault_list_vaults` to discover vaults and their lock state. Every request is \
-audited — never invent a reason to pass the gate.";
+High-sensitivity secrets may be human-only. Some secrets are further restricted to \
+certain callers or times, or may be temporarily sealed after repeated denials; in every \
+such case you get the same generic denial and only a human can change it, so do not retry \
+in a loop. If a vault is locked, the call returns an error asking a human to run `svault \
+unlock`; you cannot unlock it yourself. Use `svault_list_vaults` to discover vaults and \
+their lock state. Every request is audited — never invent a reason to pass the gate.";
 
 /// Run the MCP server over stdio until EOF. Tags this process as the `mcp`
 /// surface so audit/usage records are stamped accordingly.
@@ -446,8 +448,7 @@ mod tests {
         SecretRule {
             scope: scope.to_string(),
             tier,
-            require_reason: false,
-            description: String::new(),
+            ..Default::default()
         }
     }
 
@@ -570,6 +571,50 @@ mod tests {
         let r = &locked[&7]["result"];
         assert_eq!(r["isError"], json!(true));
         assert!(text_of(r).contains("locked"));
+
+        std::env::set_current_dir(prev).unwrap();
+    }
+
+    #[test]
+    fn sealed_secret_returns_generic_denial_with_no_value() {
+        let _cwd = testlock::CWD_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".svault").unwrap();
+        let dir = Path::new(".svault/db");
+        let meta = VaultMeta::new("db".into(), "demo".into(), VaultSettings::default());
+        let mut policy = VaultPolicyData::default();
+        policy
+            .secrets
+            .insert("API_KEY".into(), classify("database", Tier::Medium));
+        // Pre-seal the secret (as the gate would after sustained abuse).
+        policy.seals.insert(
+            "API_KEY".into(),
+            crate::core::policy::Seal {
+                sealed_at: "2026-06-02T00:00:00Z".into(),
+                trigger: "5 denials in 300s".into(),
+                last_caller: "attacker".into(),
+                denials: 5,
+            },
+        );
+        let v = Vault::init(dir, PASS, meta, policy).unwrap();
+        v.add_secret("API_KEY", "super-secret-value").unwrap();
+        let opened = Vault::open(dir, PASS).unwrap();
+        session::unlock_with_key(dir, opened.key().bytes()).unwrap();
+
+        // Even a well-formed, on-scope request is denied while sealed — and the
+        // value never leaks.
+        let resps = run_session(&[get_secret_req(
+            1,
+            "API_KEY",
+            "legitimate use of the api key for the nightly job",
+        )]);
+        let r = &resps[&1]["result"];
+        assert_eq!(r["isError"], json!(true));
+        assert_eq!(text_of(r), gate::GENERIC_DENY);
+        assert!(!text_of(r).contains("super-secret-value"));
 
         std::env::set_current_dir(prev).unwrap();
     }

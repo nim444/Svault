@@ -25,8 +25,15 @@ otherwise. The human unlocks once; the agent then asks through the gate.
   **human-only** when no judge is configured.
 - **Denials are generic.** A denied request gets a single opaque message
   (`request not authorized for this secret`). The real reason — judge score,
-  scope/caller mismatch, rate limit — is recorded only in the audit log, so an
-  agent can't probe its way to a passing request.
+  scope/caller mismatch, rate limit, an out-of-window or wrong-caller
+  **condition**, or a **seal** — is recorded only in the audit log, so an agent
+  can't probe its way to a passing request, read a time window to wait for it, or
+  tell a seal from any other denial.
+- **Sealed secrets stay sealed for the agent.** Once a secret is sealed (after
+  repeated denials), every MCP `get` returns the same generic denial until a human
+  clears it; the agent cannot unseal it. The capability descriptor warns that some
+  secrets are restricted by caller/time or may be sealed, and that a denial may be
+  final — so a well-behaved agent stops rather than retrying in a loop.
 - **Everything is audited**, stamped `source = mcp`, and visible in the activity
   timeline (TUI `v`) so you can see exactly what an agent asked for and when.
 

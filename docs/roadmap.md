@@ -20,7 +20,7 @@ For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 | Layered source (0.9.6) | Shipped | Source split into a frontend-agnostic `core` plus `cli` / `tui` / `daemon` frontends (a library crate), with `mcp` / `gui` placeholders — structural only, no behavior change |
 | Agent surface — MCP (0.9.7) | Shipped | `svault mcp` — a local stdio MCP server exposing the gated `svault_get_secret` / `svault_list_vaults` tools to AI agents, with a capability descriptor that advertises the request interface, not the decision criteria |
 | Hardware-key unlock + hardening (0.9.8) | Shipped | YubiKey (FIDO2 hmac-secret) unlock as an alternative keyslot (passphrase or touch, not 2FA); a 6-hour re-auth cap on every unlock path; a first-run onboarding flow with an app-level TUI sign-in / logout; storage is local-only and the docs are repositioned honestly |
-| Conditional access + escalation (0.9.9) | Next | Time-window / caller conditions in the encrypted policy; brute-force and anomaly patterns seal a secret and escalate to a human |
+| Conditional access + escalation (0.9.9) | Shipped | Time-window / caller conditions in the encrypted policy; repeated denials seal a secret and escalate to a human (`svault pending` / `approve`, TUI `A`); agents never self-clear |
 | Stable release (1.0.0) | Target | Final independent security review of the full agent-ready surface + distribution channels, then the first stable release |
 | Desktop GUI (2.0.0) | Planned | Tauri vault manager + system tray |
 
@@ -193,18 +193,20 @@ without touching the CLI or TUI.
   rather than implying isolation. The never-wired cloud/self-hosted/s3 storage
   placeholders and the cloud roadmap were removed; storage is local-only.
 
-### Conditional access + anomaly escalation (0.9.9)
+### Conditional access + anomaly escalation (0.9.9, shipped)
 
-- **Conditional access** — a secret can carry conditions in its encrypted policy:
-  allowed time windows (e.g. only Fri 10:00–12:00 while CI runs) and required
-  caller(s). Outside the window the agent gets the same generic denial; it cannot
-  read the window to wait for it.
-- **Seal and escalate** — repeated denials, bursts, or out-of-window probing
-  against a medium/high secret **seal** it and raise an escalation that only a
-  human can clear (`svault approve`, a TUI pending-approvals view, and later a
-  notify channel). An agent can never unlock a vault or clear an escalation —
-  those are human-only by design, so a brute-force pattern is stopped and handed
-  to a person rather than ground down into a leak.
+- **Conditional access** — a secret carries conditions in its encrypted policy:
+  allowed time windows (local time, e.g. `mon-fri 09:00-18:00`) and required
+  caller(s). Outside the window, or for a non-required caller, the agent gets the
+  same generic denial; it cannot read the window to wait for it. Set with
+  `svault secret add --window … --require-caller …` or the TUI classify screen.
+- **Seal and escalate** — repeated denials against a medium/high secret (5 within
+  5 minutes, counted across any caller) **seal** it in the encrypted policy. While
+  sealed, every agent `get` is denied until a human clears it with `svault approve`
+  (or `A` in the TUI secret browser); `svault pending` lists what's awaiting
+  approval. An agent can never unlock a vault or clear a seal — those are human-only
+  by design, so a brute-force pattern is stopped and handed to a person rather than
+  ground down into a leak. (A notify channel for escalations is a later add.)
 
 ## Target — 1.0.0 (stable release)
 

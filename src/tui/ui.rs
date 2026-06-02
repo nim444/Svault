@@ -249,8 +249,8 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                     ("y confirm delete   n cancel", "y delete   n cancel")
                 } else {
                     (
-                        "↑/↓ move   enter view   a add   c classify   d delete   l lock   h/? help   esc back",
-                        "↑/↓ move   enter view   c classify   h/? help   esc back",
+                        "↑/↓ move   enter view   a add   c classify   A approve   d delete   l lock   h/? help   esc back",
+                        "↑/↓ move   enter view   c classify   A approve   esc back",
                     )
                 }
             }
@@ -324,7 +324,8 @@ fn draw_help(frame: &mut Frame, area: Rect, screen: &Screen) {
             ("↑/↓ or j/k", "move selection"),
             ("enter or g", "reveal secret value"),
             ("a", "add a secret"),
-            ("c", "classify (tier / scope / reason / description)"),
+            ("c", "classify (tier / scope / reason / windows / callers)"),
+            ("A", "approve (clear a SEALED secret)"),
             ("d", "delete the selected secret"),
             ("l", "lock the vault"),
             ("h or ?", "show this help"),
@@ -763,13 +764,19 @@ fn draw_classify(frame: &mut Frame, area: Rect, form: &ClassifyForm) {
     let fields = [
         ("Scope", form.scope.clone()),
         ("Description", form.description.clone()),
+        ("Windows", form.windows.clone()),
+        ("Require callers", form.require_callers.clone()),
         ("Tier", tier_label(form.tier).to_string()),
         ("Require reason", yes_no(form.require_reason).to_string()),
     ];
     let mut lines = field_lines(&fields, form.focus, form.focus_is_text());
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  Edits the signed policy for this secret — the value is not touched.",
+        "  Edits the encrypted policy for this secret — the value is not touched.",
+        Style::default().fg(DIM),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  Windows: e.g. 'mon-fri 09:00-18:00', comma-separated; callers comma-separated.",
         Style::default().fg(DIM),
     )));
     lines.push(Line::from(Span::styled(
@@ -1722,16 +1729,30 @@ fn draw_secrets(frame: &mut Frame, area: Rect, scr: &mut SecretScreen) {
                     Some(true) => "yes",
                     _ => "-",
                 };
+                let sealed = scr.seals.contains_key(n);
                 let desc = rule
                     .map(|r| r.description.clone())
                     .filter(|s| !s.is_empty())
                     .unwrap_or_else(|| "-".to_string());
+                let (desc, desc_style) = if sealed {
+                    (
+                        "SEALED — press A to approve".to_string(),
+                        Style::default().fg(theme::ERR).add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    (desc, Style::default().fg(theme::MUTED))
+                };
+                let name_style = if sealed {
+                    Style::default().fg(theme::ERR)
+                } else {
+                    Style::default().fg(CYAN)
+                };
                 Row::new(vec![
-                    Cell::from(n.clone()).style(Style::default().fg(CYAN)),
+                    Cell::from(n.clone()).style(name_style),
                     Cell::from(tier).style(tier_style),
                     Cell::from(scope).style(Style::default().fg(theme::TEXT)),
                     Cell::from(reason).style(Style::default().fg(theme::MUTED)),
-                    Cell::from(desc).style(Style::default().fg(theme::MUTED)),
+                    Cell::from(desc).style(desc_style),
                 ])
             })
             .collect();

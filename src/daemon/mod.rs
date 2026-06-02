@@ -367,6 +367,9 @@ mod imp {
                     peer_uid,
                 );
                 if !verdict.allowed() {
+                    // Sustained abuse seals the secret (encrypted policy) so every
+                    // later agent get is denied until a human clears it.
+                    gate::maybe_seal(&v, &dir, &secret, verdict.tier(), &caller);
                     return Response::Denied {
                         reason: gate::GENERIC_DENY.to_string(),
                     };
@@ -1102,8 +1105,7 @@ mod imp {
                 crate::core::policy::SecretRule {
                     scope: scope.to_string(),
                     tier,
-                    require_reason: false,
-                    description: String::new(),
+                    ..Default::default()
                 },
             );
             let v = Vault::init(&dir, PASS, meta, policy).unwrap();

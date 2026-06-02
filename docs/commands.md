@@ -69,7 +69,7 @@ re-entered. This bounds how long an already-unlocked vault can be read.
 ## Secrets
 
 ```bash
-svault secret add    <NAME> [-v VAULT] [--scope S] [--tier low|medium|high] [--require-reason] [--description "..."]
+svault secret add    <NAME> [-v VAULT] [--scope S] [--tier low|medium|high] [--require-reason] [--description "..."] [--window "mon-fri 09:00-18:00"]... [--require-caller NAME]...
 svault secret get    <NAME> [-v VAULT]   # retrieve a secret value (human path)
 svault secret list          [-v VAULT]   # list secret names (never values)
 svault secret remove <NAME> [-v VAULT]   # delete a secret
@@ -81,7 +81,9 @@ policy (never the plaintext `meta.yaml`). The flags drive non-interactive use;
 omit them and you're prompted, defaulting to the vault's `default_tier`.
 `--require-reason` makes the AI judge run for that secret even at low tier, and
 `--description` records what the secret is for, so the judge can weigh each
-request's stated reason against it.
+request's stated reason against it. `--window` (repeatable, local time) and
+`--require-caller` (repeatable) add **conditional access** — see
+[policy-engine.md](policy-engine.md#conditional-access-windows--required-callers).
 
 ## Policy engine — the agent path
 
@@ -95,7 +97,9 @@ in the audit log — and both `policy` subcommands unlock the vault.
 ```bash
 svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # enforced, gated request
 svault policy init                 # seed caller rules into the vault's encrypted policy
-svault policy check <caller>       # what a caller can access + recent activity (unlocks the vault)
+svault policy check <caller>       # what a caller can access, conditions, seals + recent activity (unlocks the vault)
+svault pending [VAULT]             # list sealed secrets awaiting human approval (one vault, or all)
+svault approve <NAME> [-v VAULT]   # clear a seal so agents may request the secret again (human-only)
 svault mcp                         # run the local MCP server (stdio) — gated access for AI agents (see mcp.md)
 ```
 

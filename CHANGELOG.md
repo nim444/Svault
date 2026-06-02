@@ -5,6 +5,43 @@ All notable changes to Svault are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.9] - 2026-06-02
+
+The **conditional access + seal/escalate** release — the last feature milestone
+before 1.0. Secrets can now be gated by *when* and *by whom*, and sustained abuse
+seals a secret and hands it to a human instead of letting an agent grind against it.
+
+### Added
+- **Conditional access** — a secret can carry conditions in its encrypted policy:
+  allowed **time windows** (local machine time, e.g. `mon-fri 09:00-18:00`,
+  `fri 10:00-12:00`, or `09:00-17:00`; 24h, start inclusive / end exclusive,
+  same-day) and **required callers**. Outside a window, or for a non-required
+  caller, the request is denied with the same generic message — an agent can't read
+  the window to wait for it or learn the required-caller list. Set with
+  `svault secret add --window … --require-caller …` (both repeatable) or the TUI
+  classify screen (`c`), which gains *Windows* and *Required callers* fields.
+- **Seal & escalate** — repeated denials on a *medium/high* secret (5 within 5
+  minutes, counted across any caller) **seal** it in the encrypted policy. While
+  sealed, every gated agent `get` is denied — even an otherwise-valid one — until a
+  **human** clears it. A seal blocks the agent path only: a human still reads the
+  secret via `svault secret get` and clears the seal. Agents can never unseal or
+  unlock — human-only by design.
+- **`svault pending [VAULT]`** — list sealed secrets awaiting approval (one vault or
+  all). **`svault approve <secret> -v <vault>`** — clear a seal. In the TUI, sealed
+  secrets are marked in the secret browser and `A` clears the selected one.
+- `svault policy check` now shows each secret's windows / required callers and any
+  active seals.
+
+### Changed
+- The MCP capability descriptor notes that some secrets are restricted by
+  caller/time or may be temporarily sealed, and that a denial can be final and
+  require a human — without revealing the window or seal criteria, so a well-behaved
+  agent stops rather than retrying in a loop.
+
+### Notes
+- Policy format is extended additively (`serde` defaults), so existing `.svault/`
+  vaults load unchanged — no migration needed.
+
 ## [0.9.8] - 2026-06-02
 
 The **hardware-key + hardening** release: YubiKey (FIDO2) unlock, a 6-hour re-auth

@@ -139,6 +139,33 @@ pub fn recent(vault_dir: &Path, caller: &str, since: DateTime<Utc>) -> Result<Ve
     Ok(out)
 }
 
+/// Read all entries for `secret` with a timestamp at or after `since`, across
+/// every caller. Used by the seal detector, which counts denials for a secret
+/// regardless of which caller string was asserted (an abuser can rotate it).
+pub fn recent_for_secret(
+    vault_dir: &Path,
+    secret: &str,
+    since: DateTime<Utc>,
+) -> Result<Vec<Entry>> {
+    let path = audit_path(vault_dir);
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Ok(vec![]);
+    };
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<Entry>(line) {
+            if entry.secret == secret && entry.timestamp().is_some_and(|t| t >= since) {
+                out.push(entry);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Read every well-formed entry in the log (any caller, any time). Used by
 /// `svault policy check` to summarize activity.
 pub fn all(vault_dir: &Path) -> Result<Vec<Entry>> {
