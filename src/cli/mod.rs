@@ -1139,9 +1139,19 @@ fn cmd_get(
     }
 
     // No daemon (or vault not unlocked there): run the SAME gate locally against
-    // the decrypted, key-authenticated policy, then fetch from the session/prompt.
+    // the decrypted, key-authenticated policy. The agent path NEVER prompts — it
+    // reads only an already-unlocked session (like `svault mcp`). A locked vault is
+    // a dead end: prompting here would let an agent induce a master entry that caches
+    // the vault for 6h and is then readable via the ungated human path.
     // `gate::gated_get` is the shared enforcement path (also used by `svault mcp`).
-    let vault = open_unlocked_or_prompt(&vault_dir, &meta_preview.name)?;
+    let Some(vault) = open_unlocked_only(&vault_dir) else {
+        eprintln!(
+            "{} vault '{}' is locked — a human must run 'svault unlock' first",
+            style("denied:").red().bold(),
+            meta_preview.name
+        );
+        std::process::exit(1);
+    };
     match gate::gated_get(&vault, &vault_dir, &caller, name, scope, reason)? {
         gate::GatedGet::Granted { value, tier } => {
             eprintln!(
@@ -1445,7 +1455,10 @@ fn cmd_pending(vault_name: Option<&str>) -> Result<()> {
 fn cmd_approve(secret: &str, vault_name: Option<&str>) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
     let preview = VaultMeta::load_unverified(&vault_dir)?;
-    let vault = open_unlocked_or_prompt(&vault_dir, &preview.name)?;
+    // Clearing a seal is a human-only escalation: require the master credential
+    // NOW, ignoring any cached session, so a same-UID process can't ride a
+    // lingering unlock to approve unattended.
+    let vault = open_with_fresh_master(&vault_dir, &preview.name)?;
     if !vault.policy.seals.contains_key(secret) {
         eprintln!(
             "{} '{}' is not sealed in vault '{}'",
@@ -1691,6 +1704,56 @@ fn resolve_vault_dir(vault_name: Option<&str>) -> Result<PathBuf> {
 /// session *key* so the passphrase is neither re-entered nor stored on disk.
 /// Falls back to a passphrase prompt when the vault is locked or the cached
 /// session is stale/invalid.
+/// Open a vault **only** from an existing unlocked session — never prompt for a
+/// credential. Returns `None` when the vault is locked. The agent `get` path uses
+/// this (mirroring `svault mcp`) so an agent can't induce a master prompt: if a
+/// human typed it, the vault would be cached for the full 6h and then readable via
+/// the *ungated* human path. A locked vault is a dead end for the agent — a human
+/// must `svault unlock` first.
+fn open_unlocked_only(vault_dir: &Path) -> Option<Vault> {
+    if session::is_unlocked(vault_dir) {
+        if let Some(key) = session::get_key(vault_dir) {
+            if let Ok(v) = Vault::open_with_key(vault_dir, VaultKey::from_bytes(key)) {
+                return Some(v);
+            }
+            let _ = session::lock(vault_dir); // stale/invalid cached key — drop it
+        }
+    }
+    None
+}
+
+/// Open a vault by forcing a **fresh** master credential — the cached session is
+/// ignored. Privileged human-only actions (clearing a seal) use this so a same-UID
+/// process can't ride a lingering session to perform them. On a vault with a master
+/// keyslot the fresh master both proves human presence and unwraps the data key; a
+/// legacy own-passphrase vault re-prompts its passphrase. In a non-TTY context the
+/// prompt fails, which correctly refuses unattended approval.
+fn open_with_fresh_master(vault_dir: &Path, vault_name: &str) -> Result<Vault> {
+    if master::vault_has_keyslot(vault_dir) {
+        let master = ensure_master_unlocked_inner(false, true)?;
+        let dek = master.unwrap_dek(vault_dir).map_err(|e| {
+            eprintln!("{} {}", style("error:").red(), e);
+            std::process::exit(1);
+            #[allow(unreachable_code)]
+            e
+        })?;
+        session::unlock_with_key(vault_dir, dek.bytes()).ok();
+        return Vault::open_with_key(vault_dir, dek).map_err(|e| {
+            eprintln!("{} {}", style("error:").red(), e);
+            std::process::exit(1);
+            #[allow(unreachable_code)]
+            e
+        });
+    }
+    let passphrase = prompt_secret(format!("  Passphrase for '{vault_name}'"))?;
+    Vault::open(vault_dir, &passphrase).map_err(|e| {
+        eprintln!("{} {}", style("error:").red(), e);
+        std::process::exit(1);
+        #[allow(unreachable_code)]
+        e
+    })
+}
+
 fn open_unlocked_or_prompt(vault_dir: &Path, vault_name: &str) -> Result<Vault> {
     if session::is_unlocked(vault_dir) {
         if let Some(key) = session::get_key(vault_dir) {
@@ -1944,8 +2007,18 @@ fn prompt_new_passphrase(label: &str, force: bool) -> Result<Zeroizing<String>> 
 /// set a new one. The single place the "first time → set a passphrase" flow
 /// lives, shared by `create` and `unlock`.
 fn ensure_master_unlocked(force: bool) -> Result<master::Master> {
-    if let Some(m) = master::open_from_session() {
-        return Ok(m);
+    ensure_master_unlocked_inner(force, false)
+}
+
+/// As [`ensure_master_unlocked`], but `fresh` skips the cached master session and
+/// forces the human to re-enter the master credential (passphrase or YubiKey
+/// touch) now. Privileged human-only actions — clearing a seal — use this so a
+/// lingering session can't let a same-UID process perform them unattended.
+fn ensure_master_unlocked_inner(force: bool, fresh: bool) -> Result<master::Master> {
+    if !fresh {
+        if let Some(m) = master::open_from_session() {
+            return Ok(m);
+        }
     }
     if master::exists() {
         // Offer the YubiKey when one is enrolled and plugged in. It's an

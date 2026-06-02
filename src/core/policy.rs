@@ -27,6 +27,15 @@ use crate::core::meta::{AccessConfig, AllowAgent, VaultJudgeConfig};
 const BURST_WINDOW_SECS: i64 = 10;
 const BURST_MAX: usize = 5;
 
+/// Caller-agnostic burst ceiling: more than this many *allowed* reads of a
+/// single secret inside [`BURST_WINDOW_SECS`], counted across **every** caller,
+/// is denied. The per-caller [`BURST_MAX`] and rate limit are keyed on the
+/// self-asserted `--caller` string, so an abuser could evade them by rotating
+/// caller names; this ceiling can't be sidestepped that way (it mirrors the
+/// caller-agnostic seal detector). Set above [`BURST_MAX`] so a few legitimate
+/// distinct callers reading the same secret don't trip it.
+const SECRET_BURST_MAX: usize = 10;
+
 /// Seal trigger: this many denials for one secret inside [`SEAL_WINDOW_SECS`]
 /// seals it (medium/high only) and escalates to a human. The seal then denies
 /// every gated agent get until a human clears it — the agent can never
@@ -500,11 +509,30 @@ fn rate_and_burst(req: &Request, rate_limit: &str) -> Option<String> {
             "burst detected (>= {BURST_MAX} requests in {BURST_WINDOW_SECS}s)"
         ));
     }
+
+    // Caller-agnostic backstop: the per-caller checks above key on the
+    // self-asserted `--caller`, so an abuser can rotate caller names to dodge
+    // them. Count allowed reads of THIS secret across every caller — a ceiling
+    // here can't be evaded by cycling identities (same idea as the seal
+    // detector, which counts denials per-secret across callers).
+    if allowed_count_for_secret(req.vault_dir, req.secret, burst_since) >= SECRET_BURST_MAX {
+        return Some(format!(
+            "secret burst detected (>= {SECRET_BURST_MAX} reads in {BURST_WINDOW_SECS}s across all callers)"
+        ));
+    }
     None
 }
 
 fn allowed_count(vault_dir: &Path, caller: &str, since: DateTime<Utc>) -> usize {
     audit::recent(vault_dir, caller, since)
+        .map(|entries| entries.iter().filter(|e| e.decision == "allow").count())
+        .unwrap_or(0)
+}
+
+/// Allowed reads of `secret` since `since`, counted across **every** caller —
+/// the rotation-proof companion to [`allowed_count`].
+fn allowed_count_for_secret(vault_dir: &Path, secret: &str, since: DateTime<Utc>) -> usize {
+    audit::recent_for_secret(vault_dir, secret, since)
         .map(|entries| entries.iter().filter(|e| e.decision == "allow").count())
         .unwrap_or(0)
 }
@@ -704,6 +732,35 @@ mod tests {
         }
         let d = evaluate(&p, &req(dir.path(), "API_KEY", "api", "fast"));
         assert!(!d.is_allow());
+    }
+
+    #[test]
+    fn caller_rotation_cannot_evade_the_per_secret_burst_ceiling() {
+        // An abuser rotating the self-asserted caller stays under the per-caller
+        // BURST_MAX for each name, but the caller-agnostic SECRET_BURST_MAX counts
+        // allowed reads of the secret across every caller and still trips.
+        let dir = TempDir::new().unwrap();
+        let mut p = VaultPolicyData::default();
+        // Each rotated caller is well under its own per-caller burst.
+        for n in 0..SECRET_BURST_MAX {
+            let who = format!("rot{n}");
+            p.callers.insert(who.clone(), caller(&["api"], "1000/hour"));
+            audit::record(
+                dir.path(),
+                &Entry::now(&who, "API_KEY", "api", "low", "allow", "ok", "seed"),
+            )
+            .unwrap();
+        }
+        p.secrets.insert("API_KEY".into(), rule("api", Tier::Low));
+        // A fresh, never-before-seen caller would pass every per-caller check,
+        // yet the secret has already been read SECRET_BURST_MAX times.
+        p.callers
+            .insert("newcomer".into(), caller(&["api"], "1000/hour"));
+        let d = evaluate(&p, &req(dir.path(), "API_KEY", "api", "newcomer"));
+        assert!(
+            !d.is_allow(),
+            "per-secret ceiling should deny across callers"
+        );
     }
 
     #[test]

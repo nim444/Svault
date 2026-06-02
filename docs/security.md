@@ -50,6 +50,17 @@ message; the detailed reason (judge score and rationale, scope/caller mismatch,
 rate limit) is recorded in the audit log for the human, never returned to the
 caller — so an agent can't hill-climb a denied request into a passing one.
 
+**The agent path never prompts, and never grows past a self-asserted caller.** A
+locked vault is a dead end for `svault get` / `svault mcp`: they read only an
+already-unlocked session and return "a human must run `svault unlock`" rather than
+prompting (so an agent can't induce a master entry that would cache the vault for the
+session and expose it via the ungated human `secret get`). The per-caller rate and
+burst limits key on the self-asserted `--caller`, which an agent could rotate; on top
+of them a **caller-agnostic per-secret burst ceiling** caps allowed reads of a single
+secret across *all* callers, so rotating caller names can't evade burst detection.
+Clearing a seal (`svault approve`) requires a **fresh** master credential — the cached
+session is ignored — so a lingering unlock can't be used to approve unattended.
+
 This raises the bar for cooperative and semi-trusted agents and produces a
 tamper-resistant audit trail. It is **not** a sandbox against a hostile same-UID
 process (see [Threat model](#threat-model) below).

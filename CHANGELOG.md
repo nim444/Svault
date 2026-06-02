@@ -38,6 +38,29 @@ seals a secret and hands it to a human instead of letting an agent grind against
   require a human — without revealing the window or seal criteria, so a well-behaved
   agent stops rather than retrying in a loop.
 
+### Hardened
+Acting on the three independent 0.9.9 security reviews (`docs/security-review/`), the
+following were fixed in this release so 1.0 is a test-and-ship, not a fix:
+- **Agent `get` never prompts.** When no daemon holds the vault and it is locked, the
+  agent path now returns "locked — a human must run `svault unlock`" instead of
+  prompting for the master (mirroring `svault mcp`). This closes the path where an
+  agent could induce a human master entry that then cached the vault for 6h and was
+  readable via the ungated human `secret get`.
+- **Clearing a seal requires a fresh master.** `svault approve` now re-prompts the
+  master credential (passphrase or YubiKey touch) and ignores any cached session, so
+  a same-UID process can't ride a lingering unlock to clear a seal unattended; a
+  non-TTY context refuses approval. (The TUI `A` path is already a present human
+  behind the app login.)
+- **Caller-agnostic burst ceiling.** Beyond the per-caller rate/burst limits (keyed
+  on the self-asserted `--caller`), a secret now also has a hard ceiling on *allowed*
+  reads within the burst window counted **across every caller** — so rotating caller
+  names can no longer evade burst detection. (The seal detector was already
+  caller-agnostic.)
+- Added prompt-injection regression tests for the AI judge: an injected `reason`
+  stays a labelled data field, an explicit `deny` is honoured regardless of score,
+  and a non-standard decision token degrades to "unavailable" (high then fails
+  closed) rather than being read as allow.
+
 ### Notes
 - Policy format is extended additively (`serde` defaults), so existing `.svault/`
   vaults load unchanged — no migration needed.

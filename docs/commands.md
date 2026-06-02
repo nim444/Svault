@@ -95,11 +95,11 @@ vault**, so a denied request returns only a generic message — the real reason 
 in the audit log — and both `policy` subcommands unlock the vault.
 
 ```bash
-svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # enforced, gated request
+svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # enforced, gated request (never prompts: a locked vault tells you to unlock first)
 svault policy init                 # seed caller rules into the vault's encrypted policy
 svault policy check <caller>       # what a caller can access, conditions, seals + recent activity (unlocks the vault)
 svault pending [VAULT]             # list sealed secrets awaiting human approval (one vault, or all)
-svault approve <NAME> [-v VAULT]   # clear a seal so agents may request the secret again (human-only)
+svault approve <NAME> [-v VAULT]   # clear a seal (human-only — re-prompts the master, ignores any cached session)
 svault mcp                         # run the local MCP server (stdio) — gated access for AI agents (see mcp.md)
 ```
 

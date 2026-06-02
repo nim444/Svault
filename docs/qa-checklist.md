@@ -102,6 +102,18 @@ wait past the 6h cap). Reset between sections with `rm -rf .svault`.
 - **Expected:** Denied (high-tier is human-only with no judge). `sv secret get DEPLOY` (human path) still returns the value.
 - [ ] Pass
 
+### C6. Locked vault is a dead end (agent get never prompts)
+- **Goal:** The agent path never prompts for the master — a locked vault tells a human to unlock.
+- **Steps:** `sv lock --all` (and stop the daemon if running), then `sv get DB_URL --scope database --reason "run the nightly database backup" --caller default`.
+- **Expected:** No passphrase prompt; it prints `denied: vault '<name>' is locked — a human must run 'svault unlock' first` and exits non-zero. (`svault secret get` / the TUI still prompt — only the agent path is silent.)
+- [ ] Pass
+
+### C7. Caller rotation can't beat the burst ceiling
+- **Goal:** Rotating `--caller` doesn't evade burst detection.
+- **Steps:** Drive >10 *allowed* reads of one low-tier secret inside ~10s while cycling caller names, e.g. `for i in $(seq 1 12); do sv get DB_URL --scope database --reason "scheduled backup pass $i" --caller rot$i; done`.
+- **Expected:** After the per-secret ceiling (10 allowed reads/10s across all callers) the requests are denied generically, even with fresh caller names; the audit log shows the secret-burst reason.
+- [ ] Pass
+
 ---
 
 ## D. Conditional access (CLI)
@@ -147,9 +159,9 @@ wait past the 6h cap). Reset between sections with `rm -rf .svault`.
 - **Expected:** Returns the value — the seal blocks the agent path only.
 - [ ] Pass
 
-### E4. Approve clears the seal
+### E4. Approve clears the seal (and re-prompts the master)
 - **Steps:** `sv approve API_KEY -v proj` then re-run a valid agent get.
-- **Expected:** Approve confirms; `sv pending` no longer lists it; the valid agent get is evaluated normally again.
+- **Expected:** Approve **re-prompts the master credential** (passphrase or YubiKey touch) even if a session is cached — it ignores the cached session, so a lingering unlock can't clear a seal unattended. After the correct master, it confirms; `sv pending` no longer lists it; the valid agent get is evaluated normally again. (In a non-TTY/no-prompt context, approve refuses.)
 - [ ] Pass
 
 ### E5. Approve in the TUI
