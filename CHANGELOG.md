@@ -5,6 +5,35 @@ All notable changes to Svault are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Post-0.9.9 consistency fixes from a manual QA pass.
+
+### Changed
+- **`svault get` is deprecated.** The agent door is now the **MCP server**
+  (`svault mcp`); `svault get` runs the identical gate but prints a deprecation note
+  to stderr and will be removed in a later release. Docs reframed so agents use MCP
+  and humans use `svault secret get` + the management commands.
+- **`-v/--vault` works on every vault-scoped command.** Added the `-v/--vault` flag to
+  `policy` (previously it could not target a vault — `svault policy check <caller> -v
+  <vault>` errored) and as an accepted alias on the commands that only took a
+  positional vault (`settings`, `unlock`, `lock`, `pending`, `recover`, `export`); the
+  positional form still works.
+
+### Fixed
+- `svault judge test` printed its judge/model/threshold summary line twice.
+- `svault keyring` help listed a `rekey` action with "change its passphrase"; the
+  keyring has no separate passphrase (it's opened by the master). Help now points to
+  `svault master rekey`, and the unknown-action hint mentions it.
+- `svault create` no longer prints a `git add ~/.svault/<name>/` hint for the default
+  home store (it only makes sense for a project-scoped `SVAULT_HOME`).
+- `svault install` is now clearly labelled "not yet implemented" and points to the
+  manual MCP setup, instead of looking like a shipped command.
+- Docs drift: `policy-engine.md` no longer says the CLI "runs the gate locally before
+  unlocking" (the agent path never prompts); `daemon.md` no longer calls `secret list`
+  a "mutation". QA checklist scratch notes cleaned up; added a check that `meta.yaml`
+  exposes no secret names at rest.
+
 ## [0.9.9] - 2026-06-03
 
 The **conditional access + seal/escalate** release — the last feature milestone

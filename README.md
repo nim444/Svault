@@ -44,7 +44,7 @@ flowchart LR
 | [Interactive mode (TUI)](docs/tui.md) | The full-screen dashboard and keybindings |
 | [Command reference](docs/commands.md) | Every subcommand and flag |
 | [End-to-end walkthrough](docs/walkthrough.md) | Full flow: create → classify → judge → gated `get`, with real model output |
-| [Policy engine](docs/policy-engine.md) | The agent path — `svault get`, scopes, tiers, audit |
+| [Policy engine](docs/policy-engine.md) | The agent path (via the MCP server), scopes, tiers, audit |
 | [MCP server](docs/mcp.md) | `svault mcp` — gated secret access for AI agents (Claude Code, Cursor) |
 | [Recovery & portability](docs/recovery.md) | Recovery code for a lost passphrase, export/import bundles |
 | [Daemon](docs/daemon.md) | Optional Unix daemon — keys in memory, auto-lock, `daemon start/stop/status/doctor` |
@@ -109,9 +109,10 @@ Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s`
 
 <br>
 
-`svault secret get` is the **human path** — passphrase, no questions asked. `svault get` is the **agent path**: a structured request that an AI must justify, **enforced inside the daemon** that holds the key — not advisory. There is no unguarded read path, and every decision is audited with the connecting process's peer UID.
+`svault secret get` is the **human path** — passphrase, no questions asked. The **agent path** is a structured request that an AI must justify, **enforced inside the daemon** that holds the key — not advisory. Agents reach it through the **MCP server** (`svault mcp`, see [mcp.md](docs/mcp.md)); the `svault get` CLI below is the same gate but is **deprecated** (kept for illustration). There is no unguarded read path, and every decision is audited with the connecting process's peer UID.
 
 ```bash
+# deprecated CLI form of the agent gate (new integrations use the MCP server)
 svault get DB_URL --scope database --reason "run nightly migration" --caller claude-code
 ```
 

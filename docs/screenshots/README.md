@@ -11,7 +11,7 @@ produced. PNG, light terminal background ideally, crop to the panel (no desktop 
 | # | Filename | What to capture | Used in |
 |---|----------|-----------------|---------|
 | 1 | `dashboard.png` | TUI home — header showing `daemon running` + the Activity timeline with a few events | README hero, [tui.md](../tui.md) |
-| 2 | `onboarding-disclaimer.png` | First-run disclaimer / same-UID boundary screen (the honest-scope accept) | README positioning, [security.md](../security.md) |
+| 2 Done| `onboarding-disclaimer.png` | First-run disclaimer / same-UID boundary screen (the honest-scope accept) | README positioning, [security.md](../security.md) |
 | 3 | `onboarding-recovery.png` | The one-time master recovery-code screen | [tui.md](../tui.md), [recovery.md](../recovery.md) |
 | 4 | `vault-list.png` | Vault list showing locked vs unlocked vaults | README, [tui.md](../tui.md) |
 | 5 | `classify-form.png` | The `c` reclassify form with Scope / Tier / Windows / Required-callers fields visible | [policy-engine.md](../policy-engine.md), [tui.md](../tui.md) |

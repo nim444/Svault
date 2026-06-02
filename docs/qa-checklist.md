@@ -34,25 +34,25 @@ wait past the 6h cap). Reset between sections with `rm -rf "$SVAULT_HOME/.svault
 - **Pre-req:** No `.svault/` exists.
 - **Steps:** Launch `sv` (no subcommand).
 - **Expected:**
-  - A disclaimer / boundary screen appears first; it states the same-UID boundary honestly and requires an explicit accept.
+  - A disclaimer / boundary screen appears first; it states the same-UID boundary honestly and requires an explicit accept. SS:docs/screenshots/onboarding-disclaimer.png
   - Then a set-master-passphrase screen (with confirm + strength feedback).
   - Then a one-time recovery code screen that requires `y` to dismiss (and warns it is shown once).
   - Then an optional YubiKey enrollment screen that can be skipped.
   - You land on the vault list, signed in.
-- [ ] Pass
+- [X] Pass
 
 ### A2. Sign-in gate on reopen
 - **Goal:** Reopening after the session expires requires the master again.
 - **Pre-req:** Onboarding done (A1).
 - **Steps:** Quit the TUI, run `sv lock --all`, relaunch `sv`.
 - **Expected:** A **login screen** (master passphrase, or `Ctrl+Y` for an enrolled YubiKey) appears before the vault list.
-- [ ] Pass
+- [X] Pass
 
 ### A3. Logout (`o`)
 - **Goal:** Logout signs out only — it does not lock vaults or change data.
 - **Steps:** From the vault list, unlock a vault, then press `o`.
 - **Expected:** You return to the **login screen**. After signing back in, the vault you unlocked is still unlocked, the keyring/daemon/judge and all data are unchanged.
-- [ ] Pass
+- [X] Pass
 
 ---
 
@@ -63,29 +63,34 @@ wait past the 6h cap). Reset between sections with `rm -rf "$SVAULT_HOME/.svault
 - **Steps:**
   ```bash
   sv create                      # name: proj, accept defaults
-  sv secret add DB_URL   --scope database --tier low    --description "dev database dsn"
-  sv secret add API_KEY  --scope api      --tier medium --description "billing api key"
-  sv secret add DEPLOY   --scope deploy   --tier high   --description "prod deploy key"
-  sv secret list
+  sv secret add DB_URL   --scope database --tier low    --description "dev database dsn" -v project
+  sv secret add API_KEY  --scope api      --tier medium --description "billing api key" -v project
+  sv secret add DEPLOY   --scope deploy   --tier high   --description "prod deploy key" -v project
+  sv secret list -v project
   ```
-- **Expected:** All three are added; `secret list` shows names only (never values). `meta.yaml` contains **no** scope/tier/description (it's encrypted in `vault.enc`).
+- **Expected:** All three are added; `secret list -v project` shows names only (never values). `meta.yaml` contains **no** scope/tier/description, and **no secret names at all** — only the vault's own name/description/settings (everything else, names included, is encrypted in `vault.enc`). Verify: `cat $SVAULT_HOME/.svault/project/meta.yaml` shows none of `DB_URL`/`API_KEY`/`DEPLOY`.
 - [ ] Pass
+
 
 ### B2. Classify in the TUI (incl. conditions)
 - **Goal:** The `c` reclassify form edits scope/tier/require-reason **and** windows / required callers.
 - **Steps:** In the TUI secret browser, select `API_KEY`, press `c`. Set Windows = `mon-fri 09:00-18:00`, Required callers = `ci`. Save.
 - **Expected:** Form has all six fields; a bad window spec re-shows the form with an error rather than saving; on success the change persists (`sv policy check ci` shows the window + caller).
-- [ ] Pass
+- [x] Pass
 
 ---
 
-## C. The agent gate (CLI)
+## C. The agent gate (via the deprecated `svault get` CLI)
 
-> Set up caller rules first: `sv policy init` (seeds `default`), or add a caller via the TUI.
+> The canonical agent door is the **MCP server** — see section F, which exercises the
+> same gate end-to-end. `svault get` is **deprecated** (it prints a deprecation note to
+> stderr and will be removed), but it shares the exact gate, so this section is a fast
+> way to validate the gate logic from a shell. Set up caller rules first: `sv policy
+> init` (seeds `default`), or add a caller via the TUI.
 
 ### C1. Allow path
-- **Steps:** `sv get DB_URL --scope database --reason "run the nightly database backup" --caller default`
-- **Expected:** The value is printed to **stdout**; status text (if any) goes to stderr.
+- **Steps:** `sv get DB_URL --scope database --reason "run the nightly database backup" --caller default -v project`
+- **Expected:** The value is printed to **stdout**; the deprecation note + status text go to stderr. (The same request over MCP — section F1 — is the supported path.)
 - [ ] Pass
 
 ### C2. Reason floor
@@ -96,7 +101,14 @@ wait past the 6h cap). Reset between sections with `rm -rf "$SVAULT_HOME/.svault
 ### C3. Scope mismatch
 - **Steps:** `sv get DB_URL --scope api --reason "legit reason for the db" --caller default`
 - **Expected:** Generic denial (the real reason — scope mismatch — is only in `audit.log`).
-- [ ] Pass
+```
+svault git:(main) ✗ svault get DB_URL --scope database --reason "need" --caller default -v project
+denied: request not authorized for this secret
+caller=default secret=DB_URL scope=database
+➜  svault git:(main) ✗
+```
+
+- [X] Pass
 
 ### C4. Rate limit / burst
 - **Steps:** Repeat an allowed `get` rapidly past the caller's rate limit / burst threshold.
@@ -106,7 +118,15 @@ wait past the 6h cap). Reset between sections with `rm -rf "$SVAULT_HOME/.svault
 ### C5. High-tier, no judge
 - **Steps:** `sv get DEPLOY --scope deploy --reason "deploy the release now" --caller default`
 - **Expected:** Denied (high-tier is human-only with no judge). `sv secret get DEPLOY` (human path) still returns the value.
-- [ ] Pass
+```svault get DEPLOY --scope deploy --reason "deploy the release now" --caller default -v project
+denied: request not authorized for this secret
+  caller=default secret=DEPLOY scope=deploy
+```
+```
+  ➜  svault git:(main) ✗ svault secret get DEPLOY -v project
+  TEST
+```
+- [X] Pass
 
 ### C6. Locked vault is a dead end (agent get never prompts)
 - **Goal:** The agent path never prompts for the master — a locked vault tells a human to unlock.

@@ -98,13 +98,17 @@ Since 0.9.2 the policy (classification + caller rules) is **encrypted inside the
 vault**, so a denied request returns only a generic message — the real reason is
 in the audit log — and both `policy` subcommands unlock the vault.
 
+**Agents use the MCP server** (`svault mcp`) — that is the supported agent door. The
+`svault get` CLI command runs the identical gate but is **deprecated** (it still
+works and prints a deprecation note; it will be removed in a later release).
+
 ```bash
-svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # enforced, gated request (never prompts: a locked vault tells you to unlock first)
-svault policy init                 # seed caller rules into the vault's encrypted policy
-svault policy check <caller>       # what a caller can access, conditions, seals + recent activity (unlocks the vault)
+svault mcp                         # run the local MCP server (stdio) — the agent door (see mcp.md)
+svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # DEPRECATED agent path (same gate; use MCP). Never prompts: a locked vault tells you to unlock first
+svault policy init [-v VAULT]      # seed caller rules into the vault's encrypted policy
+svault policy check <caller> [-v VAULT]   # what a caller can access, conditions, seals + recent activity (unlocks the vault)
 svault pending [VAULT]             # list sealed secrets awaiting human approval (one vault, or all)
 svault approve <NAME> [-v VAULT]   # clear a seal (human-only — re-prompts the master, ignores any cached session)
-svault mcp                         # run the local MCP server (stdio) — gated access for AI agents (see mcp.md)
 ```
 
 `svault mcp` exposes the same gated path over the [Model Context Protocol](mcp.md)
