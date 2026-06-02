@@ -1,9 +1,8 @@
 # Manual QA checklist
 
 A scenario-driven, hands-on test pass across the three surfaces — **CLI**, **TUI**,
-and **MCP** — to run before tagging a release (and the 0.9.9 → 1.0 readiness gate in
-particular). Unit tests cover the logic; this checklist covers the interactive and
-end-to-end behaviour they can't.
+and **MCP** — to run before tagging a release. Unit tests cover the logic; this
+checklist covers the interactive and end-to-end behaviour they can't.
 
 Each scenario lists a **Goal**, any **Pre-req**, the **Steps**, the **Expected**
 result, and a checkbox to tick. Run in a scratch directory so the real `.svault/`

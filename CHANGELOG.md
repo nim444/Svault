@@ -84,14 +84,6 @@ seals a secret and hands it to a human instead of letting an agent grind against
   secrets are marked in the secret browser and `A` clears the selected one.
 - `svault policy check` now shows each secret's windows / required callers and any
   active seals.
-
-### Changed
-- The MCP capability descriptor notes that some secrets are restricted by
-  caller/time or may be temporarily sealed, and that a denial can be final and
-  require a human — without revealing the window or seal criteria, so a well-behaved
-  agent stops rather than retrying in a loop.
-
-### Added
 - **The store now lives at `~/.svault` by default.** The `svault` binary resolves
   its store under the user's home directory regardless of the working directory it's
   launched from — so the CLI/TUI, the daemon, and especially the `svault mcp` server
@@ -102,6 +94,12 @@ seals a secret and hands it to a human instead of letting an agent grind against
   `$SVAULT_HOME/.svault` instead of home (e.g. a project-scoped store, or to point an
   MCP server at a non-home location). It governs the whole store — vaults, master
   keyslots, keyring, sessions, daemon socket — so every surface stays consistent.
+
+### Changed
+- The MCP capability descriptor notes that some secrets are restricted by
+  caller/time or may be temporarily sealed, and that a denial can be final and
+  require a human — without revealing the window or seal criteria, so a well-behaved
+  agent stops rather than retrying in a loop.
 
 ### Hardened
 Acting on the three independent 0.9.9 security reviews (`docs/security-review/`), the

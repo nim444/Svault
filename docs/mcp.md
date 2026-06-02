@@ -5,17 +5,19 @@ server that exposes Svault's **gated** secret access to MCP-aware agents — Cla
 Code, Cursor, VS Code, and others. It speaks newline-delimited JSON-RPC 2.0 over
 **stdio**, the standard transport for local MCP servers.
 
-It is a thin **frontend**, not a new trust model: every secret request runs through
-the exact same enforcement path as `svault get` — the daemon's policy + AI-judge
-gate when the daemon is up, or the in-process gate against the session-cached key
-otherwise. The human unlocks once; the agent then asks through the gate.
+It is the **supported agent door**, and a thin frontend rather than a new trust
+model: every secret request runs through the same enforcement path the engine
+always uses — the daemon's policy + AI-judge gate when the daemon is up, or the
+in-process gate against the session-cached key otherwise. (The legacy `svault get`
+CLI command runs the identical gate but is deprecated; agents should use MCP.) The
+human unlocks once; the agent then asks through the gate.
 
 ## Security model
 
 - **No passphrase ever reaches the server.** `svault mcp` never prompts for and
   never sees the master passphrase. It serves only from already-**unlocked** state
   — keys held in the daemon's memory, or the `0600` session key on disk — exactly
-  like the CLI's agent path.
+  like the CLI's local read path.
 - **A locked vault is a dead end for the agent.** If the vault isn't unlocked, the
   call returns an error telling a human to run `svault unlock`. The agent cannot
   unlock anything itself.
@@ -119,7 +121,7 @@ A raw stdio transcript (what a client exchanges with the server):
 
 ```jsonc
 → {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{}}}
-← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"svault","version":"0.9.8"},"instructions":"Svault gates access to secrets…"}}
+← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"svault","version":"1.0.0"},"instructions":"Svault gates access to secrets…"}}
 
 → {"jsonrpc":"2.0","method":"notifications/initialized"}        // notification, no reply
 
@@ -143,7 +145,7 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
   | svault mcp
-# ← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05",…,"serverInfo":{"name":"svault","version":"0.9.8"}}}
+# ← {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05",…,"serverInfo":{"name":"svault","version":"1.0.0"}}}
 # ← {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"svault_list_vaults",…},{"name":"svault_get_secret",…}]}}
 ```
 

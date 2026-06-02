@@ -29,7 +29,9 @@ Two ways to stay unlocked, both owner-only:
 
 ## Policy enforcement and encryption at rest
 
-The agent path (`svault get`) is **enforced inside the daemon** — the component
+The agent path — the **MCP server** (`svault mcp`), or the **deprecated**
+`svault get` CLI, which runs the identical gate — is **enforced inside the daemon**
+— the component
 that holds the key. The daemon evaluates policy, consults the AI judge for
 sensitive secrets, writes the audit record (stamped with the connecting process's
 **peer UID**, which — unlike the self-asserted `--caller` — can't be forged), and

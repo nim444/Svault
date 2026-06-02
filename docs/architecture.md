@@ -13,7 +13,10 @@ flowchart TD
     OUT --> ENC["(.svault/&lt;vault&gt;/vault.enc<br/>AES-256-GCM encrypted, safe to commit)"]
 ```
 
-This pipeline runs **inside the daemon** — the enforced choke point, not advisory —
+Agents reach this gate through the **MCP server** (`svault mcp`); the `svault get`
+CLI command runs the identical gate but is **deprecated** (it prints a deprecation
+note to stderr and will be removed). This pipeline runs **inside the daemon** — the
+enforced choke point, not advisory —
 and the CLI re-runs it locally when no daemon is up. The `reason` field is required
 by the [policy engine](policy-engine.md); for medium- and high-tier secrets the
 [AI judge](security.md#ai-judge) scores it. An AI that can't plausibly explain why
@@ -33,6 +36,11 @@ keyring's default judge; the judge acts only when the keyring is unlocked, so un
 then the static tier rules apply (high = human-only).
 
 ## On-disk layout
+
+The store lives at `~/.svault` by default — an installed `svault` resolves it
+under your home directory regardless of the current working directory (including
+the `svault mcp` server, whose CWD the MCP host chooses). Set `SVAULT_HOME` to
+override the base directory; the store then lives at `$SVAULT_HOME/.svault`.
 
 ```
 .svault/
@@ -82,7 +90,7 @@ local:my-project        unlocked   primary app secrets
 local:shared-secrets    locked     team-wide credentials
 ```
 
-The prefix keeps vault identity explicit and consistent across the CLI and TUI. **Vault names must be unique** — creating a second vault with a name already in use is rejected. While Svault is on 0.9.x, `storage` is a required field on `meta.yaml`; vaults created before the field existed must be re-created.
+The prefix keeps vault identity explicit and consistent across the CLI and TUI. **Vault names must be unique** — creating a second vault with a name already in use is rejected. `storage` is a required field on `meta.yaml`.
 
 ## Source layout
 

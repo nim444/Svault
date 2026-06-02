@@ -5,21 +5,21 @@ Svault is an AI-aware secret manager written in Rust: a single native binary
 at rest, holds unlocked keys in a memory-only daemon, and gates agent access
 through an enforced policy engine and an optional AI judge.
 
-This document is the engineering plan: the current state at **0.9.3** and the
-work remaining to reach a stable **1.0.0**. Shipped versions are detailed in
+This document is the engineering plan: the current state at the **1.0.0 release
+candidate** and how the project reached it. Shipped versions are detailed in
 [CHANGELOG.md](CHANGELOG.md); the public roadmap lives in
 [docs/roadmap.md](docs/roadmap.md).
 
-> **Version policy.** The project stays on **0.9.x** until everything is built
-> and independently reviewed. **1.0.0 is reserved for the first stable, audited
-> release** — it has not shipped and is the target the current work builds
-> toward, not a date.
+> **Version policy.** The project stayed on the **0.9.x** line until the
+> agent-ready surface was built and independently reviewed. **1.0.0 is the first
+> stable, reviewed release** — the consolidation of that work, now in a final
+> manual QA pass before tagging.
 
-## Current state (0.9.3)
+## Current state (1.0.0 release candidate)
 
-The base is complete: every layer below is implemented, tested, and shipping. The
-remaining pre-1.0 work (the agent-ready surface in [Path to 1.0.0](#path-to-100))
-builds on this core rather than changing it.
+The agent-ready surface is complete: every layer below is implemented, tested, and
+independently reviewed. 1.0.0 consolidates this work into the first stable release
+rather than adding scope.
 
 **Encrypted local vaults.** AES-256-GCM secret storage with Argon2id key
 derivation. Secret values are zeroized from memory on drop (`ZeroizeOnDrop` on
@@ -90,7 +90,7 @@ a request designed to pass.
   default and assign one per vault. There are no plaintext `config.yaml` or
   `openrouter.key` files anymore.
 
-**Quality.** 117 tests pass (plus one ignored concurrency stress benchmark). CI
+**Quality.** 144 tests pass (plus one ignored concurrency stress benchmark). CI
 runs on Ubuntu, Fedora, macOS, and Windows, with `cargo fmt --check`, `cargo
 clippy -D warnings`, and a `cargo audit` advisory gate.
 
@@ -127,13 +127,15 @@ findings de-duplicated into a decision register. The full carry-forward lives in
 
 ## Path to 1.0.0
 
-The path to a stable release is the **agent-ready surface** (the remaining 0.9.x
-line), then a final independent review and distribution channels. The agent-ready
-work all extends primitives that already exist — the keyslot wrap/unwrap in
-`recovery.rs`, the encrypted policy in `vault.enc`, and the peer-UID-bonded daemon
-socket — so it widens capability without changing the trust model.
+The path to a stable release was the **agent-ready surface** (the 0.9.4 – 0.9.9
+line), then a final independent review. That surface is now complete and reviewed;
+1.0.0 is in a final manual QA pass before tagging, with distribution channels to
+follow. The agent-ready work all extended primitives that already existed — the
+keyslot wrap/unwrap in `recovery.rs`, the encrypted policy in `vault.enc`, and the
+peer-UID-bonded daemon socket — so it widened capability without changing the trust
+model.
 
-### 1. Agent-ready surface — Next (remaining 0.9.x)
+### 1. Agent-ready surface — shipped (0.9.4 – 0.9.9)
 
 **Unified unlock — one master passphrase (0.9.4 – 0.9.5, shipped).** Each vault
 used to have its own passphrase and the keyring another; that was too many to
@@ -205,17 +207,20 @@ encrypted policy) and raise an escalation only a human can clear (`svault
 approve`, a TUI pending-approvals view, later a notify channel). An agent can
 never unlock a vault or clear an escalation — human-only by design.
 
-### 2. Final independent security review — gate on the 1.0 label
+### 2. Final independent security review — done
 
 A final review pass over the full agent-ready surface — the enforced,
-encrypted-policy engine and the keyring, plus the new keyslot unlock model, the
+encrypted-policy engine and the keyring, plus the keyslot unlock model, the
 seal/escalate path, and the MCP surface — following the established release-gated
-review process. Includes adversarial judge testing (prompt injection via the
-`reason` field) and the caller-authorization decision (self-asserted today with
-peer-UID-stamped audit: accept as a documented boundary, or add an OS-bound
-caller identity).
+review process. Three independent external-model reviews of the 0.9.9 surface
+found no Critical/High issues; the actionable findings were fixed before 1.0
+(`docs/security-review/findings/0.9.9.md`). The pass covered adversarial judge
+testing (prompt injection via the `reason` field, with regression tests) and the
+caller-authorization decision (self-asserted today with peer-UID-stamped audit,
+accepted as a documented boundary). What remains before tagging is the manual QA
+pass (`docs/qa-checklist.md`), not further review scope.
 
-### 3. Distribution / install channels — In progress
+### 3. Distribution / install channels — post-1.0
 
 All channels reuse the four prebuilt binaries that the release workflow
 (`release.yml`, on `v*` tags) already produces — macOS arm64/x64, Linux x64,

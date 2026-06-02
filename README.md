@@ -63,7 +63,7 @@ flowchart LR
 # Install
 cargo install svault-ai
 
-# 1. Create an encrypted vault (interactive: storage, name, agents, auto-lock,
+# 1. Create an encrypted vault (interactive: name, agents, auto-lock,
 #    default tier, AI judge). On first run you set one master passphrase — it
 #    unlocks every vault. Prints a one-time recovery code — save it.
 svault create
@@ -227,11 +227,16 @@ flowchart TD
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/tui-dashboard-first.png" width="760" alt="Svault TUI dashboard"><br>
+  <img src="docs/screenshots/tui-activity.png" width="760" alt="Svault TUI activity timeline"><br>
   <sub>The Svault TUI — daemon status, vaults, and a live activity timeline.</sub>
 </p>
 
-<details>
+<p align="center">
+  <img src="docs/screenshots/tui-dashboard-first.png" width="760" alt="Svault TUI dashboard"><br>
+  <sub>The vault dashboard with live lock state.</sub>
+</p>
+
+<details open>
 <summary><b>Onboarding &amp; setup</b></summary>
 
 <table>
@@ -248,7 +253,7 @@ flowchart TD
 </table>
 </details>
 
-<details>
+<details open>
 <summary><b>The TUI</b></summary>
 
 <table>
@@ -270,7 +275,7 @@ flowchart TD
 </table>
 </details>
 
-<details>
+<details open>
 <summary><b>The AI judge</b></summary>
 
 <table>
@@ -287,7 +292,7 @@ flowchart TD
 </table>
 </details>
 
-<details>
+<details open>
 <summary><b>Agent access over MCP (Claude Code)</b></summary>
 
 <table>
@@ -341,7 +346,7 @@ Detail for each milestone lives in the [changelog](CHANGELOG.md) and the [full r
 cargo test
 ```
 
-**131 tests** (plus an `#[ignore]`d concurrency stress benchmark) cover the crypto core and tamper detection, vault operations, the master keyslot model (wrap/unwrap a data key under the master for both vaults and the keyring, rekey, master recovery-code reset, wrong-master rejection), the policy engine and the enforced daemon gate (including peer-UID-stamped audit and high-tier fail-closed behaviour), the AI judge — run against a fake transport, so the suite never touches the network — and the encrypted-at-rest guarantees for both the policy (`vault.enc`) and the keyring (`keyring.enc`).
+**144 tests** (plus an `#[ignore]`d concurrency stress benchmark) cover the crypto core and tamper detection, vault operations, the master keyslot model (wrap/unwrap a data key under the master for both vaults and the keyring, rekey, master recovery-code reset, wrong-master rejection), the policy engine and the enforced daemon gate (including peer-UID-stamped audit and high-tier fail-closed behaviour), the AI judge — run against a fake transport, so the suite never touches the network — and the encrypted-at-rest guarantees for both the policy (`vault.enc`) and the keyring (`keyring.enc`).
 
 CI runs the full suite on **Ubuntu, Fedora, macOS, and Windows** on every push and pull request. A heavier concurrency simulation runs on demand:
 
