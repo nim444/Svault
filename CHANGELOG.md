@@ -5,7 +5,64 @@ All notable changes to Svault are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.8] - 2026-06-02
+
+The **hardware-key + hardening** release: YubiKey (FIDO2) unlock, a 6-hour re-auth
+cap on every unlock path, a first-run onboarding flow with an app-level sign-in /
+logout in the TUI, and an honest repositioning of the docs. Storage is local-only
+(the never-wired cloud placeholders are gone).
+
+### Added
+- **TUI login gate + logout (`o`)** — the TUI now has an app-level sign-in. On
+  launch, if a master is set but its session isn't active (never signed in this
+  run, or expired past the 6h cap), it opens a **login screen** (master passphrase,
+  or `Ctrl+Y` for an enrolled YubiKey) before the vault list. `o` on the list
+  **logs out** — clears the master login session and returns to the login screen.
+  Logout signs out only: it leaves the vaults' own locked/unlocked state, the
+  keyring, the daemon, the judge, and all data unchanged.
+- **First-run onboarding (TUI)** — opening the TUI with no master set now walks
+  through a short flow: an honest disclaimer/boundary screen you accept, then
+  setting the master passphrase, then the one-time recovery code, then an optional
+  YubiKey enrollment — instead of burying master setup inside the first vault
+  create. Blocking YubiKey touches show an in-app "Touch your YubiKey" modal (the
+  library's own touch chatter is silenced) so the dashboard stays intact.
+- **YubiKey unlock (FIDO2 hmac-secret)** — enroll a YubiKey as an alternative
+  keyslot over the master key with `svault master yubikey enroll` (touch, plus the
+  YubiKey PIN if one is set). Afterwards `svault unlock` offers the key and the TUI
+  unlock screen takes `Ctrl+Y`; the master passphrase stays available as a
+  fallback. It's *passphrase **or** touch*, never a two-step 2FA — additive over
+  the same master key, no data re-encrypted, stored in `master.yubikey.enc` (+ a
+  non-secret `.meta`). Manage with `svault master yubikey enroll | remove | status`.
+  Ships as an **opt-in Cargo feature** (`yubikey`, off by default) so the base
+  crate keeps building with no system dependencies; the prebuilt release binaries
+  include it, and from source it's `cargo install svault-ai --features yubikey`
+  (Linux also needs `libudev-dev`).
+
+### Changed
+- **6-hour re-auth hard cap on every unlock path.** File sessions (CLI/TUI) now
+  carry an unlock timestamp and expire 6 hours after unlock — they previously never
+  expired. The master and keyring sessions honor the same cap, and the daemon's
+  in-memory hard cap (which backs the MCP path) dropped from 8h to 6h. This bounds
+  the window in which an already-unlocked vault — including one an agent was
+  prompted into at the CLI — can be read before a human must re-authenticate.
+- **Repositioned the framing for honesty.** The README now leads with "the
+  principled way to give cooperative AI agents secret access" and states the
+  boundary up front (Svault gates and audits cooperative/semi-trusted agents and
+  encrypts at rest; it is **not** a sandbox against a hostile same-UID process).
+  The previous "knows the difference" / "the secret manager that knows an AI is
+  asking" headline is gone. No behavior change.
+- **Folded the storage docs.** `docs/storage-backends.md` (thin after the cloud
+  removal) merged into `docs/architecture.md` under "Storage and vault naming".
+
+### Removed
+- **Non-functional storage placeholders** — the `cloud`, `self-hosted`, and `s3`
+  storage backends are removed from the documentation. They were never wired;
+  `local` is and always was the only real backend. The `storage: local` field and
+  the `local:` prefix on vault listings stay.
+- **Cloud roadmap** — the 3.0.0+ "Remote / cloud" direction (remote MCP with
+  OAuth, a hosted cloud anomaly-scoring tier via Claude Haiku, remote sync) is
+  removed from the roadmap (README, PLAN, roadmap.md). Svault stays a local-first,
+  CLI-first secret manager.
 
 ## [0.9.7] - 2026-06-01
 

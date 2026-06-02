@@ -1,9 +1,9 @@
 [package]
 name = "svault-ai"
-version = "0.9.7"
+version = "0.9.8"
 edition = "2021"
 authors = ["Soluzy <nima@soluzy.ro>"]
-description = "AI-aware secret access layer — enforces structured requests and detects suspicious patterns"
+description = "Secret access layer for cooperative AI agents — structured, policy-gated, audited credential access"
 license = "Apache-2.0"
 repository = "https://github.com/Soluzy/Svault"
 homepage = "https://github.com/Soluzy/Svault"
@@ -55,6 +55,19 @@ ureq = { version = "2", features = ["json", "tls"] }
 # Error handling
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
+
+# YubiKey / FIDO2 unlock — CTAP2 over USB HID, hmac-secret extension. Optional and
+# OFF by default: its `hidapi` dependency needs libudev on Linux, which would
+# otherwise break the default build, `cargo install`, and docs.rs. Enable with
+# `--features yubikey` (Linux also needs libudev-dev) for the real implementation;
+# without it, the unlock keyslot is a no-op stub. See src/core/yubikey.rs.
+ctap-hid-fido2 = { version = "3.5", optional = true }
+
+[features]
+default = []
+# Real YubiKey (FIDO2 hmac-secret) unlock. Off by default so the base crate
+# builds with no system dependencies; Linux additionally needs libudev-dev.
+yubikey = ["dep:ctap-hid-fido2"]
 
 # Unix daemon — setsid (detach) + kill (liveness / stop). Unix only.
 [target.'cfg(unix)'.dependencies]

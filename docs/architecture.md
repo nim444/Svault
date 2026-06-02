@@ -40,7 +40,11 @@ then the static tier rules apply (high = human-only).
                        (the unlock root for every vault)  (safe to commit, owner-only)
   master.recovery.enc ← master key wrapped under the one-time master recovery
                        code (reset a forgotten master)    (safe to commit, owner-only)
-  .master.session    ← master-key cache while unlocked    (gitignored, mode 0600)
+  master.yubikey.enc ← master key wrapped under a YubiKey (FIDO2 hmac-secret),
+                       if one is enrolled                 (safe to commit, owner-only)
+  master.yubikey.meta ← non-secret FIDO2 credential id + salt for that slot (owner-only)
+  .master.session    ← master-key cache while unlocked, expires after 6h
+                       (gitignored, mode 0600)
   keyring.enc        ← AES-256-GCM encrypted global config: the named-judge
                        registry (model/thresholds/criteria/API key each) +
                        operational knobs                  (safe to commit, owner-only)
@@ -68,6 +72,17 @@ then the static tier rules apply (high = human-only).
 - **`keyring.enc`** is the single encrypted-at-rest store for global config (judges, their API keys, and operational knobs), opened by the **master passphrase** — its data key is wrapped under the master in `keyring.keyslot.enc`, exactly like a vault. It's useless without the master; the per-judge keys and criteria are unreadable at rest.
 - **`.session`**, **`.keyring.session`**, **`audit.log`**, and **`usage.log`** are always gitignored and created with mode `0600` (owner read/write only). The per-vault `.gitignore` is self-healing — recording the first usage event adds any missing log lines, so vaults created before usage logging are covered too.
 - **`usage.log`** is the activity stream behind the TUI `v` view: who did what, when, and through which surface (the `source`: `cli` / `tui` / `gui` / `mcp`) — human vs agent via the actor, never any secret value. Actor + source distinguish e.g. a human at the CLI from an agent via MCP. `audit.log` carries the same `source` field. See [Interactive mode](tui.md#activity-timeline).
+
+## Storage and vault naming
+
+Every vault is stored **locally** — an encrypted vault on this machine. The location is recorded in `meta.yaml` as `storage: local` and shown as a `local:` prefix everywhere a vault is listed (`svault vaults`, `svault status`, the TUI):
+
+```
+local:my-project        unlocked   primary app secrets
+local:shared-secrets    locked     team-wide credentials
+```
+
+The prefix keeps vault identity explicit and consistent across the CLI and TUI. **Vault names must be unique** — creating a second vault with a name already in use is rejected. While Svault is on 0.9.x, `storage` is a required field on `meta.yaml`; vaults created before the field existed must be re-created.
 
 ## Source layout
 
@@ -101,7 +116,7 @@ source uses `std` throughout, so reach the std crate with `::core` if ever neede
 Every store — each vault **and the keyring** — is encrypted by a **random data
 key**, not by your passphrase. That data key is wrapped in one or more
 **keyslots**, and **any one slot opens the store** — it's "this *or* that", never a
-two-step 2FA. Today there are three slots:
+two-step 2FA. Today there are four slots:
 
 - **Master passphrase** *(today)* — one passphrase wraps a master key, which in
   turn wraps every store's data key (every vault and the keyring). Set once; it
@@ -113,11 +128,16 @@ two-step 2FA. Today there are three slots:
 - **Per-vault recovery code** *(today)* — a 160-bit code generated at create, an
   equal-strength second slot into a single vault; used by `svault recover` and to
   attach a vault on another machine via `import` (see [Recovery](recovery.md)).
+- **YubiKey** *(today)* — a hardware slot over the master key via the **FIDO2
+  hmac-secret** extension (touch, plus the YubiKey PIN if one is set). Enroll with
+  `svault master yubikey enroll`; thereafter `svault unlock` (and the TUI) offer
+  the key, and the master passphrase still works. It wraps the master key in
+  `master.yubikey.enc`, so the one touch opens every store. Purely additive — no
+  data is re-encrypted — and an *or*-slot, not a second factor.
 
 Planned additional keyslots — each is purely additive (no data is re-encrypted),
 and any one still opens the store on its own:
 
-- **YubiKey** — hardware HMAC-SHA1 challenge-response *(planned, post-1.0)*.
 - **Google Authenticator (TOTP)** / **Touch ID / Face ID** *(planned)*.
 
 | Slot | UX | Security | Notes |
@@ -125,7 +145,7 @@ and any one still opens the store on its own:
 | Master passphrase | Type once | Strong if long | Unlocks every vault and the keyring; always available |
 | Master recovery code | Paste the saved code | Equal-strength (160-bit) | Resets a forgotten master; reopens every store |
 | Per-vault recovery code | Paste the saved code | Equal-strength (160-bit) | Per-vault fallback + cross-machine import |
-| YubiKey *(post-1.0)* | Touch the key | Strong, hardware-backed | An alternative slot — touch instead of typing |
+| YubiKey | Touch the key (+ PIN) | Strong, hardware-backed (FIDO2 hmac-secret) | An alternative slot — touch instead of typing; lose it and the passphrase/recovery code still open everything |
 | TOTP / Touch ID *(planned)* | Code / biometric | Medium–strong | Extra alternatives, no 2FA requirement |
 
 See the [Security model](security.md) for the crypto guarantees behind each store.

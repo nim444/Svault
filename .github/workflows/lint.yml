@@ -32,6 +32,9 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      # --all-features enables `yubikey`, whose hidapi dep needs libudev on Linux.
+      - name: Install libudev (for the yubikey feature)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   audit:

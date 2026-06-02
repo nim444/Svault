@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::{
     audit, gate, judge, keyring, master, passphrase, policy, portable, recovery, secfile, session,
-    usage,
+    usage, yubikey,
 };
 use crate::daemon::{self, client};
 use crate::tui;
@@ -32,7 +32,11 @@ fn prompt_secret(prompt: impl Into<String>) -> Result<Zeroizing<String>> {
 }
 
 #[derive(Parser)]
-#[command(name = "svault", about = "AI-aware secret access layer", version)]
+#[command(
+    name = "svault",
+    about = "Secret access layer for cooperative AI agents — structured, policy-gated, audited",
+    version
+)]
 struct Cli {
     /// Run with no subcommand to launch the interactive TUI.
     #[command(subcommand)]
@@ -158,10 +162,13 @@ enum Commands {
     /// Set it once (`init`); thereafter `svault unlock` opens all vaults with it
     /// and `svault create` wraps each new vault under it (no per-vault
     /// passphrase). Actions: `init`, `rekey` (change it), `recover` (reset a
-    /// forgotten one with the recovery code), `status`.
+    /// forgotten one with the recovery code), `status`, and `yubikey
+    /// <enroll|remove|status>` to manage a hardware-key slot.
     Master {
-        /// init | rekey | recover | status
+        /// init | rekey | recover | status | yubikey
         action: String,
+        /// Sub-action for `yubikey`: enroll | remove | status
+        sub: Option<String>,
         /// Skip the passphrase strength floor (for non-interactive / scripted use)
         #[arg(long)]
         force: bool,
@@ -266,7 +273,7 @@ pub fn run() -> Result<()> {
         Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
         Commands::Import { file, name } => cmd_import(&file, name.as_deref()),
         Commands::Daemon { action, fix } => cmd_daemon(&action, fix),
-        Commands::Master { action, force } => cmd_master(&action, force),
+        Commands::Master { action, sub, force } => cmd_master(&action, sub.as_deref(), force),
         Commands::Keyring { action } => cmd_keyring(&action),
         Commands::Judge {
             action,
@@ -331,8 +338,6 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
         style("┌─ New Vault ─────────────────────────────┐").dim()
     );
 
-    let storage = prompt_storage_backend()?;
-
     let default_name = std::env::current_dir()
         .ok()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
@@ -352,7 +357,7 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
             .map(|m| m.storage)
             .unwrap_or_else(|_| "local".to_string());
         eprintln!(
-            "{} a vault named '{}' already exists ({}:{}) — names must be unique across storage backends",
+            "{} a vault named '{}' already exists ({}:{}) — vault names must be unique",
             style("error:").red(),
             name,
             existing,
@@ -421,7 +426,7 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
             login_method,
         },
     );
-    meta.storage = storage.to_string();
+    meta.storage = "local".to_string();
     // The policy surface (access, default tier, judge override) is stored
     // AES-256-GCM encrypted inside vault.enc, not in the plaintext meta.yaml.
     let mut vault_policy = policy::VaultPolicyData {
@@ -450,9 +455,9 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
     println!(
         "  {:<14} {}",
         style("Name").dim(),
-        style(format!("{}:{}", storage, &name)).bold().cyan()
+        style(format!("local:{}", &name)).bold().cyan()
     );
-    println!("  {:<14} {}", style("Storage").dim(), style(storage).cyan());
+    println!("  {:<14} {}", style("Storage").dim(), style("local").cyan());
     println!(
         "  {:<14} {}",
         style("Location").dim(),
@@ -1599,37 +1604,6 @@ fn prompt_allow_agent(current: Option<&AllowAgent>) -> Result<AllowAgent> {
 
 /// Prompt for login method. Only passphrase works today — yubikey and google
 /// auth are shown but fall back to passphrase with a notice.
-/// Where the encrypted vault lives. Only local storage is implemented today;
-/// remote (Soluzy cloud / self-hosted) is a reserved placeholder for a later step.
-/// Storage backend ids, indexed to match the picker order. Only "local" is
-/// wired today; the rest are reserved placeholders (remote sync is coming soon).
-const STORAGE_IDS: [&str; 4] = ["local", "cloud", "self-hosted", "s3"];
-
-fn prompt_storage_backend() -> Result<&'static str> {
-    let choices = &[
-        "local — encrypted vault on this machine (default)",
-        "Soluzy cloud (coming soon)",
-        "self-hosted (coming soon)",
-        "S3 / MinIO (coming soon)",
-    ];
-
-    let idx = Select::new()
-        .with_prompt("  Storage")
-        .items(choices)
-        .default(0)
-        .interact()?;
-
-    if idx != 0 {
-        println!(
-            "{} Remote storage isn't wired yet — the vault is created with the \
-             '{}' target but data stays local until remote sync ships.",
-            style("note:").cyan(),
-            STORAGE_IDS[idx],
-        );
-    }
-    Ok(STORAGE_IDS[idx])
-}
-
 fn prompt_login_method(current: Option<LoginMethod>) -> Result<LoginMethod> {
     let choices = &[
         "passphrase",
@@ -1809,6 +1783,25 @@ fn ensure_master_unlocked(force: bool) -> Result<master::Master> {
         return Ok(m);
     }
     if master::exists() {
+        // Offer the YubiKey when one is enrolled and plugged in. It's an
+        // alternative slot, so the master passphrase is always the fallback.
+        if master::yubikey_enrolled() && yubikey::is_present() {
+            let use_key = Confirm::new()
+                .with_prompt("  A YubiKey is enrolled — unlock with it?")
+                .default(true)
+                .interact()
+                .unwrap_or(false);
+            if use_key {
+                match try_yubikey_unlock() {
+                    Ok(m) => return Ok(m),
+                    Err(e) => eprintln!(
+                        "{} {} — falling back to the master passphrase",
+                        style("yubikey:").yellow(),
+                        e
+                    ),
+                }
+            }
+        }
         let passphrase = prompt_secret("  Master passphrase")?;
         let m = master::Master::open(&passphrase).map_err(|e| {
             eprintln!("{} {}", style("error:").red(), e);
@@ -1829,6 +1822,114 @@ fn ensure_master_unlocked(force: bool) -> Result<master::Master> {
     master::unlock_session(m.key_bytes())?;
     print_master_recovery_code(&m)?;
     Ok(m)
+}
+
+/// Prompt for the YubiKey PIN, allowing a blank entry for keys with no PIN set.
+fn prompt_optional_pin() -> Result<Zeroizing<String>> {
+    Ok(Zeroizing::new(
+        Password::new()
+            .with_prompt("  YubiKey PIN (leave blank if none)")
+            .allow_empty_password(true)
+            .interact()?,
+    ))
+}
+
+/// Derive the master key from the enrolled YubiKey (touch + optional PIN) and
+/// cache the master session, mirroring the passphrase path.
+fn try_yubikey_unlock() -> Result<master::Master> {
+    let pin = prompt_optional_pin()?;
+    println!("{}", style("  Touch your YubiKey...").dim());
+    let m = master::open_with_yubikey(Some(&pin))?;
+    master::unlock_session(m.key_bytes())?;
+    Ok(m)
+}
+
+/// `svault master yubikey <enroll|remove|status>` — manage the YubiKey keyslot.
+fn cmd_master_yubikey(sub: Option<&str>, force: bool) -> Result<()> {
+    match sub {
+        Some("enroll") => {
+            if !yubikey::is_present() {
+                eprintln!(
+                    "{} no YubiKey / FIDO2 device found — plug it in and retry",
+                    style("error:").red()
+                );
+                std::process::exit(1);
+            }
+            if master::yubikey_enrolled() {
+                eprintln!(
+                    "{} a YubiKey is already enrolled — remove it first with 'svault master yubikey remove'",
+                    style("error:").red()
+                );
+                std::process::exit(1);
+            }
+            // Need the master key in hand to wrap it under the new slot.
+            let m = ensure_master_unlocked(force)?;
+            let pin = prompt_optional_pin()?;
+            println!(
+                "{}",
+                style("  Touch your YubiKey twice (enroll, then verify)...").dim()
+            );
+            m.enroll_yubikey(Some(&pin)).map_err(|e| {
+                eprintln!("{} {}", style("error:").red(), e);
+                std::process::exit(1);
+                #[allow(unreachable_code)]
+                e
+            })?;
+            println!(
+                "{} YubiKey enrolled. 'svault unlock' now offers it, and your master passphrase still works.",
+                style("ok:").green().bold()
+            );
+            println!(
+                "{}",
+                style("  If you lose the key, the master passphrase or recovery code still opens everything.")
+                    .dim()
+            );
+            Ok(())
+        }
+        Some("remove") => {
+            if !master::yubikey_enrolled() {
+                println!("{} no YubiKey is enrolled", style("ok:").green());
+                return Ok(());
+            }
+            master::remove_yubikey()?;
+            println!(
+                "{} YubiKey keyslot removed. The master passphrase and recovery code still open everything.",
+                style("ok:").green().bold()
+            );
+            Ok(())
+        }
+        Some("status") | None => {
+            let enrolled = master::yubikey_enrolled();
+            let present = yubikey::is_present();
+            println!(
+                "  {:<14} {}",
+                style("Enrolled").dim(),
+                if enrolled {
+                    style("yes").green()
+                } else {
+                    style("no").dim()
+                }
+            );
+            println!(
+                "  {:<14} {}",
+                style("Device").dim(),
+                if present {
+                    style("connected").green()
+                } else {
+                    style("not connected").dim()
+                }
+            );
+            Ok(())
+        }
+        Some(other) => {
+            eprintln!(
+                "{} unknown yubikey action '{}' — use enroll | remove | status",
+                style("error:").red(),
+                other
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Generate the master recovery code and show it once. Called the moment the
@@ -1855,15 +1956,16 @@ fn print_master_recovery_code(master: &master::Master) -> Result<()> {
 }
 
 /// `svault master <action>` — the single passphrase that unlocks every vault.
-fn cmd_master(action: &str, force: bool) -> Result<()> {
+fn cmd_master(action: &str, sub: Option<&str>, force: bool) -> Result<()> {
     match action {
         "init" => cmd_master_init(force),
         "rekey" => cmd_master_rekey(force),
         "recover" => cmd_master_recover(force),
         "status" => cmd_master_status(),
+        "yubikey" => cmd_master_yubikey(sub, force),
         other => {
             eprintln!(
-                "{} unknown master action '{}' — use init | rekey | recover | status",
+                "{} unknown master action '{}' — use init | rekey | recover | status | yubikey",
                 style("error:").red(),
                 other
             );

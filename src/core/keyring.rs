@@ -243,30 +243,22 @@ impl Keyring {
 
 // ── Session caching (mirrors session.rs, for the keyring's derived key) ──────
 
-/// Cache the keyring's derived key (hex, `0600`) so the CLI fallback and the
-/// daemon can open it without re-prompting. Never stores the passphrase.
+/// Cache the keyring's derived key (`0600`, timestamped) so the CLI fallback and
+/// the daemon can open it without re-prompting. Never stores the passphrase;
+/// expires after [`crate::core::session::MAX_SESSION_SECS`].
 pub fn unlock_session(key: &[u8; 32]) -> Result<()> {
-    let encoded = hex::encode(key);
-    crate::core::secfile::write_owner_only(&session_path(), encoded.as_bytes())?;
-    Ok(())
+    crate::core::session::write_session_key(&session_path(), key)
 }
 
 /// Clear the keyring session — judge goes back to off.
 pub fn lock_session() -> Result<()> {
-    let path = session_path();
-    if path.exists() {
-        let len = std::fs::metadata(&path)?.len() as usize;
-        std::fs::write(&path, vec![0u8; len])?;
-        std::fs::remove_file(&path)?;
-    }
+    crate::core::session::secure_remove(&session_path())?;
     Ok(())
 }
 
-/// The cached keyring key, if a valid session exists.
+/// The cached keyring key, if a valid (non-expired) session exists.
 pub fn session_key() -> Option<[u8; 32]> {
-    let contents = std::fs::read_to_string(session_path()).ok()?;
-    let bytes = hex::decode(contents.trim()).ok()?;
-    bytes.try_into().ok()
+    crate::core::session::read_session_key(&session_path())
 }
 
 /// True if the keyring is unlocked (a usable session key is cached).

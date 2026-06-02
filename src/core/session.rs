@@ -8,50 +8,87 @@
 /// file) remains the preferred path when it's running; this is the fallback.
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Hard re-auth cap: a cached session is unconditionally invalid once it is this
+/// old, regardless of activity. The master, keyring, and per-vault file sessions
+/// all honor it, and the daemon uses it as its in-memory hard cap default. This
+/// bounds the window in which an already-unlocked vault (e.g. one an AI was
+/// prompted into via the CLI) can be read before the master must be re-entered.
+pub const MAX_SESSION_SECS: u64 = 6 * 60 * 60;
 
 fn session_path(vault_dir: &Path) -> PathBuf {
     vault_dir.join(".session")
 }
 
-/// Cache the derived key (hex) and mark the vault unlocked. Written atomically
-/// with mode 0600 on Unix so it's never world-readable.
-pub fn unlock_with_key(vault_dir: &Path, key: &[u8; 32]) -> Result<()> {
-    let path = session_path(vault_dir);
-    let encoded = hex::encode(key);
-    // Owner-only: mode 0600 on Unix, an icacls owner-only ACL on Windows (#4).
-    crate::core::secfile::write_owner_only(&path, encoded.as_bytes())?;
-    Ok(())
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
-/// Clear the session — vault is locked.
-pub fn lock(vault_dir: &Path) -> Result<()> {
-    let path = session_path(vault_dir);
+/// Overwrite a session file with zeros and delete it. Used by `lock` and on
+/// expiry so a cached key never lingers on disk.
+pub fn secure_remove(path: &Path) -> std::io::Result<()> {
     if path.exists() {
-        // Overwrite with zeros before deleting
-        let len = std::fs::metadata(&path)?.len() as usize;
-        std::fs::write(&path, vec![0u8; len])?;
-        std::fs::remove_file(&path)?;
+        if let Ok(meta) = std::fs::metadata(path) {
+            let _ = std::fs::write(path, vec![0u8; meta.len() as usize]);
+        }
+        std::fs::remove_file(path)?;
     }
     Ok(())
 }
 
-/// Returns true if the vault has an active session holding a usable key. A
-/// `.session` that exists but doesn't decode to a 32-byte key (e.g. a stale
-/// pre-0.6 file that cached a passphrase) counts as locked, so status and the
-/// prompt paths agree.
+/// Write a session payload — `"<unlocked_at_unix_secs>\n<hex_key>"` — owner-only
+/// (mode 0600 on Unix, an icacls owner-only ACL on Windows, #4). The timestamp
+/// is what lets reads enforce [`MAX_SESSION_SECS`]. Never stores a passphrase.
+pub fn write_session_key(path: &Path, key: &[u8; 32]) -> Result<()> {
+    let payload = format!("{}\n{}", now_secs(), hex::encode(key));
+    crate::core::secfile::write_owner_only(path, payload.as_bytes())?;
+    Ok(())
+}
+
+/// Read the cached key from a session file, or `None` if it is missing,
+/// malformed (e.g. a pre-timestamp or pre-0.6 file), or older than
+/// [`MAX_SESSION_SECS`]. An expired file is best-effort removed so status and
+/// prompt paths agree that the store is locked.
+pub fn read_session_key(path: &Path) -> Option<[u8; 32]> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let (ts, hex_key) = contents.trim().split_once('\n')?;
+    let unlocked_at: u64 = ts.trim().parse().ok()?;
+    if now_secs().saturating_sub(unlocked_at) >= MAX_SESSION_SECS {
+        let _ = secure_remove(path);
+        return None;
+    }
+    hex::decode(hex_key.trim()).ok()?.try_into().ok()
+}
+
+/// Cache the derived key and mark the vault unlocked. Owner-only, timestamped so
+/// it expires after [`MAX_SESSION_SECS`].
+pub fn unlock_with_key(vault_dir: &Path, key: &[u8; 32]) -> Result<()> {
+    write_session_key(&session_path(vault_dir), key)
+}
+
+/// Clear the session — vault is locked.
+pub fn lock(vault_dir: &Path) -> Result<()> {
+    secure_remove(&session_path(vault_dir))?;
+    Ok(())
+}
+
+/// Returns true if the vault has an active, non-expired session holding a usable
+/// key. A `.session` that is missing, malformed (e.g. a stale pre-0.6 file that
+/// cached a passphrase), or past the hard cap counts as locked, so status and
+/// the prompt paths agree.
 pub fn is_unlocked(vault_dir: &Path) -> bool {
     get_key(vault_dir).is_some()
 }
 
-/// Read the cached derived key from the session file. Returns `None` if the
-/// file is missing or doesn't hold a valid 32-byte hex key (e.g. a stale
-/// pre-0.6 session that cached a passphrase) — the caller then treats the vault
-/// as locked and re-prompts.
+/// Read the cached derived key from the session file. Returns `None` if the file
+/// is missing, malformed, or older than [`MAX_SESSION_SECS`] — the caller then
+/// treats the vault as locked and re-prompts.
 pub fn get_key(vault_dir: &Path) -> Option<[u8; 32]> {
-    let path = session_path(vault_dir);
-    let contents = std::fs::read_to_string(&path).ok()?;
-    let bytes = hex::decode(contents.trim()).ok()?;
-    bytes.try_into().ok()
+    read_session_key(&session_path(vault_dir))
 }
 
 /// Lock all vaults in .svault/
@@ -95,16 +132,36 @@ mod tests {
 
     #[test]
     fn session_never_contains_a_passphrase() {
-        // The on-disk session must be a hex-encoded key, not the passphrase.
+        // The on-disk session is "<unix_secs>\n<hex_key>" — never the passphrase.
         let dir = TempDir::new().unwrap();
         let vault_dir = dir.path().join("v");
         std::fs::create_dir_all(&vault_dir).unwrap();
         unlock_with_key(&vault_dir, &[0xABu8; 32]).unwrap();
         let raw = std::fs::read_to_string(session_path(&vault_dir)).unwrap();
-        assert_eq!(raw.trim(), "ab".repeat(32));
-        // A stale passphrase-style session is rejected as not-a-key.
+        let (_ts, key) = raw.trim().split_once('\n').unwrap();
+        assert_eq!(key, "ab".repeat(32));
+        // A stale passphrase-style session (no timestamp line) is not-a-key.
         std::fs::write(session_path(&vault_dir), "hunter2").unwrap();
         assert_eq!(get_key(&vault_dir), None);
+    }
+
+    #[test]
+    fn session_expires_past_the_hard_cap() {
+        let dir = TempDir::new().unwrap();
+        let vault_dir = dir.path().join("v");
+        std::fs::create_dir_all(&vault_dir).unwrap();
+        unlock_with_key(&vault_dir, &[5u8; 32]).unwrap();
+        assert!(is_unlocked(&vault_dir));
+
+        // Backdate the unlock timestamp to just past the hard cap.
+        let path = session_path(&vault_dir);
+        let stale = now_secs().saturating_sub(MAX_SESSION_SECS + 1);
+        std::fs::write(&path, format!("{}\n{}", stale, "05".repeat(32))).unwrap();
+
+        // Reads back as locked, and the expired file is cleaned up.
+        assert_eq!(get_key(&vault_dir), None);
+        assert!(!is_unlocked(&vault_dir));
+        assert!(!path.exists());
     }
 
     #[test]

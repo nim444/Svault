@@ -10,7 +10,7 @@ mod theme;
 mod ui;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -103,10 +103,28 @@ pub enum Pending {
     Settings,
 }
 
+/// A blocking YubiKey (FIDO2) operation queued by a key handler and run by the
+/// event loop *after* a redraw — so a "Touch your YubiKey…" frame is on screen
+/// while the (multi-second, touch-gated) call blocks, and the screen is cleared
+/// afterwards. Running it inline in the handler would freeze on a stale frame.
+pub enum PendingFido {
+    /// Enroll the YubiKey during onboarding (needs the open master session).
+    Enroll { pin: Option<String> },
+    /// Sign in (app-level login) via the enrolled YubiKey.
+    Login { pin: Option<String> },
+    /// Unlock a vault via the enrolled YubiKey.
+    Unlock {
+        vault_dir: PathBuf,
+        name: String,
+        pending: Pending,
+        pin: Option<String>,
+    },
+}
+
 /// The focusable fields of the create form, in display order. Handlers match on
 /// the field (not a bare index) so the draw order and the key logic can never
-/// drift apart. Storage and login method are fixed (local / passphrase) today,
-/// so they are shown as a static note rather than a pickable field.
+/// drift apart. Storage and login method are fixed (local / passphrase), so
+/// they are shown as a static note rather than a pickable field.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CreateField {
     Name,
@@ -368,6 +386,24 @@ pub struct UnlockForm {
     pub passphrase: String,
     pub error: Option<String>,
     pub pending: Pending,
+    /// True if a YubiKey is enrolled and connected — gates the Ctrl+Y unlock
+    /// hint/path. Computed once at construction so we don't enumerate USB on
+    /// every redraw.
+    pub yubikey: bool,
+}
+
+impl UnlockForm {
+    fn new(vault_dir: PathBuf, name: String, pending: Pending) -> Self {
+        let yubikey = crate::core::master::yubikey_enrolled() && crate::core::yubikey::is_present();
+        Self {
+            vault_dir,
+            name,
+            passphrase: String::new(),
+            error: None,
+            pending,
+            yubikey,
+        }
+    }
 }
 
 pub struct Reveal {
@@ -685,8 +721,77 @@ pub struct RecoveryShow {
     pub to_judge: bool,
 }
 
+/// First-run onboarding steps, shown only when no master passphrase exists yet:
+/// an honest disclaimer the user accepts, then setting the master passphrase,
+/// then the one-time recovery code, then an optional YubiKey enrollment.
+#[derive(Clone, Copy, PartialEq)]
+pub enum OnboardStep {
+    Disclaimer,
+    Passphrase,
+    Recovery,
+    Yubikey,
+}
+
+pub struct OnboardForm {
+    pub step: OnboardStep,
+    /// Master passphrase entry (Passphrase step).
+    pub passphrase: String,
+    pub confirm: String,
+    /// 0 = passphrase field focused, 1 = confirm field focused.
+    pub focus: usize,
+    /// The one-time master recovery code, generated when the master is set and
+    /// shown on the Recovery step.
+    pub recovery_code: Option<String>,
+    /// Optional YubiKey PIN typed on the Yubikey step (blank = no PIN).
+    pub pin: String,
+    /// Whether a FIDO device is connected — checked when the Yubikey step opens.
+    pub yubikey_present: bool,
+    pub error: Option<String>,
+}
+
+impl OnboardForm {
+    fn new() -> Self {
+        Self {
+            step: OnboardStep::Disclaimer,
+            passphrase: String::new(),
+            confirm: String::new(),
+            focus: 0,
+            recovery_code: None,
+            pin: String::new(),
+            yubikey_present: false,
+            error: None,
+        }
+    }
+}
+
+/// The app-level login gate: enter the master passphrase (or touch an enrolled
+/// YubiKey) to sign in. Shown at startup when a master exists but its session is
+/// not active (never signed in this run, or expired past the 6h cap), and after
+/// `logout`. Distinct from [`UnlockForm`], which unlocks a single vault.
+pub struct LoginForm {
+    pub passphrase: String,
+    pub error: Option<String>,
+    /// True if a YubiKey is enrolled and connected — gates the Ctrl+Y hint/path.
+    pub yubikey: bool,
+}
+
+impl LoginForm {
+    fn new() -> Self {
+        let yubikey = crate::core::master::yubikey_enrolled() && crate::core::yubikey::is_present();
+        Self {
+            passphrase: String::new(),
+            error: None,
+            yubikey,
+        }
+    }
+}
+
 pub enum Screen {
     List,
+    /// App-level login gate (master passphrase / YubiKey) — see [`LoginForm`].
+    Login(LoginForm),
+    /// First-run onboarding (disclaimer → master passphrase → recovery → YubiKey).
+    Onboard(OnboardForm),
     Create(CreateForm),
     Settings(SettingsForm),
     Unlock(UnlockForm),
@@ -725,6 +830,9 @@ pub struct App {
     /// Whether a background daemon is currently running (Unix). Shown in the
     /// header; refreshed on startup, after a vault refresh, and after toggling.
     pub daemon_running: bool,
+    /// A blocking YubiKey operation to run after the next redraw (see
+    /// [`PendingFido`]). The event loop drains it so the "touch now" frame shows.
+    pub pending_fido: Option<PendingFido>,
 }
 
 impl App {
@@ -735,8 +843,17 @@ impl App {
             list_state.select(Some(0));
         }
         let daemon_running = crate::daemon::is_running(&crate::daemon::base_dir());
+        // No master yet → onboarding. Master set but not signed in this run (or the
+        // login session expired past the 6h cap) → the login gate. Otherwise the list.
+        let screen = if !crate::core::master::exists() {
+            Screen::Onboard(OnboardForm::new())
+        } else if crate::core::master::is_unlocked() {
+            Screen::List
+        } else {
+            Screen::Login(LoginForm::new())
+        };
         Self {
-            screen: Screen::List,
+            screen,
             vaults,
             list_state,
             status: None,
@@ -744,12 +861,23 @@ impl App {
             show_help: false,
             confirm_quit: false,
             daemon_running,
+            pending_fido: None,
         }
     }
 
     fn event_loop(&mut self, terminal: &mut ratatui::DefaultTerminal) -> Result<()> {
         while !self.should_quit {
             terminal.draw(|frame| ui::draw(frame, self))?;
+            // A queued YubiKey op runs here — the draw above already painted the
+            // "Touch your YubiKey…" modal (pending_fido was still Some at draw
+            // time). The library's touch chatter is silenced in core::yubikey, so
+            // the blocking call stays inside the TUI; we clear afterwards to wipe
+            // any stray output before the next frame repaints.
+            if let Some(action) = self.pending_fido.take() {
+                self.run_fido(action);
+                let _ = terminal.clear();
+                continue;
+            }
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key(key)?,
                 Event::Paste(text) => self.on_paste(text),
@@ -757,6 +885,67 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Run a blocking YubiKey operation (drained from `pending_fido` by the event
+    /// loop) and route to the next screen on success/failure.
+    fn run_fido(&mut self, action: PendingFido) {
+        match action {
+            PendingFido::Enroll { pin } => {
+                let result = match crate::core::master::open_from_session() {
+                    Some(m) => m.enroll_yubikey(pin.as_deref()),
+                    None => Err(anyhow::anyhow!("master session expired — reopen Svault")),
+                };
+                match result {
+                    Ok(()) => {
+                        self.set_status(
+                            MsgKind::Ok,
+                            "YubiKey enrolled — touch it to unlock next time".to_string(),
+                        );
+                        self.finish_onboarding();
+                    }
+                    Err(e) => {
+                        let mut form = OnboardForm::new();
+                        form.step = OnboardStep::Yubikey;
+                        form.yubikey_present = crate::core::yubikey::is_present();
+                        form.error = Some(format!("{e}"));
+                        self.screen = Screen::Onboard(form);
+                    }
+                }
+            }
+            PendingFido::Login { pin } => {
+                match crate::core::master::open_with_yubikey(pin.as_deref()) {
+                    Ok(m) => {
+                        let _ = crate::core::master::unlock_session(m.key_bytes());
+                        self.refresh_vaults();
+                        self.set_status(MsgKind::Ok, "Signed in with YubiKey.".to_string());
+                        self.screen = Screen::List;
+                    }
+                    Err(e) => {
+                        let mut form = LoginForm::new();
+                        form.error = Some(format!("{e}"));
+                        self.screen = Screen::Login(form);
+                    }
+                }
+            }
+            PendingFido::Unlock {
+                vault_dir,
+                name,
+                pending,
+                pin,
+            } => match self.unlock_via_yubikey(&vault_dir, pin.as_deref()) {
+                Ok(vault) => {
+                    let mut form = UnlockForm::new(vault_dir, name, pending);
+                    form.yubikey = true;
+                    let _ = self.after_unlock(form, vault);
+                }
+                Err(e) => {
+                    let mut form = UnlockForm::new(vault_dir, name, pending);
+                    form.error = Some(e);
+                    self.screen = Screen::Unlock(form);
+                }
+            },
+        }
     }
 
     /// Append a pasted string to the focused text field of the current screen.
@@ -927,6 +1116,8 @@ impl App {
         let screen = std::mem::replace(&mut self.screen, Screen::List);
         match screen {
             Screen::List => self.key_list(key)?,
+            Screen::Login(form) => self.key_login(form, key)?,
+            Screen::Onboard(form) => self.key_onboard(form, key),
             Screen::Create(form) => self.key_create(form, key)?,
             Screen::Settings(form) => self.key_settings(form, key)?,
             Screen::Unlock(form) => self.key_unlock(form, key)?,
@@ -999,6 +1190,151 @@ impl App {
         } else {
             self.screen = Screen::RecoveryCode(show);
         }
+    }
+
+    // ── First-run onboarding ──────────────────────────────────────────────────
+
+    fn key_onboard(&mut self, mut form: OnboardForm, key: KeyEvent) {
+        match form.step {
+            OnboardStep::Disclaimer => match key.code {
+                KeyCode::Esc => self.should_quit = true,
+                KeyCode::Enter => {
+                    form.step = OnboardStep::Passphrase;
+                    self.screen = Screen::Onboard(form);
+                }
+                _ => self.screen = Screen::Onboard(form),
+            },
+            OnboardStep::Passphrase => self.key_onboard_passphrase(form, key),
+            OnboardStep::Recovery => {
+                // Require an explicit 'y' that the code was saved before moving on.
+                if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+                    form.yubikey_present = crate::core::yubikey::is_present();
+                    form.error = None;
+                    form.step = OnboardStep::Yubikey;
+                    self.screen = Screen::Onboard(form);
+                } else {
+                    self.screen = Screen::Onboard(form);
+                }
+            }
+            OnboardStep::Yubikey => self.key_onboard_yubikey(form, key),
+        }
+    }
+
+    fn key_onboard_passphrase(&mut self, mut form: OnboardForm, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.should_quit = true,
+            KeyCode::Tab | KeyCode::Up | KeyCode::Down => {
+                form.focus = 1 - form.focus;
+                self.screen = Screen::Onboard(form);
+            }
+            KeyCode::Backspace => {
+                if form.focus == 0 {
+                    form.passphrase.pop();
+                } else {
+                    form.confirm.pop();
+                }
+                form.error = None;
+                self.screen = Screen::Onboard(form);
+            }
+            KeyCode::Char(c) => {
+                if form.focus == 0 {
+                    form.passphrase.push(c);
+                } else {
+                    form.confirm.push(c);
+                }
+                form.error = None;
+                self.screen = Screen::Onboard(form);
+            }
+            KeyCode::Enter => {
+                // Enter advances from the passphrase field to confirm; from the
+                // confirm field it submits.
+                if form.focus == 0 {
+                    form.focus = 1;
+                    self.screen = Screen::Onboard(form);
+                    return;
+                }
+                if let Err(e) = crate::core::passphrase::meets_floor(&form.passphrase) {
+                    form.error = Some(e);
+                    self.screen = Screen::Onboard(form);
+                    return;
+                }
+                if form.passphrase != form.confirm {
+                    form.error = Some("Passphrases do not match".into());
+                    form.confirm.clear();
+                    form.focus = 1;
+                    self.screen = Screen::Onboard(form);
+                    return;
+                }
+                match crate::core::master::Master::init(&form.passphrase) {
+                    Ok(m) => {
+                        let _ = crate::core::master::unlock_session(m.key_bytes());
+                        form.recovery_code = m.write_recovery().ok();
+                        form.passphrase.clear();
+                        form.confirm.clear();
+                        form.error = None;
+                        form.step = OnboardStep::Recovery;
+                        self.screen = Screen::Onboard(form);
+                    }
+                    Err(e) => {
+                        form.error = Some(format!("{e}"));
+                        self.screen = Screen::Onboard(form);
+                    }
+                }
+            }
+            _ => self.screen = Screen::Onboard(form),
+        }
+    }
+
+    fn key_onboard_yubikey(&mut self, mut form: OnboardForm, key: KeyEvent) {
+        match key.code {
+            // Esc skips the optional step and finishes onboarding.
+            KeyCode::Esc => self.finish_onboarding(),
+            KeyCode::Enter => {
+                // Re-check at the moment of action so a key removed while sitting
+                // on this screen is caught here rather than as a confusing error.
+                form.yubikey_present = crate::core::yubikey::is_present();
+                if !form.yubikey_present {
+                    form.error =
+                        Some("No YubiKey detected — plug one in, or press Esc to skip".into());
+                    self.screen = Screen::Onboard(form);
+                    return;
+                }
+                // The blocking enroll (two touches) runs in the event loop after
+                // this "touch now" frame draws — see run_fido.
+                let pin = if form.pin.is_empty() {
+                    None
+                } else {
+                    Some(form.pin.clone())
+                };
+                self.set_status(
+                    MsgKind::Info,
+                    "Touch your YubiKey now (twice to enroll)…".to_string(),
+                );
+                self.pending_fido = Some(PendingFido::Enroll { pin });
+                form.error = None;
+                self.screen = Screen::Onboard(form);
+            }
+            KeyCode::Backspace => {
+                form.pin.pop();
+                form.error = None;
+                self.screen = Screen::Onboard(form);
+            }
+            KeyCode::Char(c) => {
+                form.pin.push(c);
+                form.error = None;
+                self.screen = Screen::Onboard(form);
+            }
+            _ => self.screen = Screen::Onboard(form),
+        }
+    }
+
+    fn finish_onboarding(&mut self) {
+        self.refresh_vaults();
+        self.set_status(
+            MsgKind::Ok,
+            "Master passphrase set. Press 'c' to create your first vault.".to_string(),
+        );
+        self.screen = Screen::List;
     }
 
     // ── Import screen ─────────────────────────────────────────────────────────
@@ -1215,6 +1551,7 @@ impl App {
             KeyCode::Char('c') => self.screen = Screen::Create(CreateForm::new()),
             KeyCode::Char('u') => self.unlock_selected()?,
             KeyCode::Char('l') => self.lock_selected()?,
+            KeyCode::Char('o') => self.logout(),
             KeyCode::Char('s') => self.open_settings()?,
             KeyCode::Char('e') => self.export_selected(),
             KeyCode::Char('i') => {
@@ -1325,13 +1662,7 @@ impl App {
                 format!("Vault '{}' is already unlocked", v.name),
             );
         } else {
-            self.screen = Screen::Unlock(UnlockForm {
-                vault_dir: v.dir,
-                name: v.name,
-                passphrase: String::new(),
-                error: None,
-                pending: Pending::List,
-            });
+            self.screen = Screen::Unlock(UnlockForm::new(v.dir, v.name, Pending::List));
         }
         Ok(())
     }
@@ -1354,6 +1685,73 @@ impl App {
         Ok(())
     }
 
+    /// Log out: clear the master "login" session and return to the login gate, so
+    /// the master passphrase (or YubiKey) is required to use the TUI again.
+    /// Deliberately leaves the vaults' own locked/unlocked state, the keyring, the
+    /// daemon, the judge, and all data unchanged — this signs out, it doesn't lock
+    /// or wipe anything.
+    fn logout(&mut self) {
+        let _ = crate::core::master::lock_session();
+        self.set_status(
+            MsgKind::Info,
+            "Logged out. Enter your master passphrase to sign back in.".to_string(),
+        );
+        self.screen = Screen::Login(LoginForm::new());
+    }
+
+    /// Login gate: master passphrase entry, with `Ctrl+Y` for an enrolled YubiKey.
+    /// On success the master session is cached and the vault list opens; the vaults
+    /// keep whatever locked/unlocked state they already had.
+    fn key_login(&mut self, mut form: LoginForm, key: KeyEvent) -> Result<()> {
+        match key.code {
+            // There is nothing behind the login gate, so Esc quits the app.
+            KeyCode::Esc => self.confirm_quit = true,
+            KeyCode::Enter => match crate::core::master::Master::open(&form.passphrase) {
+                Ok(m) => {
+                    let _ = crate::core::master::unlock_session(m.key_bytes());
+                    self.refresh_vaults();
+                    self.set_status(MsgKind::Ok, "Signed in.".to_string());
+                    self.screen = Screen::List;
+                }
+                Err(_) => {
+                    form.error = Some("Wrong master passphrase".into());
+                    form.passphrase.clear();
+                    self.screen = Screen::Login(form);
+                }
+            },
+            // Ctrl+Y: sign in with the enrolled YubiKey. Any typed text is the
+            // optional PIN. The blocking touch runs in the event loop (run_fido).
+            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if !form.yubikey {
+                    form.error = Some("No YubiKey enrolled or connected".into());
+                    self.screen = Screen::Login(form);
+                    return Ok(());
+                }
+                let pin = if form.passphrase.is_empty() {
+                    None
+                } else {
+                    Some(form.passphrase.clone())
+                };
+                self.set_status(MsgKind::Info, "Touch your YubiKey now…".to_string());
+                self.pending_fido = Some(PendingFido::Login { pin });
+                form.error = None;
+                self.screen = Screen::Login(form);
+            }
+            KeyCode::Backspace => {
+                form.passphrase.pop();
+                form.error = None;
+                self.screen = Screen::Login(form);
+            }
+            KeyCode::Char(c) => {
+                form.passphrase.push(c);
+                form.error = None;
+                self.screen = Screen::Login(form);
+            }
+            _ => self.screen = Screen::Login(form),
+        }
+        Ok(())
+    }
+
     fn open_secrets(&mut self) -> Result<()> {
         let Some(v) = self.selected_vault() else {
             return Ok(());
@@ -1361,13 +1759,7 @@ impl App {
         if v.unlocked {
             self.enter_secrets(&v.dir, &v.name)?;
         } else {
-            self.screen = Screen::Unlock(UnlockForm {
-                vault_dir: v.dir,
-                name: v.name,
-                passphrase: String::new(),
-                error: None,
-                pending: Pending::Secrets,
-            });
+            self.screen = Screen::Unlock(UnlockForm::new(v.dir, v.name, Pending::Secrets));
         }
         Ok(())
     }
@@ -1377,25 +1769,13 @@ impl App {
             return Ok(());
         };
         if !v.unlocked {
-            self.screen = Screen::Unlock(UnlockForm {
-                vault_dir: v.dir,
-                name: v.name,
-                passphrase: String::new(),
-                error: None,
-                pending: Pending::Settings,
-            });
+            self.screen = Screen::Unlock(UnlockForm::new(v.dir, v.name, Pending::Settings));
             return Ok(());
         }
         // Access + judge config are encrypted, so open the vault (it's unlocked)
         // to read the policy rather than the public meta.yaml.
         let Some(key) = session::get_key(&v.dir) else {
-            self.screen = Screen::Unlock(UnlockForm {
-                vault_dir: v.dir,
-                name: v.name,
-                passphrase: String::new(),
-                error: None,
-                pending: Pending::Settings,
-            });
+            self.screen = Screen::Unlock(UnlockForm::new(v.dir, v.name, Pending::Settings));
             return Ok(());
         };
         match Vault::open_with_key(&v.dir, VaultKey::from_bytes(key)) {
@@ -1414,13 +1794,11 @@ impl App {
     /// Open the vault with the cached passphrase and show its secret list.
     fn enter_secrets(&mut self, dir: &Path, name: &str) -> Result<()> {
         let Some(key) = session::get_key(dir) else {
-            self.screen = Screen::Unlock(UnlockForm {
-                vault_dir: dir.to_path_buf(),
-                name: name.to_string(),
-                passphrase: String::new(),
-                error: None,
-                pending: Pending::Secrets,
-            });
+            self.screen = Screen::Unlock(UnlockForm::new(
+                dir.to_path_buf(),
+                name.to_string(),
+                Pending::Secrets,
+            ));
             return Ok(());
         };
         match Vault::open_with_key(dir, VaultKey::from_bytes(key)) {
@@ -1506,7 +1884,7 @@ impl App {
                 .map(|m| m.storage)
                 .unwrap_or_else(|_| "local".to_string());
             form.error = Some(format!(
-                "a vault named '{name}' already exists ({existing}:{name}) — names must be unique across storage"
+                "a vault named '{name}' already exists ({existing}:{name}) — vault names must be unique"
             ));
             self.screen = Screen::Create(form);
             return Ok(());
@@ -1576,7 +1954,7 @@ impl App {
             1 => AllowAgent::Bool(false),
             _ => AllowAgent::List(parse_agents(&form.allow_list)),
         };
-        // Storage is local and login is passphrase today; VaultMeta defaults to
+        // Storage is local and login is passphrase; VaultMeta defaults to
         // "local" storage, so we only carry the wired settings forward.
         let meta = VaultMeta::new(
             name.clone(),
@@ -1766,28 +2144,38 @@ impl App {
                 self.screen = Screen::Unlock(form);
             }
             KeyCode::Enter => match self.unlock_via_master(&form.vault_dir, &form.passphrase) {
-                Ok(vault) => {
-                    crate::core::usage::human(&form.vault_dir, "unlock", None);
-                    self.refresh_vaults();
-                    self.set_status(MsgKind::Ok, format!("Vault '{}' unlocked", form.name));
-                    match form.pending {
-                        Pending::List => self.screen = Screen::List,
-                        Pending::Secrets => self.enter_secrets(&form.vault_dir, &form.name)?,
-                        Pending::Settings => {
-                            self.screen = Screen::Settings(SettingsForm::from_meta(
-                                form.vault_dir,
-                                vault.meta.clone(),
-                                &vault.policy,
-                            ));
-                        }
-                    }
-                }
+                Ok(vault) => self.after_unlock(form, vault)?,
                 Err(e) => {
                     form.error = Some(e);
                     form.passphrase.clear();
                     self.screen = Screen::Unlock(form);
                 }
             },
+            // Ctrl+Y: unlock with the enrolled YubiKey. Any text typed into the
+            // field is treated as the (optional) YubiKey PIN; empty means none.
+            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if !form.yubikey {
+                    form.error = Some("No YubiKey enrolled or connected".into());
+                    self.screen = Screen::Unlock(form);
+                    return Ok(());
+                }
+                // The blocking touch runs in the event loop (see run_fido) after
+                // this "touch now" frame draws — never inline on a stale frame.
+                let pin = if form.passphrase.is_empty() {
+                    None
+                } else {
+                    Some(form.passphrase.clone())
+                };
+                self.set_status(MsgKind::Info, "Touch your YubiKey now…".to_string());
+                self.pending_fido = Some(PendingFido::Unlock {
+                    vault_dir: form.vault_dir.clone(),
+                    name: form.name.clone(),
+                    pending: form.pending,
+                    pin,
+                });
+                form.error = None;
+                self.screen = Screen::Unlock(form);
+            }
             KeyCode::Char(c) => {
                 form.passphrase.push(c);
                 form.error = None;
@@ -1796,6 +2184,47 @@ impl App {
             _ => self.screen = Screen::Unlock(form),
         }
         Ok(())
+    }
+
+    /// Post-unlock dispatch shared by the passphrase and YubiKey paths: record
+    /// usage, refresh, and route to the pending screen.
+    fn after_unlock(&mut self, form: UnlockForm, vault: Vault) -> Result<()> {
+        crate::core::usage::human(&form.vault_dir, "unlock", None);
+        self.refresh_vaults();
+        self.set_status(MsgKind::Ok, format!("Vault '{}' unlocked", form.name));
+        match form.pending {
+            Pending::List => self.screen = Screen::List,
+            Pending::Secrets => self.enter_secrets(&form.vault_dir, &form.name)?,
+            Pending::Settings => {
+                self.screen = Screen::Settings(SettingsForm::from_meta(
+                    form.vault_dir,
+                    vault.meta.clone(),
+                    &vault.policy,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Open a vault via the enrolled YubiKey (touch + optional PIN): derive the
+    /// master from the hardware slot, then unwrap the vault's data key — the
+    /// hardware analogue of [`Self::unlock_via_master`].
+    fn unlock_via_yubikey(
+        &mut self,
+        vault_dir: &Path,
+        pin: Option<&str>,
+    ) -> std::result::Result<Vault, String> {
+        let master = crate::core::master::open_with_yubikey(pin).map_err(|e| format!("{e}"))?;
+        let _ = crate::core::master::unlock_session(master.key_bytes());
+        if !crate::core::master::vault_has_keyslot(vault_dir) {
+            return Err("vault is not wrapped under the master (no keyslot)".to_string());
+        }
+        let dek = master
+            .unwrap_dek(vault_dir)
+            .map_err(|_| "could not unwrap the vault key with this master".to_string())?;
+        session::unlock_with_key(vault_dir, dek.bytes())
+            .map_err(|e| format!("could not cache session: {e}"))?;
+        Vault::open_with_key(vault_dir, dek).map_err(|e| format!("{e}"))
     }
 
     /// Open a vault via the master passphrase: open (or set) the master, unwrap
@@ -3021,6 +3450,7 @@ mod tests {
             show_help: false,
             confirm_quit: false,
             daemon_running: false,
+            pending_fido: None,
         }
     }
 

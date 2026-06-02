@@ -41,6 +41,12 @@ pub const VAULT_KEYSLOT: &str = "keyslot.enc";
 /// Keyslot wrapping the keyring's DEK under the master key. The keyring lives at
 /// `.svault/keyring.enc` (not in a vault subdir), so its slot needs its own name.
 pub const KEYRING_KEYSLOT: &str = "keyring.keyslot.enc";
+/// YubiKey keyslot: the master key wrapped under a FIDO2 hmac-secret-derived KEK
+/// — an alternative way in, the same shape as the recovery slot.
+const MASTER_YUBIKEY: &str = "master.yubikey.enc";
+/// Non-secret companion to the YubiKey slot: the FIDO2 credential id and the
+/// hmac-secret salt needed to re-derive that KEK. JSON, owner-only.
+const MASTER_YUBIKEY_META: &str = "master.yubikey.meta";
 
 fn master_path() -> PathBuf {
     PathBuf::from(SVAULT_DIR).join(MASTER_FILE)
@@ -62,9 +68,22 @@ fn master_recovery_path() -> PathBuf {
     PathBuf::from(SVAULT_DIR).join(MASTER_RECOVERY)
 }
 
+fn yubikey_path() -> PathBuf {
+    PathBuf::from(SVAULT_DIR).join(MASTER_YUBIKEY)
+}
+
+fn yubikey_meta_path() -> PathBuf {
+    PathBuf::from(SVAULT_DIR).join(MASTER_YUBIKEY_META)
+}
+
 /// True if a master recovery code has been written for this machine.
 pub fn master_recovery_exists() -> bool {
     master_recovery_path().exists()
+}
+
+/// True if a YubiKey is enrolled as a master keyslot on this machine.
+pub fn yubikey_enrolled() -> bool {
+    yubikey_path().exists() && yubikey_meta_path().exists()
 }
 
 /// True once a master passphrase has been set on this machine.
@@ -156,6 +175,35 @@ impl Master {
         self.mk.bytes()
     }
 
+    /// Enroll a YubiKey as an alternative master keyslot. Creates a FIDO2
+    /// credential, derives a stable hmac-secret from it, and wraps MK under that
+    /// secret in `master.yubikey.enc` (with its `.meta` companion). Needs an open
+    /// master (MK in hand) plus two touches. `pin` is the YubiKey PIN if one is
+    /// set. Because it wraps MK directly, the key then opens every store — and the
+    /// passphrase keeps working (this is an *or*, never a 2FA requirement).
+    pub fn enroll_yubikey(&self, pin: Option<&str>) -> Result<()> {
+        let credential_id = crate::core::yubikey::enroll(pin)?;
+        let mut hmac_salt = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut hmac_salt);
+        let secret = crate::core::yubikey::derive_secret(&credential_id, &hmac_salt, pin)?;
+
+        // The hmac-secret is already 32 high-entropy bytes, so it is the KEK
+        // directly (no Argon2) — same reasoning as wrap_dek_at over MK.
+        let kek = VaultKey::from_bytes(secret);
+        let mut aes_salt = [0u8; SALT_SIZE];
+        rand::thread_rng().fill_bytes(&mut aes_salt);
+        let blob = crypto::encrypt(&kek, &aes_salt, self.mk.bytes())?;
+        crate::core::secfile::write_owner_only(&yubikey_path(), &blob)?;
+
+        let meta = YubiMeta {
+            credential_id: hex::encode(&credential_id),
+            hmac_salt: hex::encode(hmac_salt),
+        };
+        let json = serde_json::to_vec(&meta)?;
+        crate::core::secfile::write_owner_only(&yubikey_meta_path(), &json)?;
+        Ok(())
+    }
+
     /// Wrap a vault's data key under MK and write `<vault_dir>/keyslot.enc`.
     pub fn wrap_dek(&self, vault_dir: &Path, dek: &VaultKey) -> Result<()> {
         self.wrap_dek_at(&keyslot_path(vault_dir), dek)
@@ -223,6 +271,53 @@ pub fn recover(code: &str, new_passphrase: &str) -> Result<Master> {
     Ok(Master { mk })
 }
 
+/// Non-secret metadata for the YubiKey keyslot: enough to re-derive the KEK.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct YubiMeta {
+    credential_id: String,
+    hmac_salt: String,
+}
+
+/// Open the master via an enrolled YubiKey: re-derive the hmac-secret from the
+/// stored credential id + salt (touch, + PIN if set), then unwrap MK from
+/// `master.yubikey.enc`. MK never changes, so every store stays accessible —
+/// this is an alternative to typing the master passphrase, not a second factor.
+pub fn open_with_yubikey(pin: Option<&str>) -> Result<Master> {
+    if !yubikey_enrolled() {
+        return Err(anyhow!(
+            "no YubiKey is enrolled on this machine (run 'svault master yubikey enroll')"
+        ));
+    }
+    let meta: YubiMeta = serde_json::from_slice(&std::fs::read(yubikey_meta_path())?)
+        .map_err(|_| anyhow!("master.yubikey.meta is corrupted"))?;
+    let credential_id = hex::decode(&meta.credential_id)
+        .map_err(|_| anyhow!("bad credential id in YubiKey meta"))?;
+    let salt: [u8; 32] = hex::decode(&meta.hmac_salt)
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| anyhow!("bad hmac salt in YubiKey meta"))?;
+
+    let secret = crate::core::yubikey::derive_secret(&credential_id, &salt, pin)?;
+    let kek = VaultKey::from_bytes(secret);
+    let blob = std::fs::read(yubikey_path())?;
+    let mk_bytes = crypto::decrypt(&kek, &blob)
+        .map_err(|_| anyhow!("this YubiKey did not unwrap the master key"))?;
+    let mk_bytes: [u8; 32] = mk_bytes
+        .try_into()
+        .map_err(|_| anyhow!("master.yubikey.enc holds an unexpected key length"))?;
+    Ok(Master {
+        mk: VaultKey::from_bytes(mk_bytes),
+    })
+}
+
+/// Remove the enrolled YubiKey keyslot (the passphrase and recovery code still
+/// open the master). Both the slot and its meta are securely removed.
+pub fn remove_yubikey() -> Result<()> {
+    crate::core::session::secure_remove(&yubikey_path())?;
+    crate::core::session::secure_remove(&yubikey_meta_path())?;
+    Ok(())
+}
+
 /// Generate a random DEK for a new store. The caller wraps it under the master
 /// and uses it to encrypt the store.
 pub fn new_dek() -> VaultKey {
@@ -243,28 +338,22 @@ fn write_master_slot(path: &Path, mk: &VaultKey, passphrase: &str) -> Result<()>
 
 // ── Session caching (mirrors session.rs / keyring.rs) ────────────────────────
 
-/// Cache MK (hex, `0600`) so `create` / `enroll` don't re-prompt within a
-/// session. Never stores the passphrase.
+/// Cache MK (`0600`, timestamped) so `create` / `enroll` don't re-prompt within
+/// a session. Never stores the passphrase; expires after
+/// [`crate::core::session::MAX_SESSION_SECS`] so the master must be re-entered.
 pub fn unlock_session(mk: &[u8; 32]) -> Result<()> {
-    crate::core::secfile::write_owner_only(&session_path(), hex::encode(mk).as_bytes())?;
-    Ok(())
+    crate::core::session::write_session_key(&session_path(), mk)
 }
 
 /// Clear the cached master session.
 pub fn lock_session() -> Result<()> {
-    let path = session_path();
-    if path.exists() {
-        let len = std::fs::metadata(&path)?.len() as usize;
-        std::fs::write(&path, vec![0u8; len])?;
-        std::fs::remove_file(&path)?;
-    }
+    crate::core::session::secure_remove(&session_path())?;
     Ok(())
 }
 
-/// The cached MK, if a valid master session exists.
+/// The cached MK, if a valid (non-expired) master session exists.
 pub fn session_key() -> Option<[u8; 32]> {
-    let contents = std::fs::read_to_string(session_path()).ok()?;
-    hex::decode(contents.trim()).ok()?.try_into().ok()
+    crate::core::session::read_session_key(&session_path())
 }
 
 /// True if the master is unlocked (a usable session key is cached).

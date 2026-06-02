@@ -40,10 +40,23 @@ passphrase — and because the code wraps the master key directly, it reopens
 vault also keeps its own recovery code from `create`, used for `svault recover`
 and for cross-machine `import`.)
 
-`create` walks you through naming the vault, choosing a [storage backend](storage-backends.md),
+`create` walks you through naming the vault (stored [locally](architecture.md#storage-and-vault-naming))
 and (on first run) setting the master passphrase — it no longer asks for a
 per-vault passphrase. `--force` skips the passphrase strength floor for scripted
 use. On success it prints a one-time recovery code (see [Recovery](recovery.md)).
+
+**YubiKey unlock.** `svault master yubikey enroll` adds a connected YubiKey as an
+alternative slot over the master key (FIDO2 hmac-secret — a touch, plus the
+YubiKey PIN if one is set). Afterwards `svault unlock` offers the key (and the TUI
+unlock screen takes `Ctrl+Y`), with the master passphrase always available as a
+fallback — it's *passphrase or touch*, never a two-step 2FA. `svault master
+yubikey status` shows whether one is enrolled and connected; `svault master
+yubikey remove` deletes the slot (the passphrase and recovery code still open
+everything). Lose the key and you are never locked out.
+
+**Re-auth cap.** Every unlock — passphrase or YubiKey, CLI, TUI, or the daemon
+behind MCP — stays valid for at most **6 hours**, after which the master must be
+re-entered. This bounds how long an already-unlocked vault can be read.
 
 > The **keyring** — the optional store for the AI judge's config and API keys — is
 > opened by the **same master passphrase** (`svault keyring init | unlock`); it has

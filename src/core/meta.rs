@@ -128,9 +128,9 @@ pub struct VaultMeta {
     pub name: String,
     #[serde(default)]
     pub description: String,
-    /// Storage backend this vault targets — "local" today; "cloud",
-    /// "self-hosted", "s3" are reserved (remote sync is coming soon).
-    /// Used as a prefix so the same name on different backends can't collide.
+    /// Storage backend this vault targets — always "local" (the encrypted
+    /// vault lives on this machine). Kept as a field and used as a vault-name
+    /// prefix in listings.
     pub storage: String,
     pub created_at: String,
     #[serde(default = "default_version")]
@@ -223,9 +223,9 @@ mod storage_check {
     #[test]
     fn storage_roundtrips() {
         let mut meta = VaultMeta::new("v".into(), "d".into(), VaultSettings::default());
-        meta.storage = "cloud".into();
+        meta.storage = "local".into();
         let body = serde_yaml::to_string(&meta).unwrap();
         let back: VaultMeta = serde_yaml::from_str(&body).unwrap();
-        assert_eq!(back.storage, "cloud");
+        assert_eq!(back.storage, "local");
     }
 }
