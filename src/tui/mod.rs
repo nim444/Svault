@@ -19,7 +19,7 @@ use crate::core::crypto::VaultKey;
 use crate::core::meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
 use crate::core::policy::SecretRule;
 use crate::core::session;
-use crate::core::vault::{list_vault_dirs, Vault, SVAULT_DIR};
+use crate::core::vault::{list_vault_dirs, svault_dir, Vault};
 
 /// Enter the alternate screen, run the event loop, restore the terminal.
 pub fn run() -> Result<()> {
@@ -1179,7 +1179,7 @@ impl App {
             return;
         };
         let mut events = crate::core::usage::recent(&v.dir, 200);
-        events.extend(crate::core::usage::recent(Path::new(SVAULT_DIR), 200));
+        events.extend(crate::core::usage::recent(&svault_dir(), 200));
         // RFC 3339 UTC timestamps sort correctly lexicographically; newest first.
         events.sort_by(|a, b| b.ts.cmp(&a.ts));
         events.truncate(200);
@@ -1376,7 +1376,8 @@ impl App {
                     self.screen = Screen::Import(form);
                     return Ok(());
                 }
-                let base = std::path::Path::new(SVAULT_DIR);
+                let base = svault_dir();
+                let base = base.as_path();
                 let result = std::fs::read_to_string(path)
                     .map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))
                     .and_then(|raw| {
@@ -1923,7 +1924,7 @@ impl App {
         }
         // First-run create also sets the master, which gets its own recovery code.
         let setting_master = form.master_step == MasterStep::Set;
-        let vault_dir = PathBuf::from(SVAULT_DIR).join(&name);
+        let vault_dir = svault_dir().join(&name);
         if vault_dir.exists() {
             let existing = VaultMeta::load_unverified(&vault_dir)
                 .map(|m| m.storage)
@@ -3483,7 +3484,7 @@ fn classify_adjust(form: &mut ClassifyForm, forward: bool) {
 /// global, so they aren't tied to any one vault. Best-effort; never blocks the
 /// action (it's a no-op when `.svault/` doesn't exist yet).
 fn log_judge(action: &str, detail: Option<&str>) {
-    crate::core::usage::human(Path::new(SVAULT_DIR), action, detail);
+    crate::core::usage::human(&svault_dir(), action, detail);
 }
 
 fn cycle(current: usize, len: usize, forward: bool) -> usize {

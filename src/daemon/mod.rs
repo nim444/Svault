@@ -114,7 +114,7 @@ mod imp {
     use super::{is_expired, Request, Response, VaultStatus, LOG_NAME, PID_NAME, SOCKET_NAME};
     use crate::core::crypto::VaultKey;
     use crate::core::judge::JudgeRuntime;
-    use crate::core::vault::{Vault, SVAULT_DIR};
+    use crate::core::vault::{svault_dir, Vault};
     use crate::core::{audit, gate, policy};
     use anyhow::{anyhow, Context, Result};
     use std::collections::HashMap;
@@ -143,7 +143,7 @@ mod imp {
     }
 
     pub fn base_dir() -> PathBuf {
-        PathBuf::from(SVAULT_DIR)
+        svault_dir()
     }
     fn socket_path(base: &Path) -> PathBuf {
         base.join(SOCKET_NAME)
@@ -1696,7 +1696,7 @@ mod imp {
     use std::path::{Path, PathBuf};
 
     pub fn base_dir() -> PathBuf {
-        PathBuf::from(crate::core::vault::SVAULT_DIR)
+        crate::core::vault::svault_dir()
     }
     pub fn is_running(_base: &Path) -> bool {
         false

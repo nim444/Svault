@@ -29,7 +29,7 @@ use rand::RngCore;
 use std::path::{Path, PathBuf};
 
 use crate::core::crypto::{self, VaultKey, SALT_SIZE};
-use crate::core::vault::SVAULT_DIR;
+use crate::core::vault::svault_dir;
 
 const MASTER_FILE: &str = "master.enc";
 const MASTER_SESSION: &str = ".master.session";
@@ -49,11 +49,11 @@ const MASTER_YUBIKEY: &str = "master.yubikey.enc";
 const MASTER_YUBIKEY_META: &str = "master.yubikey.meta";
 
 fn master_path() -> PathBuf {
-    PathBuf::from(SVAULT_DIR).join(MASTER_FILE)
+    svault_dir().join(MASTER_FILE)
 }
 
 fn session_path() -> PathBuf {
-    PathBuf::from(SVAULT_DIR).join(MASTER_SESSION)
+    svault_dir().join(MASTER_SESSION)
 }
 
 fn keyslot_path(vault_dir: &Path) -> PathBuf {
@@ -61,19 +61,19 @@ fn keyslot_path(vault_dir: &Path) -> PathBuf {
 }
 
 fn keyring_keyslot_path() -> PathBuf {
-    PathBuf::from(SVAULT_DIR).join(KEYRING_KEYSLOT)
+    svault_dir().join(KEYRING_KEYSLOT)
 }
 
 fn master_recovery_path() -> PathBuf {
-    PathBuf::from(SVAULT_DIR).join(MASTER_RECOVERY)
+    svault_dir().join(MASTER_RECOVERY)
 }
 
 fn yubikey_path() -> PathBuf {
-    PathBuf::from(SVAULT_DIR).join(MASTER_YUBIKEY)
+    svault_dir().join(MASTER_YUBIKEY)
 }
 
 fn yubikey_meta_path() -> PathBuf {
-    PathBuf::from(SVAULT_DIR).join(MASTER_YUBIKEY_META)
+    svault_dir().join(MASTER_YUBIKEY_META)
 }
 
 /// True if a master recovery code has been written for this machine.
@@ -370,6 +370,7 @@ pub fn open_from_session() -> Option<Master> {
 mod tests {
     use super::*;
     use crate::core::testlock::CWD_LOCK;
+    use crate::core::vault::SVAULT_DIR;
     use std::sync::MutexGuard;
 
     fn in_temp_cwd() -> (MutexGuard<'static, ()>, tempfile::TempDir, PathBuf) {

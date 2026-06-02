@@ -38,6 +38,14 @@ seals a secret and hands it to a human instead of letting an agent grind against
   require a human — without revealing the window or seal criteria, so a well-behaved
   agent stops rather than retrying in a loop.
 
+### Added
+- **`SVAULT_HOME` env override.** By default svault resolves its store as `.svault`
+  in the current directory; set `SVAULT_HOME` to a base directory to use
+  `$SVAULT_HOME/.svault` instead. This is the robust way to point a process whose
+  working directory you don't control — notably the `svault mcp` server launched by
+  an MCP host — at a fixed store. It governs the whole store (vaults, master
+  keyslots, keyring, sessions, daemon socket), so every surface stays consistent.
+
 ### Hardened
 Acting on the three independent 0.9.9 security reviews (`docs/security-review/`), the
 following were fixed in this release so 1.0 is a test-and-ship, not a fix:

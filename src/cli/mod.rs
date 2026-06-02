@@ -20,7 +20,7 @@ use crate::tui;
 
 use crate::core::crypto::VaultKey;
 use crate::core::meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
-use crate::core::vault::{list_vault_dirs, Vault, SVAULT_DIR};
+use crate::core::vault::{list_vault_dirs, svault_dir, Vault, SVAULT_DIR};
 use zeroize::Zeroizing;
 
 /// Prompt for a secret (passphrase, recovery code, or secret value) and return
@@ -377,7 +377,7 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
             .interact_text()?,
     };
 
-    let vault_dir = PathBuf::from(SVAULT_DIR).join(&name);
+    let vault_dir = svault_dir().join(&name);
     if vault_dir.exists() {
         let existing = VaultMeta::load_unverified(&vault_dir)
             .map(|m| m.storage)
@@ -794,7 +794,7 @@ fn cmd_lock(lock_all: bool, vault_name: Option<&str>) -> Result<()> {
         // Lock the daemon's in-memory keys, any file sessions, and the master
         // session — so re-unlocking re-prompts the master passphrase.
         let daemon_count = client::lock_all().unwrap_or(0);
-        let file_count = session::lock_all(std::path::Path::new(SVAULT_DIR))?;
+        let file_count = session::lock_all(&svault_dir())?;
         master::lock_session()?;
         keyring::lock_session()?;
         let count = daemon_count + file_count;
@@ -1563,7 +1563,8 @@ fn cmd_import(file: &str, name: Option<&str>) -> Result<()> {
         eprintln!("{} {}", style("error:").red(), e);
         std::process::exit(1);
     });
-    let base = Path::new(SVAULT_DIR);
+    let base = svault_dir();
+    let base = base.as_path();
 
     // Resolve a free name: the requested name (or the bundle's own), suffixed if
     // it's already taken — so re-importing onto the same machine never errors.
@@ -1657,13 +1658,13 @@ fn cmd_import(file: &str, name: Option<&str>) -> Result<()> {
 /// - no flag, many vaults: prompt the user to pick one
 fn resolve_vault_dir(vault_name: Option<&str>) -> Result<PathBuf> {
     if let Some(n) = vault_name {
-        let dir = PathBuf::from(SVAULT_DIR).join(n);
+        let dir = svault_dir().join(n);
         if !dir.join("meta.yaml").exists() {
             eprintln!(
                 "{} Vault '{}' not found in {}/",
                 style("error:").red(),
                 n,
-                SVAULT_DIR
+                svault_dir().display()
             );
             std::process::exit(1);
         }

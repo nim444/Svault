@@ -11,6 +11,21 @@ use crate::core::policy::VaultPolicyData;
 
 pub const SVAULT_DIR: &str = ".svault";
 
+/// The active `.svault` store directory.
+///
+/// By default this is `.svault` in the current working directory — fine for a
+/// CLI you run inside a project. Set `SVAULT_HOME` to a **base directory** to
+/// resolve `$SVAULT_HOME/.svault` instead, which is the robust way to point a
+/// process whose CWD you don't control (notably the `svault mcp` server launched
+/// by an MCP host) at a fixed store. All store paths — vaults, master keyslots,
+/// keyring, sessions — go through here, so the whole store moves together.
+pub fn svault_dir() -> PathBuf {
+    match std::env::var_os("SVAULT_HOME") {
+        Some(home) if !home.is_empty() => Path::new(&home).join(SVAULT_DIR),
+        _ => PathBuf::from(SVAULT_DIR),
+    }
+}
+
 /// Current on-disk version of the encrypted `vault.enc` payload.
 const PAYLOAD_VERSION: u32 = 2;
 
@@ -286,7 +301,7 @@ impl Vault {
 
 /// List all vault directories under base/.svault/
 pub fn list_vault_dirs() -> Vec<PathBuf> {
-    list_vault_dirs_in(Path::new(SVAULT_DIR))
+    list_vault_dirs_in(&svault_dir())
 }
 
 pub fn list_vault_dirs_in(base: &Path) -> Vec<PathBuf> {

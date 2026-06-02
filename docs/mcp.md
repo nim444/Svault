@@ -91,7 +91,7 @@ vault unlocked (`svault unlock`, ideally with the daemon running — see
     "svault": {
       "command": "svault",
       "args": ["mcp"],
-      "env": { "SVAULT_CALLER": "claude-code" }
+      "env": { "SVAULT_CALLER": "claude-code", "SVAULT_HOME": "/Users/you" }
     }
   }
 }
@@ -101,9 +101,16 @@ vault unlocked (`svault unlock`, ideally with the daemon running — see
 (`command: "svault"`, `args: ["mcp"]`). Set `SVAULT_CALLER` to a stable identity
 per agent so the audit log and rate limits can tell them apart.
 
-The server runs in the working directory it's launched from and resolves
-`./.svault`, so launch it from the project that owns the vault (or pass `vault` on
-each call when several exist).
+By default the server resolves the store as `./.svault` in **the working directory
+it's launched from** — and an MCP host (Claude Code, Cursor, …) chooses that
+directory, which is often *not* where your vaults live, so the vault list comes back
+empty. Set **`SVAULT_HOME`** to the base directory that holds `.svault` (e.g. your
+home dir, so it resolves `$SVAULT_HOME/.svault`) to point the server at a fixed store
+regardless of how the host launches it. `SVAULT_HOME` governs the whole store —
+vaults, master keyslots, keyring, sessions, and the daemon socket — so the CLI/TUI
+you unlock with and the MCP server agree only when they share it. (Without it, launch
+the server from the project that owns the vault, or pass `vault` on each call when
+several exist.)
 
 > You can also write this entry from the **TUI**: run `svault`, press `m` for the
 > MCP screen, then `w` to drop (and merge) the `svault` server into `./.mcp.json`.
