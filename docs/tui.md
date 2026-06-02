@@ -29,7 +29,7 @@ Pressing `o` on the vault list **logs out**: it clears the login session and ret
 
 ## Home — vault list
 
-The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` / `unlocked`), and **DESCRIPTION** columns. The selected row carries a `>` marker and a subtle background. The header's right side shows the **daemon indicator**: `daemon running` (green) or `daemon off` (dim). See [Daemon](daemon.md).
+The landing screen is a table with **STORAGE**, **VAULT**, **STATUS** (`locked` / `unlocked`), **CREATED**, and **DESCRIPTION** columns. The selected row carries a `>` marker and a subtle background. The header's right side shows the **daemon indicator**: `daemon running` (green) or `daemon off` (dim). See [Daemon](daemon.md).
 
 | Key | Action |
 |---|---|
@@ -134,7 +134,7 @@ This is backed by a per-vault `usage.log` (`.svault/<name>/usage.log`, JSON line
 | Key | Action |
 |---|---|
 | `↑` / `↓` or `j` / `k` | Move between secrets |
-| `a` | Add or update a secret |
+| `a` | Add a secret |
 | `c` | Reclassify the selected secret (scope / tier / require-reason / description) |
 | `Enter` / `g` | View a secret value (`space` toggles masked / revealed) |
 | `d` | Delete a secret (with `y` / `n` confirm) |

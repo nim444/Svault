@@ -97,7 +97,7 @@ src/
   main.rs           fn main() { svault_ai::cli::run() }
   core/             frontend-agnostic engine — no dependency on any frontend
     crypto, secfile, passphrase, config, meta, master, recovery, keyring,
-    vault, policy, judge, gate, audit, usage, session, portable
+    vault, policy, judge, gate, audit, usage, session, portable, yubikey
   daemon/           Unix unlock daemon (mod.rs) + its client (client.rs)
   tui/              interactive Ratatui terminal UI (mod, ui, theme)
   cli/              the `svault` command-line frontend; exposes cli::run()

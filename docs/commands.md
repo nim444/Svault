@@ -11,6 +11,9 @@ svault master init [--force]       # set the master passphrase (prints a one-tim
 svault master rekey [--force]      # change the master passphrase (no vault is re-encrypted)
 svault master recover [--force]    # reset a forgotten master passphrase with the recovery code
 svault master status               # is the master set / unlocked, how many vaults wrapped
+svault master yubikey enroll       # add a YubiKey (FIDO2 hmac-secret) keyslot — touch unlocks the master
+svault master yubikey status       # is a YubiKey enrolled / is a device present
+svault master yubikey remove       # remove the YubiKey keyslot
 svault create [--force]            # create an encrypted vault (name, description, agents, rate limit, auto-lock, AI judge + assigned judge)
 svault settings [VAULT]            # view or change a vault's settings (incl. AI judge on/off + assigned judge)
 svault unlock   [VAULT]            # unlock — no VAULT opens every vault via the master; VAULT opens just one

@@ -229,15 +229,15 @@ flowchart TD
 | **Foundation** | Shipped | Local AES-256-GCM vaults (Argon2id), the interactive Ratatui TUI, recovery code + encrypted export/import, and the Unix daemon (keys in memory, auto-lock) |
 | **Enforced policy + AI judge** | Shipped | Daemon-enforced policy engine (peer-UID-audited) — reason, scopes, tiers, rate limit, burst — plus the AI judge (OpenRouter) gating medium/high-tier secrets |
 | **Everything encrypted at rest** | Shipped | The whole policy surface in `vault.enc` and all global config + the judge registry (multiple named judges, with API keys) in `keyring.enc` — nothing abusable in plaintext; per-vault judge assignment; generic caller-facing denials |
-| **Unified unlock** | Shipped (0.9.4 – 0.9.5) | One master passphrase wraps a random data key per store (keyslot model); per-vault passphrases removed (0.9.4) and the keyring brought under the master too (0.9.5); `svault master init / rekey / status` |
-| **Layered source** | Shipped (0.9.6) | Source split into a frontend-agnostic `core` plus `cli` / `tui` / `daemon` frontends (a library crate), with `mcp` / `gui` placeholders — structural only, so future frontends reuse `core` |
-| **Local MCP** | Shipped (0.9.7) | `svault mcp` — a local stdio MCP server exposing gated `svault_get_secret` / `svault_list_vaults` to AI agents; serves only unlocked state, never the passphrase, with a capability descriptor that advertises the request interface, not the decision criteria |
-| **Hardware-key unlock + hardening** | Shipped (0.9.8) | YubiKey (FIDO2 hmac-secret) unlock — an alternative keyslot over the master key (passphrase or touch, not 2FA); a 6-hour re-auth cap on every unlock path; first-run onboarding + an app-level TUI sign-in / logout; storage local-only |
-| **Conditional access + escalation** | Next (0.9.9) | Time-window / caller conditions in the encrypted policy; brute-force / anomaly seals a secret and escalates to a human (agents never self-clear) |
-| **1.0.0** | Target | A final independent review of the full agent-ready surface and install channels (script, Homebrew, Docker), then the first stable release |
-| **2.0.0** | Planned | Desktop GUI (Tauri) + system tray |
+| **Unified unlock** | Shipped | One master passphrase wraps a random data key per store (keyslot model); per-vault passphrases removed and the keyring brought under the master too; `svault master init / rekey / status` |
+| **Layered source** | Shipped | Source split into a frontend-agnostic `core` plus `cli` / `tui` / `daemon` frontends (a library crate), with `mcp` / `gui` placeholders — structural only, so future frontends reuse `core` |
+| **Local MCP** | Shipped | `svault mcp` — a local stdio MCP server exposing gated `svault_get_secret` / `svault_list_vaults` to AI agents; serves only unlocked state, never the passphrase, with a capability descriptor that advertises the request interface, not the decision criteria |
+| **Hardware-key unlock + hardening** | Shipped | YubiKey (FIDO2 hmac-secret) unlock — an alternative keyslot over the master key (passphrase or touch, not 2FA); a 6-hour re-auth cap on every unlock path; first-run onboarding + an app-level TUI sign-in / logout; storage local-only |
+| **Conditional access + escalation** | Next | Time-window / caller conditions in the encrypted policy; brute-force / anomaly seals a secret and escalates to a human (agents never self-clear) |
+| **Independent review + install channels** | Target | A final independent review of the full agent-ready surface and install channels (script, Homebrew, Docker), then the first stable release |
+| **Desktop GUI** | Planned | Desktop GUI (Tauri) + system tray |
 
-Svault is currently on the **0.9.x** line, working through the agent-ready path; 1.0.0 is reserved for the reviewed, stable release. Per-release detail lives in the [changelog](CHANGELOG.md).
+Detail for each milestone lives in the [changelog](CHANGELOG.md) and the [full roadmap](docs/roadmap.md).
 
 **Full roadmap → [docs/roadmap.md](docs/roadmap.md)**
 
@@ -249,7 +249,7 @@ Svault is currently on the **0.9.x** line, working through the agent-ready path;
 cargo test
 ```
 
-**117 tests** (plus an `#[ignore]`d concurrency stress benchmark) cover the crypto core and tamper detection, vault operations, the master keyslot model (wrap/unwrap a data key under the master for both vaults and the keyring, rekey, master recovery-code reset, wrong-master rejection), the policy engine and the enforced daemon gate (including peer-UID-stamped audit and high-tier fail-closed behaviour), the AI judge — run against a fake transport, so the suite never touches the network — and the encrypted-at-rest guarantees for both the policy (`vault.enc`) and the keyring (`keyring.enc`).
+**131 tests** (plus an `#[ignore]`d concurrency stress benchmark) cover the crypto core and tamper detection, vault operations, the master keyslot model (wrap/unwrap a data key under the master for both vaults and the keyring, rekey, master recovery-code reset, wrong-master rejection), the policy engine and the enforced daemon gate (including peer-UID-stamped audit and high-tier fail-closed behaviour), the AI judge — run against a fake transport, so the suite never touches the network — and the encrypted-at-rest guarantees for both the policy (`vault.enc`) and the keyring (`keyring.enc`).
 
 CI runs the full suite on **Ubuntu, Fedora, macOS, and Windows** on every push and pull request. A heavier concurrency simulation runs on demand:
 

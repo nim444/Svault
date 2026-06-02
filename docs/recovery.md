@@ -7,8 +7,11 @@ Two ways to make a vault survivable: a **recovery code** for a lost passphrase, 
 When you create a vault, Svault prints a one-time recovery code:
 
 ```
-RECOVERY CODE — store it now:
-A38A-1E39-B17B-9661-415F-54C9-5B60-C6F2-BDAB-E65F
+  RECOVERY CODE
+  A38A-1E39-B17B-9661-415F-54C9-5B60-C6F2-BDAB-E65F
+  This is the ONLY time this code is shown — it is not stored in plaintext.
+  Save it now in a password manager (or on paper, offline).
+  It is the only way back in if you lose your passphrase — run 'svault recover'.
 ```
 
 This is 160 bits of randomness. Svault wraps the vault key under a key derived from this code (Argon2id) and stores the result in `recovery.enc` next to `vault.enc`.
