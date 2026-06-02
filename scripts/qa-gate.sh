@@ -67,8 +67,12 @@ head "2. Add tiered secrets (you'll be prompted for each value — any text is f
 "$SV" secret add API_KEY --scope api      --tier medium --description "billing key"    -v qa --require-caller ci
 "$SV" secret add DEPLOY  --scope deploy   --tier high   --description "prod deploy key" -v qa
 
-head "3. Seed caller rules + start the daemon and unlock (so gets don't prompt)"
-"$SV" policy init -v qa || true
+head "3. Start the daemon and unlock (so gets don't prompt)"
+# NOTE: no `policy init`. The vault was created with "allow all agents", so it runs
+# in FALLBACK mode — the gate still enforces reason/scope/tier/conditions, but any
+# allowed agent may try. `policy init` would add named caller rules whose seeded
+# scopes don't match these secrets (default holds none), which would deny the allow
+# path below — that's the caller-scoped path, tested separately by hand.
 "$SV" daemon start || true
 "$SV" unlock -v qa || exit 1
 

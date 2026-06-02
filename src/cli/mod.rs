@@ -1480,8 +1480,19 @@ fn cmd_policy_init(vault_name: Option<&str>) -> Result<()> {
     );
     println!(
         "{}",
-        style("  Classify secrets with 'svault secret add' (you'll be asked for scope/tier).")
-            .dim()
+        style(
+            "  These callers start deny-by-default: 'default' holds no scopes and \
+             'claude-code' only 'misc'."
+        )
+        .dim()
+    );
+    println!(
+        "{}",
+        style(
+            "  Grant each caller the scopes its secrets use (e.g. database, api) via \
+             'svault settings' — until then scoped gets are denied."
+        )
+        .dim()
     );
     Ok(())
 }

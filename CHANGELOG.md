@@ -49,6 +49,10 @@ Changes since 0.9.9:
   home store (it only makes sense for a project-scoped `SVAULT_HOME`).
 - `svault install` is now clearly labelled "not yet implemented" and points to the
   manual MCP setup, instead of looking like a shipped command.
+- `svault policy init` now spells out that the seeded callers are deny-by-default
+  (`default` holds no scopes, `claude-code` only `misc`) and that you must grant each
+  caller the scopes its secrets use — previously the documented `policy init` → `get`
+  flow denied every scoped read with no hint why.
 - Docs drift: `policy-engine.md` no longer says the CLI "runs the gate locally before
   unlocking" (the agent path never prompts); `daemon.md` no longer calls `secret list`
   a "mutation". QA checklist scratch notes cleaned up; added a check that `meta.yaml`

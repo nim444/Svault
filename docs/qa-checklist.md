@@ -90,8 +90,14 @@ wait past the 6h cap). Reset between sections with `rm -rf "$SVAULT_HOME/.svault
 > The canonical agent door is the **MCP server** — see section F, which exercises the
 > same gate end-to-end. `svault get` is **deprecated** (it prints a deprecation note to
 > stderr and will be removed), but it shares the exact gate, so this section is a fast
-> way to validate the gate logic from a shell. Set up caller rules first: `sv policy
-> init` (seeds `default`), or add a caller via the TUI.
+> way to validate the gate logic from a shell.
+>
+> These steps use **fallback mode** — a vault created with "allow all agents" lets any
+> agent try, while the gate still enforces reason / scope / tier / conditions. **Do not
+> run `svault policy init` for the allow path:** it adds named caller rules that *also*
+> require the caller to hold the secret's scope, and the seeded callers grant no
+> matching scopes (`default` holds none), so they deny these scoped secrets until you
+> grant scopes via the TUI. Caller-scoped authorization is its own check (C8 below).
 
 ### C1. Allow path
 - **Steps:** `sv get DB_URL --scope database --reason "run the nightly database backup" --caller default -v project`
@@ -143,6 +149,16 @@ denied: request not authorized for this secret
 - **Goal:** Rotating `--caller` doesn't evade burst detection.
 - **Steps:** Drive >10 *allowed* reads of one low-tier secret inside ~10s while cycling caller names, e.g. `for i in $(seq 1 12); do sv get DB_URL --scope database --reason "scheduled backup pass $i" --caller rot$i; done`.
 - **Expected:** After the per-secret ceiling (10 allowed reads/10s across all callers) the requests are denied generically, even with fresh caller names; the audit log shows the secret-burst reason.
+- [ ] Pass
+
+### C8. Caller-scoped authorization (named caller rules)
+- **Goal:** With caller rules, a caller may read a secret only if it holds the secret's scope.
+- **Pre-req:** This changes the vault out of fallback mode — do it last, or in a separate vault.
+- **Steps:** `sv policy init -v qa` (seeds `claude-code` with scope `misc`, `default` with none), then:
+  - `sv get DB_URL --scope database --reason "run the nightly database backup" --caller default` → **denied** (default holds no scopes).
+  - `sv get DB_URL --scope database --reason "run the nightly database backup" --caller claude-code` → **denied** (claude-code holds only `misc`).
+  - In the TUI, grant `claude-code` the `database` scope (vault settings → callers), then re-run the `claude-code` request → **allowed**.
+- **Expected:** Denials until the caller is granted the matching scope; then it passes. (Confirms the seeded callers are deny-by-default and scopes must be granted to match your secrets.)
 - [ ] Pass
 
 ---
