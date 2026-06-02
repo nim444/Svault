@@ -10,14 +10,20 @@ result, and a checkbox to tick. Run in a scratch directory so the real `.svault/
 is untouched:
 
 ```bash
-mkdir -p /tmp/svault-qa && cd /tmp/svault-qa
-cargo build --features yubikey       # or use the release binary
-alias sv="$(pwd)/target/release/svault"   # adjust to your build path
+mkdir -p /tmp/svault-qa
+export SVAULT_HOME=/tmp/svault-qa    # isolate the store here, NOT your real ~/.svault
+cargo build --release --features yubikey
+alias sv="$(pwd)/target/release/svault"   # run from the repo; adjust to your build path
 ```
+
+> The store defaults to `~/.svault`. Exporting `SVAULT_HOME` above keeps this whole
+> test pass inside `/tmp/svault-qa/.svault` so it never touches your real vaults.
+> Keep `SVAULT_HOME` exported in **every** shell you use during the run (including any
+> MCP server config) so they all share the scratch store.
 
 Conventions: "agent get" means `svault get <NAME> --scope <S> --reason "<R>" --caller <C>`.
 A **fresh run** means no master session is cached (run `svault lock --all` first, or
-wait past the 6h cap). Reset between sections with `rm -rf .svault`.
+wait past the 6h cap). Reset between sections with `rm -rf "$SVAULT_HOME/.svault"`.
 
 ---
 
@@ -207,7 +213,7 @@ wait past the 6h cap). Reset between sections with `rm -rf .svault`.
 - [ ] Pass
 
 ### G2. 6-hour hard cap
-- **Steps:** Unlock a vault, then back-date its session: edit the timestamp on the first line of `.svault/proj/.session` (and/or `.svault/.master.session`) to >6h ago.
+- **Steps:** Unlock a vault, then back-date its session: edit the timestamp on the first line of `$SVAULT_HOME/.svault/proj/.session` (and/or `$SVAULT_HOME/.svault/.master.session`) to >6h ago.
 - **Expected:** `sv status` shows the vault as **locked**; the next `get` re-prompts the master; the stale session file is removed.
 - [ ] Pass
 

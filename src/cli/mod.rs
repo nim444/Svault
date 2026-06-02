@@ -243,6 +243,21 @@ enum Commands {
 /// Parse CLI arguments and run the requested command. The `svault` binary's
 /// `main` is a thin wrapper over this.
 pub fn run() -> Result<()> {
+    // Default the store to the user's home (`~/.svault`) so an installed svault
+    // behaves the same from any directory — in particular the `mcp` server, whose
+    // working directory the MCP host chooses. An explicit `SVAULT_HOME` is honoured;
+    // if there's no home dir, svault_dir() falls back to `./.svault`. Children we
+    // spawn (the daemon) inherit this, so every surface agrees on the store.
+    let svault_home_unset = match std::env::var_os("SVAULT_HOME") {
+        Some(h) => h.is_empty(),
+        None => true,
+    };
+    if svault_home_unset {
+        if let Some(home) = crate::core::vault::user_home() {
+            std::env::set_var("SVAULT_HOME", home);
+        }
+    }
+
     let cli = Cli::parse();
     let Some(command) = cli.command else {
         // No subcommand → interactive TUI.

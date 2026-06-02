@@ -13,17 +13,32 @@ pub const SVAULT_DIR: &str = ".svault";
 
 /// The active `.svault` store directory.
 ///
-/// By default this is `.svault` in the current working directory — fine for a
-/// CLI you run inside a project. Set `SVAULT_HOME` to a **base directory** to
-/// resolve `$SVAULT_HOME/.svault` instead, which is the robust way to point a
-/// process whose CWD you don't control (notably the `svault mcp` server launched
-/// by an MCP host) at a fixed store. All store paths — vaults, master keyslots,
-/// keyring, sessions — go through here, so the whole store moves together.
+/// Resolution: `$SVAULT_HOME/.svault` when `SVAULT_HOME` is set, otherwise
+/// `.svault` in the current working directory. The `svault` binary defaults
+/// `SVAULT_HOME` to the user's home at startup (see [`crate::cli::run`]), so an
+/// installed `svault` always uses `~/.svault` regardless of where it's launched —
+/// including the `svault mcp` server, whose working directory the MCP host picks.
+/// The library keeps the CWD-relative fallback so embedders and tests stay scoped.
+/// All store paths — vaults, master keyslots, keyring, sessions, daemon socket —
+/// go through here, so the whole store moves together.
 pub fn svault_dir() -> PathBuf {
     match std::env::var_os("SVAULT_HOME") {
         Some(home) if !home.is_empty() => Path::new(&home).join(SVAULT_DIR),
         _ => PathBuf::from(SVAULT_DIR),
     }
+}
+
+/// The current user's home directory — the default base for the store when
+/// `SVAULT_HOME` is unset. `$HOME` on Unix, `%USERPROFILE%` on Windows. Returns
+/// `None` if neither is set, in which case the CWD-relative fallback applies.
+pub fn user_home() -> Option<PathBuf> {
+    #[cfg(unix)]
+    let var = "HOME";
+    #[cfg(not(unix))]
+    let var = "USERPROFILE";
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
 }
 
 /// Current on-disk version of the encrypted `vault.enc` payload.

@@ -1,10 +1,11 @@
 # Command reference
 
-Every command operates on the vaults under `.svault/` — by default in the current
-directory, or under `$SVAULT_HOME/.svault` when `SVAULT_HOME` is set (point a process
-whose working directory you don't control, like the `svault mcp` server, at a fixed
-store — it governs vaults, master, keyring, sessions, and the daemon together). Where
-a command takes a vault, see [Vault selection](#vault-selection) for how it's resolved.
+Every command operates on the vaults under your `.svault/` store, which lives at
+**`~/.svault`** by default — so `svault` behaves the same from any directory. Set
+`SVAULT_HOME` to use `$SVAULT_HOME/.svault` instead (e.g. a project dir, or to point
+the `svault mcp` server at a non-home store); it governs vaults, master, keyring,
+sessions, and the daemon together. Where a command takes a vault, see
+[Vault selection](#vault-selection) for how it's resolved.
 
 ## Vault lifecycle
 

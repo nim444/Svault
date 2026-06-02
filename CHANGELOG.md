@@ -39,12 +39,16 @@ seals a secret and hands it to a human instead of letting an agent grind against
   agent stops rather than retrying in a loop.
 
 ### Added
-- **`SVAULT_HOME` env override.** By default svault resolves its store as `.svault`
-  in the current directory; set `SVAULT_HOME` to a base directory to use
-  `$SVAULT_HOME/.svault` instead. This is the robust way to point a process whose
-  working directory you don't control — notably the `svault mcp` server launched by
-  an MCP host — at a fixed store. It governs the whole store (vaults, master
-  keyslots, keyring, sessions, daemon socket), so every surface stays consistent.
+- **The store now lives at `~/.svault` by default.** The `svault` binary resolves
+  its store under the user's home directory regardless of the working directory it's
+  launched from — so the CLI/TUI, the daemon, and especially the `svault mcp` server
+  (whose CWD the MCP host picks) all agree on one store without configuration. This
+  fixes `svault mcp` returning an empty vault list when the host launched it outside
+  the project that held the vaults.
+- **`SVAULT_HOME` env override.** Set `SVAULT_HOME` to a base directory to use
+  `$SVAULT_HOME/.svault` instead of home (e.g. a project-scoped store, or to point an
+  MCP server at a non-home location). It governs the whole store — vaults, master
+  keyslots, keyring, sessions, daemon socket — so every surface stays consistent.
 
 ### Hardened
 Acting on the three independent 0.9.9 security reviews (`docs/security-review/`), the
