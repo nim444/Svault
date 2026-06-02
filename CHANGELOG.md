@@ -5,9 +5,29 @@ All notable changes to Svault are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - UNRELEASED (release candidate)
 
-Post-0.9.9 consistency fixes from a manual QA pass.
+Svault's first **stable** release. The agent-ready secret layer is feature-complete
+and independently security-reviewed; 1.0.0 is the consolidation, not new scope.
+
+What 1.0.0 stands on (built across the 0.9.x line):
+- **Enforced policy gate** — every agent read runs reason → classification → scope →
+  caller → conditions → rate/burst → tier → AI judge, evaluated where the key lives
+  (the daemon), audited with the connecting process's real peer UID. No unguarded
+  read path; denials are generic to the caller.
+- **Everything encrypted at rest** — secret values *and* the whole policy surface
+  (classification, caller rules, judge assignment, seals) live AES-256-GCM inside
+  `vault.enc`; `meta.yaml` leaks no classification or secret names.
+- **Unified unlock** — one master passphrase opens every vault and the keyring, via
+  the keyslot model; YubiKey (FIDO2) and a recovery code are alternative OR-slots; a
+  6-hour re-auth cap on every path.
+- **Conditional access + seal/escalate**, the **MCP server** as the agent door, and
+  the honest same-UID trust model stated up front.
+- **Independently security-reviewed** — three external model reviews of the 0.9.9
+  surface (no Critical/High), with the actionable findings fixed before this release
+  (`docs/security-review/`).
+
+Changes since 0.9.9:
 
 ### Changed
 - **`svault get` is deprecated.** The agent door is now the **MCP server**
