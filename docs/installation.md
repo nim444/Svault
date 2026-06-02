@@ -26,6 +26,22 @@ Optionally move it onto your `PATH`:
 cp target/release/svault /usr/local/bin/   # Linux / macOS
 ```
 
+## Where your secrets live
+
+By default the encrypted store is **`~/.svault`** (the user's home directory), so
+`svault` behaves the same from any working directory and the CLI, TUI, [daemon](daemon.md),
+and [MCP server](mcp.md) all share one store. Set `SVAULT_HOME` to use
+`$SVAULT_HOME/.svault` instead — for a project-scoped store, or to point an MCP server
+at a non-home location:
+
+```bash
+export SVAULT_HOME=/path/to/project   # store at /path/to/project/.svault
+```
+
+`SVAULT_HOME` governs the whole store (vaults, master keyslots, keyring, sessions, and
+the daemon socket), so export it consistently across every shell and MCP config that
+should see the same vaults.
+
 ## Binary install (coming soon)
 
 A one-line installer is planned:

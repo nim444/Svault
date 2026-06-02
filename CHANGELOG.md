@@ -5,6 +5,78 @@ All notable changes to Svault are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.9] - 2026-06-03
+
+The **conditional access + seal/escalate** release — the last feature milestone
+before 1.0. Secrets can now be gated by *when* and *by whom*, and sustained abuse
+seals a secret and hands it to a human instead of letting an agent grind against it.
+
+### Added
+- **Conditional access** — a secret can carry conditions in its encrypted policy:
+  allowed **time windows** (local machine time, e.g. `mon-fri 09:00-18:00`,
+  `fri 10:00-12:00`, or `09:00-17:00`; 24h, start inclusive / end exclusive,
+  same-day) and **required callers**. Outside a window, or for a non-required
+  caller, the request is denied with the same generic message — an agent can't read
+  the window to wait for it or learn the required-caller list. Set with
+  `svault secret add --window … --require-caller …` (both repeatable) or the TUI
+  classify screen (`c`), which gains *Windows* and *Required callers* fields.
+- **Seal & escalate** — repeated denials on a *medium/high* secret (5 within 5
+  minutes, counted across any caller) **seal** it in the encrypted policy. While
+  sealed, every gated agent `get` is denied — even an otherwise-valid one — until a
+  **human** clears it. A seal blocks the agent path only: a human still reads the
+  secret via `svault secret get` and clears the seal. Agents can never unseal or
+  unlock — human-only by design.
+- **`svault pending [VAULT]`** — list sealed secrets awaiting approval (one vault or
+  all). **`svault approve <secret> -v <vault>`** — clear a seal. In the TUI, sealed
+  secrets are marked in the secret browser and `A` clears the selected one.
+- `svault policy check` now shows each secret's windows / required callers and any
+  active seals.
+
+### Changed
+- The MCP capability descriptor notes that some secrets are restricted by
+  caller/time or may be temporarily sealed, and that a denial can be final and
+  require a human — without revealing the window or seal criteria, so a well-behaved
+  agent stops rather than retrying in a loop.
+
+### Added
+- **The store now lives at `~/.svault` by default.** The `svault` binary resolves
+  its store under the user's home directory regardless of the working directory it's
+  launched from — so the CLI/TUI, the daemon, and especially the `svault mcp` server
+  (whose CWD the MCP host picks) all agree on one store without configuration. This
+  fixes `svault mcp` returning an empty vault list when the host launched it outside
+  the project that held the vaults.
+- **`SVAULT_HOME` env override.** Set `SVAULT_HOME` to a base directory to use
+  `$SVAULT_HOME/.svault` instead of home (e.g. a project-scoped store, or to point an
+  MCP server at a non-home location). It governs the whole store — vaults, master
+  keyslots, keyring, sessions, daemon socket — so every surface stays consistent.
+
+### Hardened
+Acting on the three independent 0.9.9 security reviews (`docs/security-review/`), the
+following were fixed in this release so 1.0 is a test-and-ship, not a fix:
+- **Agent `get` never prompts.** When no daemon holds the vault and it is locked, the
+  agent path now returns "locked — a human must run `svault unlock`" instead of
+  prompting for the master (mirroring `svault mcp`). This closes the path where an
+  agent could induce a human master entry that then cached the vault for 6h and was
+  readable via the ungated human `secret get`.
+- **Clearing a seal requires a fresh master.** `svault approve` now re-prompts the
+  master credential (passphrase or YubiKey touch) and ignores any cached session, so
+  a same-UID process can't ride a lingering unlock to clear a seal unattended; a
+  non-TTY context refuses approval. (The TUI `A` path is already a present human
+  behind the app login.)
+- **Caller-agnostic burst ceiling.** Beyond the per-caller rate/burst limits (keyed
+  on the self-asserted `--caller`), a secret now also has a hard ceiling on *allowed*
+  reads within the burst window counted **across every caller** — so rotating caller
+  names can no longer evade burst detection. (The seal detector was already
+  caller-agnostic.)
+- Added prompt-injection regression tests for the AI judge: an injected `reason`
+  stays a labelled data field, an explicit `deny` is honoured regardless of score,
+  and a non-standard decision token degrades to "unavailable" (high then fails
+  closed) rather than being read as allow.
+
+### Notes
+- Policy format is extended additively (`serde` defaults), so existing `.svault/`
+  vaults load unchanged — no migration needed.
+
 ## [0.9.8] - 2026-06-02
 
 The **hardware-key + hardening** release: YubiKey (FIDO2) unlock, a 6-hour re-auth

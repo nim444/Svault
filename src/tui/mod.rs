@@ -19,7 +19,7 @@ use crate::core::crypto::VaultKey;
 use crate::core::meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
 use crate::core::policy::SecretRule;
 use crate::core::session;
-use crate::core::vault::{list_vault_dirs, Vault, SVAULT_DIR};
+use crate::core::vault::{list_vault_dirs, svault_dir, Vault};
 
 /// Enter the alternate screen, run the event loop, restore the terminal.
 pub fn run() -> Result<()> {
@@ -421,6 +421,9 @@ pub struct SecretScreen {
     /// name (tier/scope/require-reason/description) so the policy that governs an
     /// agent `get` is visible without leaving the browser.
     pub classifications: BTreeMap<String, SecretRule>,
+    /// Sealed secrets (anomaly-escalated) from the encrypted policy, so the browser
+    /// can mark them and a human can clear the seal in place (`A`).
+    pub seals: BTreeMap<String, crate::core::policy::Seal>,
     /// The vault's default tier (from the decrypted policy), used to prefill the
     /// add/classify forms.
     pub default_tier: usize,
@@ -467,18 +470,32 @@ pub struct ClassifyForm {
     pub secret: String,
     pub scope: String,
     pub description: String,
+    /// Conditional access: access windows, one spec per line/comma, e.g.
+    /// `mon-fri 09:00-18:00`. Blank = any time.
+    pub windows: String,
+    /// Conditional access: required callers, comma-separated. Blank = no restriction.
+    pub require_callers: String,
     pub tier: usize, // 0 low · 1 medium · 2 high
     pub require_reason: bool,
-    pub focus: usize, // 0 scope · 1 description · 2 tier · 3 require_reason
+    pub focus: usize, // 0 scope · 1 description · 2 windows · 3 require_callers · 4 tier · 5 require_reason
     pub error: Option<String>,
 }
 
 impl ClassifyForm {
-    const FIELDS: usize = 4;
-    /// Text-entry fields (scope/description) show a caret; tier/require_reason don't.
+    const FIELDS: usize = 6;
+    /// Text-entry fields (scope/description/windows/require_callers) show a caret;
+    /// tier/require_reason don't.
     fn focus_is_text(&self) -> bool {
-        self.focus < 2
+        self.focus < 4
     }
+}
+
+/// Split a comma/semicolon/newline list into trimmed, non-empty items.
+fn split_list(s: &str) -> Vec<String> {
+    s.split([',', ';', '\n'])
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
 }
 
 /// One judge as shown in the manager list (and its detail view).
@@ -1162,7 +1179,7 @@ impl App {
             return;
         };
         let mut events = crate::core::usage::recent(&v.dir, 200);
-        events.extend(crate::core::usage::recent(Path::new(SVAULT_DIR), 200));
+        events.extend(crate::core::usage::recent(&svault_dir(), 200));
         // RFC 3339 UTC timestamps sort correctly lexicographically; newest first.
         events.sort_by(|a, b| b.ts.cmp(&a.ts));
         events.truncate(200);
@@ -1359,7 +1376,8 @@ impl App {
                     self.screen = Screen::Import(form);
                     return Ok(());
                 }
-                let base = std::path::Path::new(SVAULT_DIR);
+                let base = svault_dir();
+                let base = base.as_path();
                 let result = std::fs::read_to_string(path)
                     .map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))
                     .and_then(|raw| {
@@ -1812,6 +1830,7 @@ impl App {
                     vault_dir: dir.to_path_buf(),
                     name: name.to_string(),
                     classifications: vault.policy.secrets.clone(),
+                    seals: vault.policy.seals.clone(),
                     default_tier: tier_idx(vault.policy.default_tier),
                     secrets,
                     list_state,
@@ -1822,6 +1841,33 @@ impl App {
             Err(e) => self.set_status(MsgKind::Error, format!("Cannot open vault: {e}")),
         }
         Ok(())
+    }
+
+    /// Clear a seal on `secret` in `scr`'s vault and refresh the screen's view.
+    /// Human-only: uses the unlocked session key to rewrite the encrypted policy.
+    fn approve_seal(&mut self, scr: &mut SecretScreen, secret: &str) {
+        let Some(key) = session::get_key(&scr.vault_dir) else {
+            self.set_status(MsgKind::Error, "Vault is locked");
+            return;
+        };
+        match Vault::open_with_key(&scr.vault_dir, VaultKey::from_bytes(key)) {
+            Ok(vault) => {
+                let mut policy = vault.policy.clone();
+                policy.seals.remove(secret);
+                match vault.save_policy(&policy) {
+                    Ok(_) => {
+                        crate::core::usage::human(&scr.vault_dir, "seal.cleared", Some(secret));
+                        scr.seals.remove(secret);
+                        self.set_status(
+                            MsgKind::Ok,
+                            format!("Cleared the seal on '{secret}' — agents may request it again"),
+                        );
+                    }
+                    Err(e) => self.set_status(MsgKind::Error, format!("Could not save: {e}")),
+                }
+            }
+            Err(e) => self.set_status(MsgKind::Error, format!("Cannot open vault: {e}")),
+        }
     }
 
     // ── Create screen ───────────────────────────────────────────────────────
@@ -1878,7 +1924,7 @@ impl App {
         }
         // First-run create also sets the master, which gets its own recovery code.
         let setting_master = form.master_step == MasterStep::Set;
-        let vault_dir = PathBuf::from(SVAULT_DIR).join(&name);
+        let vault_dir = svault_dir().join(&name);
         if vault_dir.exists() {
             let existing = VaultMeta::load_unverified(&vault_dir)
                 .map(|m| m.storage)
@@ -2335,6 +2381,20 @@ impl App {
                             .as_ref()
                             .map(|r| r.description.clone())
                             .unwrap_or_default(),
+                        windows: rule
+                            .as_ref()
+                            .map(|r| {
+                                r.windows
+                                    .iter()
+                                    .map(|w| w.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_default(),
+                        require_callers: rule
+                            .as_ref()
+                            .map(|r| r.require_callers.join(", "))
+                            .unwrap_or_default(),
                         tier: rule
                             .as_ref()
                             .map(|r| tier_idx(r.tier))
@@ -2347,6 +2407,16 @@ impl App {
                 }
             }
             KeyCode::Enter | KeyCode::Char('g') => self.reveal_secret(&mut scr),
+            // Approve: clear the seal on the selected secret (human-only).
+            KeyCode::Char('A') => {
+                if let Some(name) = scr.selected_name() {
+                    if scr.seals.contains_key(&name) {
+                        self.approve_seal(&mut scr, &name);
+                    } else {
+                        self.set_status(MsgKind::Info, format!("'{name}' is not sealed"));
+                    }
+                }
+            }
             KeyCode::Char('d') => {
                 if let Some(name) = scr.selected_name() {
                     scr.pending_delete = Some(name);
@@ -2513,6 +2583,7 @@ impl App {
                             tier: tier_at(form.tier),
                             require_reason: form.require_reason,
                             description: form.description.trim().to_string(),
+                            ..Default::default()
                         },
                     );
                     let _ = vault.save_policy(&vault_policy);
@@ -2566,6 +2637,12 @@ impl App {
                 1 => {
                     form.description.pop();
                 }
+                2 => {
+                    form.windows.pop();
+                }
+                3 => {
+                    form.require_callers.pop();
+                }
                 _ => {}
             },
             KeyCode::Char(c) => match form.focus {
@@ -2577,8 +2654,16 @@ impl App {
                     form.description.push(c);
                     form.error = None;
                 }
-                2 if c == ' ' => form.tier = cycle(form.tier, 3, true),
-                3 if c == ' ' => form.require_reason = !form.require_reason,
+                2 => {
+                    form.windows.push(c);
+                    form.error = None;
+                }
+                3 => {
+                    form.require_callers.push(c);
+                    form.error = None;
+                }
+                4 if c == ' ' => form.tier = cycle(form.tier, 3, true),
+                5 if c == ' ' => form.require_reason = !form.require_reason,
                 _ => {}
             },
             _ => {}
@@ -2600,6 +2685,21 @@ impl App {
                 } else {
                     form.scope.trim().to_string()
                 };
+                // Parse conditional-access fields; a bad window spec re-shows the
+                // form with the error rather than silently dropping it.
+                let mut windows = Vec::new();
+                for spec in split_list(&form.windows) {
+                    match crate::core::policy::AccessWindow::parse(&spec) {
+                        Ok(w) => windows.push(w),
+                        Err(e) => {
+                            form.error = Some(format!("window '{spec}': {e}"));
+                            form.focus = 2;
+                            self.screen = Screen::Classify(form);
+                            return Ok(());
+                        }
+                    }
+                }
+                let require_callers = split_list(&form.require_callers);
                 let mut vault_policy = vault.policy.clone();
                 vault_policy.secrets.insert(
                     form.secret.clone(),
@@ -2608,6 +2708,8 @@ impl App {
                         tier: tier_at(form.tier),
                         require_reason: form.require_reason,
                         description: form.description.trim().to_string(),
+                        windows,
+                        require_callers,
                     },
                 );
                 match vault.save_policy(&vault_policy) {
@@ -3371,8 +3473,8 @@ fn secret_add_adjust(form: &mut SecretAddForm, forward: bool) {
 
 fn classify_adjust(form: &mut ClassifyForm, forward: bool) {
     match form.focus {
-        2 => form.tier = cycle(form.tier, 3, forward),
-        3 => form.require_reason = !form.require_reason,
+        4 => form.tier = cycle(form.tier, 3, forward),
+        5 => form.require_reason = !form.require_reason,
         _ => {}
     }
 }
@@ -3382,7 +3484,7 @@ fn classify_adjust(form: &mut ClassifyForm, forward: bool) {
 /// global, so they aren't tied to any one vault. Best-effort; never blocks the
 /// action (it's a no-op when `.svault/` doesn't exist yet).
 fn log_judge(action: &str, detail: Option<&str>) {
-    crate::core::usage::human(Path::new(SVAULT_DIR), action, detail);
+    crate::core::usage::human(&svault_dir(), action, detail);
 }
 
 fn cycle(current: usize, len: usize, forward: bool) -> usize {
@@ -3670,9 +3772,11 @@ mod tests {
             secret: "DB_URL".into(),
             scope: "database".into(),
             description: String::new(),
+            windows: String::new(),
+            require_callers: String::new(),
             tier: 0,
             require_reason: false,
-            focus: 2, // tier picker
+            focus: 4, // tier picker
             error: None,
         };
         let mut app = bare_app(Screen::Classify(form));

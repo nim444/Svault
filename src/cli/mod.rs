@@ -5,7 +5,7 @@
 //! subcommand. All secret-handling work is delegated to [`crate::core`] and the
 //! [`crate::daemon`] client; this module is presentation and orchestration only.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use console::style;
 use dialoguer::{Confirm, Input, Password, Select};
@@ -20,7 +20,7 @@ use crate::tui;
 
 use crate::core::crypto::VaultKey;
 use crate::core::meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
-use crate::core::vault::{list_vault_dirs, Vault, SVAULT_DIR};
+use crate::core::vault::{list_vault_dirs, svault_dir, Vault, SVAULT_DIR};
 use zeroize::Zeroizing;
 
 /// Prompt for a secret (passphrase, recovery code, or secret value) and return
@@ -78,6 +78,13 @@ enum Commands {
         /// (add) What this secret is for — given to the AI judge as context.
         #[arg(long)]
         description: Option<String>,
+        /// (add) Allowed access window, local time, e.g. `mon-fri 09:00-18:00`.
+        /// Repeatable; outside every window the secret is denied.
+        #[arg(long = "window")]
+        windows: Vec<String>,
+        /// (add) Restrict this secret to these callers. Repeatable.
+        #[arg(long = "require-caller")]
+        require_callers: Vec<String>,
     },
     /// List all vaults in .svault/
     Vaults,
@@ -124,6 +131,19 @@ enum Commands {
         action: String,
         /// Caller name (for `check`).
         caller: Option<String>,
+    },
+    /// List sealed secrets awaiting human approval (one vault, or all).
+    Pending {
+        /// Vault name (positional). Omit to scan every vault.
+        vault: Option<String>,
+    },
+    /// Clear a seal so agents can request the secret again (human-only).
+    Approve {
+        /// The sealed secret's name.
+        secret: String,
+        /// Vault name. Omit to use the only vault or pick interactively.
+        #[arg(long, short = 'v')]
+        vault: Option<String>,
     },
     /// Recover a vault with its recovery code and set a new passphrase
     Recover {
@@ -223,6 +243,21 @@ enum Commands {
 /// Parse CLI arguments and run the requested command. The `svault` binary's
 /// `main` is a thin wrapper over this.
 pub fn run() -> Result<()> {
+    // Default the store to the user's home (`~/.svault`) so an installed svault
+    // behaves the same from any directory — in particular the `mcp` server, whose
+    // working directory the MCP host chooses. An explicit `SVAULT_HOME` is honoured;
+    // if there's no home dir, svault_dir() falls back to `./.svault`. Children we
+    // spawn (the daemon) inherit this, so every surface agrees on the store.
+    let svault_home_unset = match std::env::var_os("SVAULT_HOME") {
+        Some(h) => h.is_empty(),
+        None => true,
+    };
+    if svault_home_unset {
+        if let Some(home) = crate::core::vault::user_home() {
+            std::env::set_var("SVAULT_HOME", home);
+        }
+    }
+
     let cli = Cli::parse();
     let Some(command) = cli.command else {
         // No subcommand → interactive TUI.
@@ -239,6 +274,8 @@ pub fn run() -> Result<()> {
             tier,
             require_reason,
             description,
+            windows,
+            require_callers,
         } => cmd_secret(
             &action,
             name.as_deref(),
@@ -247,6 +284,8 @@ pub fn run() -> Result<()> {
             tier.as_deref(),
             require_reason,
             description.as_deref(),
+            &windows,
+            require_callers,
         ),
         Commands::Vaults => cmd_vaults(),
         Commands::Unlock { vault } => cmd_unlock(vault.as_deref()),
@@ -269,6 +308,8 @@ pub fn run() -> Result<()> {
             vault,
         } => cmd_get(&name, &scope, &reason, caller.as_deref(), vault.as_deref()),
         Commands::Policy { action, caller } => cmd_policy(&action, caller.as_deref()),
+        Commands::Pending { vault } => cmd_pending(vault.as_deref()),
+        Commands::Approve { secret, vault } => cmd_approve(&secret, vault.as_deref()),
         Commands::Recover { vault, force } => cmd_recover(vault.as_deref(), force),
         Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
         Commands::Import { file, name } => cmd_import(&file, name.as_deref()),
@@ -351,7 +392,7 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
             .interact_text()?,
     };
 
-    let vault_dir = PathBuf::from(SVAULT_DIR).join(&name);
+    let vault_dir = svault_dir().join(&name);
     if vault_dir.exists() {
         let existing = VaultMeta::load_unverified(&vault_dir)
             .map(|m| m.storage)
@@ -768,7 +809,7 @@ fn cmd_lock(lock_all: bool, vault_name: Option<&str>) -> Result<()> {
         // Lock the daemon's in-memory keys, any file sessions, and the master
         // session — so re-unlocking re-prompts the master passphrase.
         let daemon_count = client::lock_all().unwrap_or(0);
-        let file_count = session::lock_all(std::path::Path::new(SVAULT_DIR))?;
+        let file_count = session::lock_all(&svault_dir())?;
         master::lock_session()?;
         keyring::lock_session()?;
         let count = daemon_count + file_count;
@@ -839,6 +880,7 @@ fn cmd_status() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_secret(
     action: &str,
     name: Option<&str>,
@@ -847,6 +889,8 @@ fn cmd_secret(
     tier_arg: Option<&str>,
     require_reason: bool,
     description_arg: Option<&str>,
+    window_args: &[String],
+    require_callers: Vec<String>,
 ) -> Result<()> {
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta_preview = VaultMeta::load_unverified(&vault_dir)?;
@@ -918,6 +962,13 @@ fn cmd_secret(
                     .allow_empty(true)
                     .interact_text()?,
             };
+            // Conditional access (0.9.9): parse any --window specs up front so a
+            // bad spec fails before we touch the policy.
+            let windows = window_args
+                .iter()
+                .map(|s| policy::AccessWindow::parse(s))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| anyhow!("invalid --window: {e}"))?;
             // Classification lives in the encrypted policy (not the plaintext
             // meta.yaml), so a same-UID agent can't read the tier/scope/purpose
             // to plan a bypass. Re-encrypts the vault; values are untouched.
@@ -929,6 +980,8 @@ fn cmd_secret(
                     tier,
                     require_reason,
                     description,
+                    windows,
+                    require_callers,
                 },
             );
             vault.save_policy(&policy)?;
@@ -1101,9 +1154,19 @@ fn cmd_get(
     }
 
     // No daemon (or vault not unlocked there): run the SAME gate locally against
-    // the decrypted, key-authenticated policy, then fetch from the session/prompt.
+    // the decrypted, key-authenticated policy. The agent path NEVER prompts — it
+    // reads only an already-unlocked session (like `svault mcp`). A locked vault is
+    // a dead end: prompting here would let an agent induce a master entry that caches
+    // the vault for 6h and is then readable via the ungated human path.
     // `gate::gated_get` is the shared enforcement path (also used by `svault mcp`).
-    let vault = open_unlocked_or_prompt(&vault_dir, &meta_preview.name)?;
+    let Some(vault) = open_unlocked_only(&vault_dir) else {
+        eprintln!(
+            "{} vault '{}' is locked — a human must run 'svault unlock' first",
+            style("denied:").red().bold(),
+            meta_preview.name
+        );
+        std::process::exit(1);
+    };
     match gate::gated_get(&vault, &vault_dir, &caller, name, scope, reason)? {
         gate::GatedGet::Granted { value, tier } => {
             eprintln!(
@@ -1231,6 +1294,44 @@ fn cmd_policy_check(vault: &Vault, caller: &str) -> Result<()> {
         }
     }
 
+    // Conditional access (0.9.9): show any windows / required callers.
+    let conditioned: Vec<_> = pol
+        .secrets
+        .iter()
+        .filter(|(n, r)| *n != "*" && (!r.windows.is_empty() || !r.require_callers.is_empty()))
+        .collect();
+    if !conditioned.is_empty() {
+        println!();
+        println!("{}", style("Conditional access").bold());
+        for (secret, rule) in conditioned {
+            if !rule.windows.is_empty() {
+                let specs: Vec<String> = rule.windows.iter().map(|w| w.to_string()).collect();
+                println!("  {:<20} window: {}", secret, specs.join(" | "));
+            }
+            if !rule.require_callers.is_empty() {
+                println!(
+                    "  {:<20} callers: {}",
+                    secret,
+                    rule.require_callers.join(", ")
+                );
+            }
+        }
+    }
+
+    // Sealed secrets (anomaly-escalated, awaiting `svault approve`).
+    if !pol.seals.is_empty() {
+        println!();
+        println!("{}", style("Sealed — awaiting approval").bold().yellow());
+        for (secret, seal) in &pol.seals {
+            println!(
+                "  {:<20} {} ({})",
+                secret,
+                style(&seal.trigger).dim(),
+                seal.last_caller
+            );
+        }
+    }
+
     // Audit summary for this vault.
     let mut total = 0usize;
     let mut denied = 0usize;
@@ -1298,6 +1399,98 @@ fn cmd_policy_init() -> Result<()> {
         "{}",
         style("  Classify secrets with 'svault secret add' (you'll be asked for scope/tier).")
             .dim()
+    );
+    Ok(())
+}
+
+// ── Seal / escalation review ────────────────────────────────────────────────
+
+/// List sealed secrets awaiting human approval, for one vault or all. Seals live
+/// in the encrypted policy, so each vault must be unlocked (a single master
+/// prompt opens them all). A sealed secret denies every agent get until cleared.
+fn cmd_pending(vault_name: Option<&str>) -> Result<()> {
+    let dirs = match vault_name {
+        Some(_) => vec![resolve_vault_dir(vault_name)?],
+        None => list_vault_dirs(),
+    };
+    if dirs.is_empty() {
+        println!(
+            "{}",
+            style("No vaults found. Run 'svault create' to make one.").dim()
+        );
+        return Ok(());
+    }
+
+    let mut any = false;
+    for dir in &dirs {
+        let Ok(preview) = VaultMeta::load_unverified(dir) else {
+            continue;
+        };
+        let vault = open_unlocked_or_prompt(dir, &preview.name)?;
+        for (secret, seal) in &vault.policy.seals {
+            if !any {
+                println!(
+                    "{:<20} {:<16} {:<7} {:<16} {}",
+                    style("SECRET").bold(),
+                    style("VAULT").bold(),
+                    style("DENIALS").bold(),
+                    style("LAST CALLER").bold(),
+                    style("SEALED AT").bold()
+                );
+                println!("{}", style("─".repeat(78)).dim());
+                any = true;
+            }
+            println!(
+                "{:<20} {:<16} {:<7} {:<16} {}",
+                style(secret).yellow(),
+                vault.meta.name,
+                seal.denials,
+                seal.last_caller,
+                style(&seal.sealed_at).dim()
+            );
+        }
+    }
+    if any {
+        println!();
+        println!(
+            "{}",
+            style("Clear one with 'svault approve <secret> -v <vault>'.").dim()
+        );
+    } else {
+        println!(
+            "{}",
+            style("No sealed secrets — nothing pending approval.").dim()
+        );
+    }
+    Ok(())
+}
+
+/// Clear a seal so agents can request the secret again. Human-only: requires the
+/// master to read/write the encrypted policy; an agent has no path here.
+fn cmd_approve(secret: &str, vault_name: Option<&str>) -> Result<()> {
+    let vault_dir = resolve_vault_dir(vault_name)?;
+    let preview = VaultMeta::load_unverified(&vault_dir)?;
+    // Clearing a seal is a human-only escalation: require the master credential
+    // NOW, ignoring any cached session, so a same-UID process can't ride a
+    // lingering unlock to approve unattended.
+    let vault = open_with_fresh_master(&vault_dir, &preview.name)?;
+    if !vault.policy.seals.contains_key(secret) {
+        eprintln!(
+            "{} '{}' is not sealed in vault '{}'",
+            style("error:").red(),
+            secret,
+            preview.name
+        );
+        std::process::exit(1);
+    }
+    let mut policy = vault.policy.clone();
+    policy.seals.remove(secret);
+    vault.save_policy(&policy)?;
+    usage::human(&vault_dir, "seal.cleared", Some(secret));
+    println!(
+        "{} cleared the seal on '{}' — agents may request it again",
+        style("ok:").green().bold(),
+        secret
     );
     Ok(())
 }
@@ -1385,7 +1578,8 @@ fn cmd_import(file: &str, name: Option<&str>) -> Result<()> {
         eprintln!("{} {}", style("error:").red(), e);
         std::process::exit(1);
     });
-    let base = Path::new(SVAULT_DIR);
+    let base = svault_dir();
+    let base = base.as_path();
 
     // Resolve a free name: the requested name (or the bundle's own), suffixed if
     // it's already taken — so re-importing onto the same machine never errors.
@@ -1479,13 +1673,13 @@ fn cmd_import(file: &str, name: Option<&str>) -> Result<()> {
 /// - no flag, many vaults: prompt the user to pick one
 fn resolve_vault_dir(vault_name: Option<&str>) -> Result<PathBuf> {
     if let Some(n) = vault_name {
-        let dir = PathBuf::from(SVAULT_DIR).join(n);
+        let dir = svault_dir().join(n);
         if !dir.join("meta.yaml").exists() {
             eprintln!(
                 "{} Vault '{}' not found in {}/",
                 style("error:").red(),
                 n,
-                SVAULT_DIR
+                svault_dir().display()
             );
             std::process::exit(1);
         }
@@ -1526,6 +1720,56 @@ fn resolve_vault_dir(vault_name: Option<&str>) -> Result<PathBuf> {
 /// session *key* so the passphrase is neither re-entered nor stored on disk.
 /// Falls back to a passphrase prompt when the vault is locked or the cached
 /// session is stale/invalid.
+/// Open a vault **only** from an existing unlocked session — never prompt for a
+/// credential. Returns `None` when the vault is locked. The agent `get` path uses
+/// this (mirroring `svault mcp`) so an agent can't induce a master prompt: if a
+/// human typed it, the vault would be cached for the full 6h and then readable via
+/// the *ungated* human path. A locked vault is a dead end for the agent — a human
+/// must `svault unlock` first.
+fn open_unlocked_only(vault_dir: &Path) -> Option<Vault> {
+    if session::is_unlocked(vault_dir) {
+        if let Some(key) = session::get_key(vault_dir) {
+            if let Ok(v) = Vault::open_with_key(vault_dir, VaultKey::from_bytes(key)) {
+                return Some(v);
+            }
+            let _ = session::lock(vault_dir); // stale/invalid cached key — drop it
+        }
+    }
+    None
+}
+
+/// Open a vault by forcing a **fresh** master credential — the cached session is
+/// ignored. Privileged human-only actions (clearing a seal) use this so a same-UID
+/// process can't ride a lingering session to perform them. On a vault with a master
+/// keyslot the fresh master both proves human presence and unwraps the data key; a
+/// legacy own-passphrase vault re-prompts its passphrase. In a non-TTY context the
+/// prompt fails, which correctly refuses unattended approval.
+fn open_with_fresh_master(vault_dir: &Path, vault_name: &str) -> Result<Vault> {
+    if master::vault_has_keyslot(vault_dir) {
+        let master = ensure_master_unlocked_inner(false, true)?;
+        let dek = master.unwrap_dek(vault_dir).map_err(|e| {
+            eprintln!("{} {}", style("error:").red(), e);
+            std::process::exit(1);
+            #[allow(unreachable_code)]
+            e
+        })?;
+        session::unlock_with_key(vault_dir, dek.bytes()).ok();
+        return Vault::open_with_key(vault_dir, dek).map_err(|e| {
+            eprintln!("{} {}", style("error:").red(), e);
+            std::process::exit(1);
+            #[allow(unreachable_code)]
+            e
+        });
+    }
+    let passphrase = prompt_secret(format!("  Passphrase for '{vault_name}'"))?;
+    Vault::open(vault_dir, &passphrase).map_err(|e| {
+        eprintln!("{} {}", style("error:").red(), e);
+        std::process::exit(1);
+        #[allow(unreachable_code)]
+        e
+    })
+}
+
 fn open_unlocked_or_prompt(vault_dir: &Path, vault_name: &str) -> Result<Vault> {
     if session::is_unlocked(vault_dir) {
         if let Some(key) = session::get_key(vault_dir) {
@@ -1779,8 +2023,18 @@ fn prompt_new_passphrase(label: &str, force: bool) -> Result<Zeroizing<String>> 
 /// set a new one. The single place the "first time → set a passphrase" flow
 /// lives, shared by `create` and `unlock`.
 fn ensure_master_unlocked(force: bool) -> Result<master::Master> {
-    if let Some(m) = master::open_from_session() {
-        return Ok(m);
+    ensure_master_unlocked_inner(force, false)
+}
+
+/// As [`ensure_master_unlocked`], but `fresh` skips the cached master session and
+/// forces the human to re-enter the master credential (passphrase or YubiKey
+/// touch) now. Privileged human-only actions — clearing a seal — use this so a
+/// lingering session can't let a same-UID process perform them unattended.
+fn ensure_master_unlocked_inner(force: bool, fresh: bool) -> Result<master::Master> {
+    if !fresh {
+        if let Some(m) = master::open_from_session() {
+            return Ok(m);
+        }
     }
     if master::exists() {
         // Offer the YubiKey when one is enrolled and plugged in. It's an

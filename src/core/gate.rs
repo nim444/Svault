@@ -16,7 +16,9 @@ use anyhow::Result;
 use zeroize::Zeroizing;
 
 use crate::core::judge::{self, JudgeContext, JudgeRuntime, JudgeVerdict};
-use crate::core::policy::{self, Decision, Tier, VaultPolicyData};
+use crate::core::policy::{
+    self, Decision, Seal, Tier, VaultPolicyData, SEAL_DENY_THRESHOLD, SEAL_WINDOW_SECS,
+};
 use crate::core::vault::Vault;
 use crate::core::{audit, keyring, usage};
 
@@ -53,6 +55,20 @@ pub fn authorize(
     req: &policy::Request,
     judge: Option<&JudgeRuntime>,
 ) -> Verdict {
+    // A sealed secret denies every gated agent get until a human clears it
+    // (`svault approve`). Checked first so it overrides everything; the caller
+    // still only ever sees the generic message.
+    if let Some(seal) = policy.seals.get(req.secret) {
+        let tier = policy
+            .classify(req.secret)
+            .map(|r| r.tier)
+            .unwrap_or_default();
+        return Verdict {
+            decision: Decision::Deny(tier, format!("sealed: {}", seal.trigger)),
+            note: format!("sealed at {} ({})", seal.sealed_at, seal.trigger),
+        };
+    }
+
     let base = policy::evaluate(policy, req);
     let tier = base.tier();
     if let Decision::Deny(_, why) = &base {
@@ -200,6 +216,7 @@ pub fn gated_get(
         Some(secret),
     );
     if !verdict.allowed() {
+        maybe_seal(vault, vault_dir, secret, verdict.tier(), caller);
         return Ok(GatedGet::Denied);
     }
     match vault.get_secret(secret)? {
@@ -208,6 +225,43 @@ pub fn gated_get(
             tier: verdict.tier(),
         }),
         None => Ok(GatedGet::NotFound),
+    }
+}
+
+/// Seal a secret after sustained abuse. Call on a **denied** gated get against an
+/// already-open vault (the enforcement path holds the vault key). When a
+/// medium/high secret has accumulated [`SEAL_DENY_THRESHOLD`] denials within
+/// [`SEAL_WINDOW_SECS`] (across any caller), persist a [`Seal`] into the encrypted
+/// policy so every later agent get is denied until a human clears it. Returns
+/// whether it sealed this call. Low-tier secrets never seal (they auto-allow, so
+/// there is nothing to grind against), and an already-sealed secret short-circuits
+/// so the `vault.enc` rewrite happens only on the rare seal transition.
+pub fn maybe_seal(vault: &Vault, vault_dir: &Path, secret: &str, tier: Tier, caller: &str) -> bool {
+    if tier == Tier::Low || vault.policy.seals.contains_key(secret) {
+        return false;
+    }
+    let since = chrono::Utc::now() - chrono::Duration::seconds(SEAL_WINDOW_SECS);
+    let denials = audit::recent_for_secret(vault_dir, secret, since)
+        .map(|es| es.iter().filter(|e| e.decision == "deny").count())
+        .unwrap_or(0);
+    if denials < SEAL_DENY_THRESHOLD {
+        return false;
+    }
+    let mut policy = vault.policy.clone();
+    policy.seals.insert(
+        secret.to_string(),
+        Seal {
+            sealed_at: chrono::Utc::now().to_rfc3339(),
+            trigger: format!("{denials} denials in {SEAL_WINDOW_SECS}s"),
+            last_caller: caller.to_string(),
+            denials: denials as u32,
+        },
+    );
+    if vault.save_policy(&policy).is_ok() {
+        usage::agent(vault_dir, caller, "secret.sealed", Some(secret));
+        true
+    } else {
+        false
     }
 }
 
@@ -239,4 +293,116 @@ pub fn recent_summary(vault_dir: &Path, caller: &str) -> String {
         "{} request(s) in the last hour ({allowed} allowed, {denied} denied)",
         entries.len()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::meta::{VaultMeta, VaultSettings};
+    use crate::core::policy::{SecretRule, VaultPolicyData};
+    use tempfile::TempDir;
+
+    fn vault_with_secret(dir: &TempDir, tier: Tier) -> (Vault, std::path::PathBuf) {
+        let vault_dir = dir.path().join("v");
+        let mut policy = VaultPolicyData::default();
+        policy.secrets.insert(
+            "API_KEY".into(),
+            SecretRule {
+                scope: "api".into(),
+                tier,
+                ..Default::default()
+            },
+        );
+        let meta = VaultMeta::new("v".into(), "d".into(), VaultSettings::default());
+        let v = Vault::init(&vault_dir, "Str0ng!Pass#99", meta, policy).unwrap();
+        v.add_secret("API_KEY", "s3cr3t").unwrap();
+        (v, vault_dir)
+    }
+
+    fn seed_denials(vault_dir: &Path, secret: &str, n: usize) {
+        for _ in 0..n {
+            audit::record(
+                vault_dir,
+                &audit::Entry::now(
+                    "attacker", secret, "api", "medium", "deny", "nope", "probe me",
+                ),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn repeated_denials_seal_a_medium_secret() {
+        let dir = TempDir::new().unwrap();
+        let (v, vault_dir) = vault_with_secret(&dir, Tier::Medium);
+        seed_denials(&vault_dir, "API_KEY", SEAL_DENY_THRESHOLD);
+
+        assert!(gate_maybe_seal(&v, &vault_dir));
+        // Persisted into the encrypted policy.
+        let reopened = Vault::open(&vault_dir, "Str0ng!Pass#99").unwrap();
+        assert!(reopened.policy.seals.contains_key("API_KEY"));
+        // Already sealed → no re-seal.
+        assert!(!gate_maybe_seal(&reopened, &vault_dir));
+    }
+
+    #[test]
+    fn low_tier_never_seals() {
+        let dir = TempDir::new().unwrap();
+        let (v, vault_dir) = vault_with_secret(&dir, Tier::Low);
+        seed_denials(&vault_dir, "API_KEY", SEAL_DENY_THRESHOLD + 3);
+        assert!(!maybe_seal(
+            &v,
+            &vault_dir,
+            "API_KEY",
+            Tier::Low,
+            "attacker"
+        ));
+    }
+
+    #[test]
+    fn under_threshold_does_not_seal() {
+        let dir = TempDir::new().unwrap();
+        let (v, vault_dir) = vault_with_secret(&dir, Tier::Medium);
+        seed_denials(&vault_dir, "API_KEY", SEAL_DENY_THRESHOLD - 1);
+        assert!(!gate_maybe_seal(&v, &vault_dir));
+    }
+
+    #[test]
+    fn sealed_secret_denies_an_otherwise_allowable_request() {
+        let dir = TempDir::new().unwrap();
+        let mut policy = VaultPolicyData::default();
+        policy.secrets.insert(
+            "API_KEY".into(),
+            SecretRule {
+                scope: "api".into(),
+                tier: Tier::Medium,
+                ..Default::default()
+            },
+        );
+        // Without a seal the request allows; with one it denies.
+        let req = policy::Request {
+            vault: "v",
+            vault_description: "",
+            vault_dir: dir.path(),
+            secret: "API_KEY",
+            scope: "api",
+            reason: "legitimate use of the api key",
+            caller: "claude",
+        };
+        assert!(authorize(&policy, &req, None).allowed());
+        policy.seals.insert(
+            "API_KEY".into(),
+            Seal {
+                sealed_at: chrono::Utc::now().to_rfc3339(),
+                trigger: "5 denials in 300s".into(),
+                last_caller: "attacker".into(),
+                denials: 5,
+            },
+        );
+        assert!(!authorize(&policy, &req, None).allowed());
+    }
+
+    fn gate_maybe_seal(v: &Vault, vault_dir: &Path) -> bool {
+        maybe_seal(v, vault_dir, "API_KEY", Tier::Medium, "attacker")
+    }
 }

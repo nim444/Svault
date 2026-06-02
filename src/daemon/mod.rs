@@ -114,7 +114,7 @@ mod imp {
     use super::{is_expired, Request, Response, VaultStatus, LOG_NAME, PID_NAME, SOCKET_NAME};
     use crate::core::crypto::VaultKey;
     use crate::core::judge::JudgeRuntime;
-    use crate::core::vault::{Vault, SVAULT_DIR};
+    use crate::core::vault::{svault_dir, Vault};
     use crate::core::{audit, gate, policy};
     use anyhow::{anyhow, Context, Result};
     use std::collections::HashMap;
@@ -143,7 +143,7 @@ mod imp {
     }
 
     pub fn base_dir() -> PathBuf {
-        PathBuf::from(SVAULT_DIR)
+        svault_dir()
     }
     fn socket_path(base: &Path) -> PathBuf {
         base.join(SOCKET_NAME)
@@ -367,6 +367,9 @@ mod imp {
                     peer_uid,
                 );
                 if !verdict.allowed() {
+                    // Sustained abuse seals the secret (encrypted policy) so every
+                    // later agent get is denied until a human clears it.
+                    gate::maybe_seal(&v, &dir, &secret, verdict.tier(), &caller);
                     return Response::Denied {
                         reason: gate::GENERIC_DENY.to_string(),
                     };
@@ -1102,8 +1105,7 @@ mod imp {
                 crate::core::policy::SecretRule {
                     scope: scope.to_string(),
                     tier,
-                    require_reason: false,
-                    description: String::new(),
+                    ..Default::default()
                 },
             );
             let v = Vault::init(&dir, PASS, meta, policy).unwrap();
@@ -1694,7 +1696,7 @@ mod imp {
     use std::path::{Path, PathBuf};
 
     pub fn base_dir() -> PathBuf {
-        PathBuf::from(crate::core::vault::SVAULT_DIR)
+        crate::core::vault::svault_dir()
     }
     pub fn is_running(_base: &Path) -> bool {
         false

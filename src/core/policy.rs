@@ -13,7 +13,7 @@
 //! in memory once the vault is unlocked. When a secret has no classification,
 //! caller authorization falls back to the vault's `allow_agent` / `rate_limit`.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveTime, Utc, Weekday};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -26,6 +26,22 @@ use crate::core::meta::{AccessConfig, AllowAgent, VaultJudgeConfig};
 /// seconds is treated as anomalous regardless of the configured rate limit.
 const BURST_WINDOW_SECS: i64 = 10;
 const BURST_MAX: usize = 5;
+
+/// Caller-agnostic burst ceiling: more than this many *allowed* reads of a
+/// single secret inside [`BURST_WINDOW_SECS`], counted across **every** caller,
+/// is denied. The per-caller [`BURST_MAX`] and rate limit are keyed on the
+/// self-asserted `--caller` string, so an abuser could evade them by rotating
+/// caller names; this ceiling can't be sidestepped that way (it mirrors the
+/// caller-agnostic seal detector). Set above [`BURST_MAX`] so a few legitimate
+/// distinct callers reading the same secret don't trip it.
+const SECRET_BURST_MAX: usize = 10;
+
+/// Seal trigger: this many denials for one secret inside [`SEAL_WINDOW_SECS`]
+/// seals it (medium/high only) and escalates to a human. The seal then denies
+/// every gated agent get until a human clears it — the agent can never
+/// self-clear. A human still reads the secret directly via `svault secret get`.
+pub const SEAL_DENY_THRESHOLD: usize = 5;
+pub const SEAL_WINDOW_SECS: i64 = 300;
 
 /// Sensitivity of a secret. Drives what the engine does on a match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
@@ -80,6 +96,150 @@ pub struct SecretRule {
     /// secret. Never a secret value.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// Conditional access: allowed time windows (local time). Empty = any time.
+    /// When set, a request outside every window is denied with the same generic
+    /// message, so a caller cannot read the window and wait for it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<AccessWindow>,
+    /// Conditional access: when non-empty, only these callers may retrieve the
+    /// secret (a per-secret hard requirement, on top of scope/caller rules).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub require_callers: Vec<String>,
+}
+
+/// An allowed access window for a secret, evaluated in **local machine time**.
+/// Parsed from a compact spec like `mon-fri 09:00-18:00`, `fri 10:00-12:00`, or
+/// `09:00-17:00` (no day = any day). Same-day only: `start` is inclusive, `end`
+/// exclusive, and `start` must be before `end` (no cross-midnight spans).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccessWindow {
+    /// Allowed weekdays as lowercase `mon`..`sun`. Empty = any day.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub days: Vec<String>,
+    /// Inclusive start, `HH:MM` 24h local.
+    pub start: String,
+    /// Exclusive end, `HH:MM` 24h local.
+    pub end: String,
+}
+
+const DAY_ORDER: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+fn weekday_short(wd: Weekday) -> &'static str {
+    match wd {
+        Weekday::Mon => "mon",
+        Weekday::Tue => "tue",
+        Weekday::Wed => "wed",
+        Weekday::Thu => "thu",
+        Weekday::Fri => "fri",
+        Weekday::Sat => "sat",
+        Weekday::Sun => "sun",
+    }
+}
+
+fn parse_hhmm(s: &str) -> Result<NaiveTime, String> {
+    let (h, m) = s
+        .trim()
+        .split_once(':')
+        .ok_or_else(|| format!("'{s}' is not HH:MM"))?;
+    let h: u32 = h.trim().parse().map_err(|_| format!("bad hour in '{s}'"))?;
+    let m: u32 = m
+        .trim()
+        .parse()
+        .map_err(|_| format!("bad minute in '{s}'"))?;
+    NaiveTime::from_hms_opt(h, m, 0).ok_or_else(|| format!("'{s}' is out of range"))
+}
+
+fn parse_days(part: &str) -> Result<Vec<String>, String> {
+    let part = part.trim();
+    if part.is_empty() {
+        return Ok(vec![]);
+    }
+    let idx = |d: &str| DAY_ORDER.iter().position(|x| *x == d);
+    if let Some((a, b)) = part.split_once('-') {
+        let (a, b) = (a.trim(), b.trim());
+        let (ai, bi) = (
+            idx(a).ok_or_else(|| format!("unknown day '{a}'"))?,
+            idx(b).ok_or_else(|| format!("unknown day '{b}'"))?,
+        );
+        if ai > bi {
+            return Err(format!("day range '{part}' is reversed"));
+        }
+        return Ok(DAY_ORDER[ai..=bi].iter().map(|s| s.to_string()).collect());
+    }
+    let mut out = Vec::new();
+    for d in part.split(',') {
+        let d = d.trim();
+        if idx(d).is_none() {
+            return Err(format!("unknown day '{d}'"));
+        }
+        out.push(d.to_string());
+    }
+    Ok(out)
+}
+
+impl AccessWindow {
+    /// Parse a compact spec like `mon-fri 09:00-18:00` (day part optional).
+    pub fn parse(spec: &str) -> Result<AccessWindow, String> {
+        let spec = spec.trim().to_lowercase();
+        if spec.is_empty() {
+            return Err("empty window".to_string());
+        }
+        let (days_part, time_part) = match spec.rsplit_once(char::is_whitespace) {
+            Some((d, t)) => (d.trim(), t.trim()),
+            None => ("", spec.as_str()),
+        };
+        let (start_s, end_s) = time_part
+            .split_once('-')
+            .ok_or_else(|| format!("'{time_part}' is not a HH:MM-HH:MM range"))?;
+        let start = parse_hhmm(start_s)?;
+        let end = parse_hhmm(end_s)?;
+        if start >= end {
+            return Err("window start must be before end (no cross-midnight spans)".to_string());
+        }
+        Ok(AccessWindow {
+            days: parse_days(days_part)?,
+            start: start.format("%H:%M").to_string(),
+            end: end.format("%H:%M").to_string(),
+        })
+    }
+
+    /// True if `now` (local) falls on an allowed day and inside `[start, end)`.
+    pub fn is_open(&self, now: DateTime<Local>) -> bool {
+        if !self.days.is_empty() && !self.days.iter().any(|d| d == weekday_short(now.weekday())) {
+            return false;
+        }
+        let (Ok(start), Ok(end)) = (parse_hhmm(&self.start), parse_hhmm(&self.end)) else {
+            return false;
+        };
+        let t = now.time();
+        t >= start && t < end
+    }
+}
+
+impl std::fmt::Display for AccessWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.days.is_empty() {
+            write!(f, "{}-{}", self.start, self.end)
+        } else {
+            write!(f, "{} {}-{}", self.days.join(","), self.start, self.end)
+        }
+    }
+}
+
+/// A sealed secret — set by the gate after [`SEAL_DENY_THRESHOLD`] denials within
+/// [`SEAL_WINDOW_SECS`]. Stored AES-256-GCM encrypted inside `vault.enc` (an agent
+/// can't read or clear it without the master). Denies every gated agent get until
+/// a human clears it via `svault approve`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Seal {
+    /// RFC 3339 UTC timestamp of when the seal was set.
+    pub sealed_at: String,
+    /// Short human-readable cause (e.g. "5 denials in 300s").
+    pub trigger: String,
+    /// The caller string on the request that tripped the seal.
+    pub last_caller: String,
+    /// How many denials led to the seal.
+    pub denials: u32,
 }
 
 /// The complete per-vault policy surface, stored **AES-256-GCM encrypted** inside
@@ -108,6 +268,10 @@ pub struct VaultPolicyData {
     /// Formerly the committable `svault.policy.yaml`; now per-vault and encrypted.
     #[serde(default)]
     pub callers: BTreeMap<String, CallerRule>,
+    /// Sealed secrets (anomaly-escalated, awaiting human approval), keyed by
+    /// secret name. Set by the gate, cleared only by a human (`svault approve`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub seals: BTreeMap<String, Seal>,
 }
 
 impl VaultPolicyData {
@@ -258,6 +422,25 @@ fn evaluate_classified(policy: &VaultPolicyData, req: &Request, rule: &SecretRul
         caller.rate_limit.clone()
     };
 
+    // Conditional access (0.9.9): required callers and time windows. Both deny
+    // with a normal Decision, so the caller only ever sees the generic message
+    // and can't read the window or the required-caller list to game it.
+    if !rule.require_callers.is_empty() && !rule.require_callers.iter().any(|c| c == req.caller) {
+        return Decision::Deny(
+            tier,
+            "caller not in this secret's required-caller list".to_string(),
+        );
+    }
+    if !rule.windows.is_empty() {
+        let now = Local::now();
+        if !rule.windows.iter().any(|w| w.is_open(now)) {
+            return Decision::Deny(
+                tier,
+                "outside this secret's allowed access window".to_string(),
+            );
+        }
+    }
+
     if let Some(msg) = rate_and_burst(req, &rate_limit) {
         return Decision::Deny(tier, msg);
     }
@@ -326,11 +509,30 @@ fn rate_and_burst(req: &Request, rate_limit: &str) -> Option<String> {
             "burst detected (>= {BURST_MAX} requests in {BURST_WINDOW_SECS}s)"
         ));
     }
+
+    // Caller-agnostic backstop: the per-caller checks above key on the
+    // self-asserted `--caller`, so an abuser can rotate caller names to dodge
+    // them. Count allowed reads of THIS secret across every caller — a ceiling
+    // here can't be evaded by cycling identities (same idea as the seal
+    // detector, which counts denials per-secret across callers).
+    if allowed_count_for_secret(req.vault_dir, req.secret, burst_since) >= SECRET_BURST_MAX {
+        return Some(format!(
+            "secret burst detected (>= {SECRET_BURST_MAX} reads in {BURST_WINDOW_SECS}s across all callers)"
+        ));
+    }
     None
 }
 
 fn allowed_count(vault_dir: &Path, caller: &str, since: DateTime<Utc>) -> usize {
     audit::recent(vault_dir, caller, since)
+        .map(|entries| entries.iter().filter(|e| e.decision == "allow").count())
+        .unwrap_or(0)
+}
+
+/// Allowed reads of `secret` since `since`, counted across **every** caller —
+/// the rotation-proof companion to [`allowed_count`].
+fn allowed_count_for_secret(vault_dir: &Path, secret: &str, since: DateTime<Utc>) -> usize {
+    audit::recent_for_secret(vault_dir, secret, since)
         .map(|entries| entries.iter().filter(|e| e.decision == "allow").count())
         .unwrap_or(0)
 }
@@ -346,8 +548,7 @@ mod tests {
         SecretRule {
             scope: scope.to_string(),
             tier,
-            require_reason: false,
-            description: String::new(),
+            ..SecretRule::default()
         }
     }
 
@@ -531,6 +732,110 @@ mod tests {
         }
         let d = evaluate(&p, &req(dir.path(), "API_KEY", "api", "fast"));
         assert!(!d.is_allow());
+    }
+
+    #[test]
+    fn caller_rotation_cannot_evade_the_per_secret_burst_ceiling() {
+        // An abuser rotating the self-asserted caller stays under the per-caller
+        // BURST_MAX for each name, but the caller-agnostic SECRET_BURST_MAX counts
+        // allowed reads of the secret across every caller and still trips.
+        let dir = TempDir::new().unwrap();
+        let mut p = VaultPolicyData::default();
+        // Each rotated caller is well under its own per-caller burst.
+        for n in 0..SECRET_BURST_MAX {
+            let who = format!("rot{n}");
+            p.callers.insert(who.clone(), caller(&["api"], "1000/hour"));
+            audit::record(
+                dir.path(),
+                &Entry::now(&who, "API_KEY", "api", "low", "allow", "ok", "seed"),
+            )
+            .unwrap();
+        }
+        p.secrets.insert("API_KEY".into(), rule("api", Tier::Low));
+        // A fresh, never-before-seen caller would pass every per-caller check,
+        // yet the secret has already been read SECRET_BURST_MAX times.
+        p.callers
+            .insert("newcomer".into(), caller(&["api"], "1000/hour"));
+        let d = evaluate(&p, &req(dir.path(), "API_KEY", "api", "newcomer"));
+        assert!(
+            !d.is_allow(),
+            "per-secret ceiling should deny across callers"
+        );
+    }
+
+    #[test]
+    fn window_parse_round_trips() {
+        let w = AccessWindow::parse("mon-fri 09:00-18:00").unwrap();
+        assert_eq!(w.days, vec!["mon", "tue", "wed", "thu", "fri"]);
+        assert_eq!((w.start.as_str(), w.end.as_str()), ("09:00", "18:00"));
+        assert_eq!(w.to_string(), "mon,tue,wed,thu,fri 09:00-18:00");
+
+        // No day = any day; single day; comma list; loose hours zero-pad.
+        assert!(AccessWindow::parse("09:00-17:00").unwrap().days.is_empty());
+        assert_eq!(
+            AccessWindow::parse("fri 10:00-12:00").unwrap().days,
+            vec!["fri"]
+        );
+        assert_eq!(
+            AccessWindow::parse("mon,wed,fri 9:00-17:30").unwrap().days,
+            vec!["mon", "wed", "fri"]
+        );
+        assert_eq!(AccessWindow::parse("8:05-9:00").unwrap().start, "08:05");
+
+        // Rejected: bad day, reversed range, reversed time, missing range.
+        assert!(AccessWindow::parse("funday 09:00-10:00").is_err());
+        assert!(AccessWindow::parse("fri-mon 09:00-10:00").is_err());
+        assert!(AccessWindow::parse("18:00-09:00").is_err());
+        assert!(AccessWindow::parse("mon-fri 0900").is_err());
+    }
+
+    #[test]
+    fn window_is_open_respects_day_and_time() {
+        use chrono::TimeZone;
+        let w = AccessWindow::parse("mon 09:00-12:00").unwrap();
+        // 2026-06-01 is a Monday.
+        let inside = Local.with_ymd_and_hms(2026, 6, 1, 10, 30, 0).unwrap();
+        let before = Local.with_ymd_and_hms(2026, 6, 1, 8, 59, 0).unwrap();
+        let at_end = Local.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap(); // exclusive
+        let tuesday = Local.with_ymd_and_hms(2026, 6, 2, 10, 30, 0).unwrap();
+        assert!(w.is_open(inside));
+        assert!(!w.is_open(before));
+        assert!(!w.is_open(at_end));
+        assert!(!w.is_open(tuesday));
+
+        // No-day window is open any day inside the time range.
+        let anyday = AccessWindow::parse("09:00-12:00").unwrap();
+        assert!(anyday.is_open(tuesday));
+    }
+
+    #[test]
+    fn required_caller_is_enforced() {
+        let dir = TempDir::new().unwrap();
+        let mut p = VaultPolicyData::default();
+        let mut r = rule("api", Tier::Low);
+        r.require_callers = vec!["ci".to_string()];
+        p.secrets.insert("API_KEY".into(), r);
+
+        assert!(evaluate(&p, &req(dir.path(), "API_KEY", "api", "ci")).is_allow());
+        assert!(!evaluate(&p, &req(dir.path(), "API_KEY", "api", "claude")).is_allow());
+    }
+
+    #[test]
+    fn out_of_window_is_denied() {
+        let dir = TempDir::new().unwrap();
+        let mut p = VaultPolicyData::default();
+        let mut r = rule("api", Tier::Low);
+        // A window that can never contain "now" within the same day: a 1-minute
+        // slot. We assert the deny path by using a window far from any plausible
+        // run time is brittle, so instead drive both branches via is_open above
+        // and here assert that an impossible day set denies.
+        r.windows = vec![AccessWindow {
+            days: vec!["xxx".to_string()], // never matches a real weekday
+            start: "00:00".to_string(),
+            end: "23:59".to_string(),
+        }];
+        p.secrets.insert("API_KEY".into(), r);
+        assert!(!evaluate(&p, &req(dir.path(), "API_KEY", "api", "claude")).is_allow());
     }
 
     #[test]

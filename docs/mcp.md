@@ -25,8 +25,15 @@ otherwise. The human unlocks once; the agent then asks through the gate.
   **human-only** when no judge is configured.
 - **Denials are generic.** A denied request gets a single opaque message
   (`request not authorized for this secret`). The real reason — judge score,
-  scope/caller mismatch, rate limit — is recorded only in the audit log, so an
-  agent can't probe its way to a passing request.
+  scope/caller mismatch, rate limit, an out-of-window or wrong-caller
+  **condition**, or a **seal** — is recorded only in the audit log, so an agent
+  can't probe its way to a passing request, read a time window to wait for it, or
+  tell a seal from any other denial.
+- **Sealed secrets stay sealed for the agent.** Once a secret is sealed (after
+  repeated denials), every MCP `get` returns the same generic denial until a human
+  clears it; the agent cannot unseal it. The capability descriptor warns that some
+  secrets are restricted by caller/time or may be sealed, and that a denial may be
+  final — so a well-behaved agent stops rather than retrying in a loop.
 - **Everything is audited**, stamped `source = mcp`, and visible in the activity
   timeline (TUI `v`) so you can see exactly what an agent asked for and when.
 
@@ -94,9 +101,13 @@ vault unlocked (`svault unlock`, ideally with the daemon running — see
 (`command: "svault"`, `args: ["mcp"]`). Set `SVAULT_CALLER` to a stable identity
 per agent so the audit log and rate limits can tell them apart.
 
-The server runs in the working directory it's launched from and resolves
-`./.svault`, so launch it from the project that owns the vault (or pass `vault` on
-each call when several exist).
+The store lives at **`~/.svault`** by default, so the server finds your vaults no
+matter which working directory the MCP host launches it from — and it shares that
+store with the `svault` CLI/TUI you unlock with. To use a store somewhere other than
+home, set **`SVAULT_HOME`** to the base directory that holds `.svault` (it resolves
+`$SVAULT_HOME/.svault`) in the server's `env` **and** export the same value in the
+shell you unlock from, so both agree. `SVAULT_HOME` governs the whole store — vaults,
+master keyslots, keyring, sessions, and the daemon socket — together.
 
 > You can also write this entry from the **TUI**: run `svault`, press `m` for the
 > MCP screen, then `w` to drop (and merge) the `svault` server into `./.mcp.json`.

@@ -51,6 +51,7 @@ flowchart LR
 | [Architecture](docs/architecture.md) | How it works, on-disk layout, storage and vault naming, auth methods |
 | [Security model](docs/security.md) | Crypto, memory safety, what's safe to commit |
 | [Security review & audit](docs/security-review/) | Independent review per release + the bulletproofing process |
+| [QA checklist](docs/qa-checklist.md) | Scenario-driven manual test pass (CLI / TUI / MCP) before a release |
 | [Roadmap](docs/roadmap.md) | Where Svault is headed |
 | [Changelog](CHANGELOG.md) | What's shipped, version by version |
 
@@ -233,7 +234,7 @@ flowchart TD
 | **Layered source** | Shipped | Source split into a frontend-agnostic `core` plus `cli` / `tui` / `daemon` frontends (a library crate), with `mcp` / `gui` placeholders — structural only, so future frontends reuse `core` |
 | **Local MCP** | Shipped | `svault mcp` — a local stdio MCP server exposing gated `svault_get_secret` / `svault_list_vaults` to AI agents; serves only unlocked state, never the passphrase, with a capability descriptor that advertises the request interface, not the decision criteria |
 | **Hardware-key unlock + hardening** | Shipped | YubiKey (FIDO2 hmac-secret) unlock — an alternative keyslot over the master key (passphrase or touch, not 2FA); a 6-hour re-auth cap on every unlock path; first-run onboarding + an app-level TUI sign-in / logout; storage local-only |
-| **Conditional access + escalation** | Next | Time-window / caller conditions in the encrypted policy; brute-force / anomaly seals a secret and escalates to a human (agents never self-clear) |
+| **Conditional access + escalation** | Shipped | Time-window / required-caller conditions in the encrypted policy; repeated denials seal a secret and escalate to a human (`svault pending` / `approve`, TUI `A`) — agents never self-clear |
 | **Independent review + install channels** | Target | A final independent review of the full agent-ready surface and install channels (script, Homebrew, Docker), then the first stable release |
 | **Desktop GUI** | Planned | Desktop GUI (Tauri) + system tray |
 

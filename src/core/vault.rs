@@ -11,6 +11,36 @@ use crate::core::policy::VaultPolicyData;
 
 pub const SVAULT_DIR: &str = ".svault";
 
+/// The active `.svault` store directory.
+///
+/// Resolution: `$SVAULT_HOME/.svault` when `SVAULT_HOME` is set, otherwise
+/// `.svault` in the current working directory. The `svault` binary defaults
+/// `SVAULT_HOME` to the user's home at startup (see [`crate::cli::run`]), so an
+/// installed `svault` always uses `~/.svault` regardless of where it's launched —
+/// including the `svault mcp` server, whose working directory the MCP host picks.
+/// The library keeps the CWD-relative fallback so embedders and tests stay scoped.
+/// All store paths — vaults, master keyslots, keyring, sessions, daemon socket —
+/// go through here, so the whole store moves together.
+pub fn svault_dir() -> PathBuf {
+    match std::env::var_os("SVAULT_HOME") {
+        Some(home) if !home.is_empty() => Path::new(&home).join(SVAULT_DIR),
+        _ => PathBuf::from(SVAULT_DIR),
+    }
+}
+
+/// The current user's home directory — the default base for the store when
+/// `SVAULT_HOME` is unset. `$HOME` on Unix, `%USERPROFILE%` on Windows. Returns
+/// `None` if neither is set, in which case the CWD-relative fallback applies.
+pub fn user_home() -> Option<PathBuf> {
+    #[cfg(unix)]
+    let var = "HOME";
+    #[cfg(not(unix))]
+    let var = "USERPROFILE";
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+}
+
 /// Current on-disk version of the encrypted `vault.enc` payload.
 const PAYLOAD_VERSION: u32 = 2;
 
@@ -286,7 +316,7 @@ impl Vault {
 
 /// List all vault directories under base/.svault/
 pub fn list_vault_dirs() -> Vec<PathBuf> {
-    list_vault_dirs_in(Path::new(SVAULT_DIR))
+    list_vault_dirs_in(&svault_dir())
 }
 
 pub fn list_vault_dirs_in(base: &Path) -> Vec<PathBuf> {
@@ -515,6 +545,7 @@ mod tests {
                 tier: Tier::High,
                 require_reason: true,
                 description: "prod billing dsn".into(),
+                ..Default::default()
             },
         );
         pol.callers.insert(
@@ -553,6 +584,7 @@ mod tests {
                 tier: Tier::High,
                 require_reason: true,
                 description: "secret-purpose-string".into(),
+                ..Default::default()
             },
         );
         v.save_policy(&pol).unwrap();

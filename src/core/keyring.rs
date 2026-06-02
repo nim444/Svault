@@ -35,7 +35,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::core::config::{Backend, DaemonConfig, LockConfig};
 use crate::core::crypto::{self, VaultKey, SALT_SIZE};
-use crate::core::vault::SVAULT_DIR;
+use crate::core::vault::svault_dir;
 
 /// Current on-disk version of the encrypted keyring payload.
 const KEYRING_VERSION: u32 = 1;
@@ -47,11 +47,11 @@ const KEYRING_SESSION: &str = ".keyring.session";
 pub const KEY_ENV: &str = "SVAULT_OPENROUTER_KEY";
 
 pub fn keyring_path() -> PathBuf {
-    PathBuf::from(SVAULT_DIR).join(KEYRING_FILE)
+    svault_dir().join(KEYRING_FILE)
 }
 
 fn session_path() -> PathBuf {
-    PathBuf::from(SVAULT_DIR).join(KEYRING_SESSION)
+    svault_dir().join(KEYRING_SESSION)
 }
 
 /// True if a keyring has been created on this machine.
@@ -276,6 +276,7 @@ pub fn open_from_session() -> Option<Keyring> {
 mod tests {
     use super::*;
     use crate::core::testlock::CWD_LOCK;
+    use crate::core::vault::SVAULT_DIR;
     use std::sync::MutexGuard;
 
     fn in_temp_cwd() -> (MutexGuard<'static, ()>, tempfile::TempDir, PathBuf) {
