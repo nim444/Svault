@@ -13,7 +13,7 @@ grant or deny agent requests. The judge outputs below are **actual responses** f
 ## 1. Build
 
 ```bash
-git clone https://github.com/Soluzy/Svault.git
+git clone https://github.com/nim444/Svault.git
 cd Svault && cargo build --release
 alias svault="$PWD/target/release/svault"
 ```

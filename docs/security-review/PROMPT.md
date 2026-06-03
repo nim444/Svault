@@ -25,7 +25,7 @@ You are a senior corporate application security engineer and security architect 
 
 Your task is to conduct a thorough, independent, professional-grade security review of the Svault project in its **current released state**:
 
-**Repository**: https://github.com/Soluzy/Svault
+**Repository**: https://github.com/nim444/Svault
 **Description**: An AI-aware secret manager written in Rust. It sits between AI agents and credentials, enforcing structured requests (scope + reason) and policy controls.
 
 **Important**: Review the **latest version** available in the repository (currently **0.9.9**; confirm against `Cargo.toml`). The project has had three dedicated security-hardening releases (0.6.0, 0.7.0, 0.8.0); in 0.9.0 it moved the policy engine from advisory to **enforced**; and 0.9.1–0.9.9 added the AI judge, full at-rest encryption of policy/config, a unified master-keyslot unlock model, a layered library split, a local **MCP** server, **YubiKey** hardware unlock with a 6-hour re-auth cap, and **conditional access + seal/escalate**. Do **not** take any of the changes below on trust — verify each one in the code and look for what it missed, bypasses, or weakens elsewhere:
@@ -118,7 +118,7 @@ Your task is to conduct a thorough, independent, professional-grade security rev
 
 ### Output Format (Use This Structure)
 
-**Project**: Svault (Soluzy/Svault)
+**Project**: Svault (nim444/Svault)
 **Version reviewed**: [fill in the actual version from Cargo.toml at the time of review]
 **Review date**: [use current date and time]
 **Reviewed by**: [Name of the model you are using]

@@ -4,11 +4,11 @@
 
 **The principled way to give cooperative AI agents secret access.**
 
-[![lint](https://github.com/Soluzy/Svault/actions/workflows/lint.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/lint.yml)
-[![ubuntu](https://github.com/Soluzy/Svault/actions/workflows/ubuntu.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/ubuntu.yml)
-[![fedora](https://github.com/Soluzy/Svault/actions/workflows/fedora.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/fedora.yml)
-[![macos](https://github.com/Soluzy/Svault/actions/workflows/macos.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/macos.yml)
-[![windows](https://github.com/Soluzy/Svault/actions/workflows/windows.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/windows.yml)
+[![lint](https://github.com/nim444/Svault/actions/workflows/lint.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/lint.yml)
+[![ubuntu](https://github.com/nim444/Svault/actions/workflows/ubuntu.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/ubuntu.yml)
+[![fedora](https://github.com/nim444/Svault/actions/workflows/fedora.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/fedora.yml)
+[![macos](https://github.com/nim444/Svault/actions/workflows/macos.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/macos.yml)
+[![windows](https://github.com/nim444/Svault/actions/workflows/windows.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/windows.yml)
 
 [![crates.io](https://img.shields.io/crates/v/svault-ai.svg)](https://crates.io/crates/svault-ai)
 [![downloads](https://img.shields.io/crates/d/svault-ai.svg)](https://crates.io/crates/svault-ai)
@@ -18,7 +18,7 @@
 
 </div>
 
-![Svault Banner](https://raw.githubusercontent.com/Soluzy/Svault/main/docs/banner.jpg)
+![Svault Banner](https://raw.githubusercontent.com/nim444/Svault/main/docs/banner.jpg)
 
 Svault is a **secret access layer for AI agents**, written in Rust. It sits between an agent and your credentials and makes every request structured, policy-gated, and audited: the agent must say *which* secret, in *what* scope, and *why* — and a sensitive request is scored by an AI judge before any value is returned.
 
@@ -362,4 +362,4 @@ Methodology and a recorded run are in [docs/security-review/stress/0.6.0.md](doc
 
 Apache 2.0 — see [LICENSE](LICENSE).
 
-Built by [Soluzy](https://soluzy.ro).
+Built by [nim444](https://github.com/nim444).

@@ -2,11 +2,11 @@
 name = "svault-ai"
 version = "1.0.0"
 edition = "2021"
-authors = ["Soluzy <nima@soluzy.ro>"]
+authors = ["Nima Karimi <nima@soluzy.ro>"]
 description = "Secret access layer for cooperative AI agents — structured, policy-gated, audited credential access"
 license = "Apache-2.0"
-repository = "https://github.com/Soluzy/Svault"
-homepage = "https://github.com/Soluzy/Svault"
+repository = "https://github.com/nim444/Svault"
+homepage = "https://github.com/nim444/Svault"
 documentation = "https://docs.rs/svault-ai"
 readme = "README.md"
 keywords = ["security", "secrets", "vault", "ai", "encryption"]

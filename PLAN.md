@@ -240,22 +240,22 @@ registries).
 
 - **Install script** — `install.sh`: detect OS and arch, resolve the latest (or
   pinned) release, download and verify the matching archive, extract `svault`
-  onto PATH. Served from `svault.soluzy.app/install.sh`
-  (`curl -fsSL https://svault.soluzy.app/install.sh | sh`); the primary install
-  link in the README and on the website.
+  onto PATH. Served from a project install URL (hosting host TBD now that the
+  project is personal) as `curl -fsSL https://<install-host>/install.sh | sh`;
+  the primary install link in the README.
 - **cargo-binstall** — add `[package.metadata.binstall]` mapping `pkg-url` /
   `pkg-fmt` to the release asset names so `cargo binstall svault-ai` fetches a
   prebuilt binary instead of compiling.
-- **Homebrew tap** — own `Soluzy/homebrew-tap` with `Formula/svault.rb`
+- **Homebrew tap** — own `nim444/homebrew-tap` with `Formula/svault.rb`
   (per-arch `url` + `sha256`), auto-bumped on each `v*` tag. Install:
-  `brew install soluzy/tap/svault`. An own tap, not homebrew-core.
+  `brew install nim444/tap/svault`. An own tap, not homebrew-core.
 - **Docker image** — `Dockerfile` (Debian-slim or distroless/scratch for static)
-  pushed to `ghcr.io/soluzy/svault` on each tag, targeting the AI-agent and CI
+  pushed to `ghcr.io/nim444/svault` on each tag, targeting the AI-agent and CI
   use case where agents and pipelines run in containers.
 
 **Planned — later (niche audiences, more upkeep)**
 
-- **Scoop** (Windows) — manifest in an own bucket (`Soluzy/scoop-bucket`).
+- **Scoop** (Windows) — manifest in an own bucket (`nim444/scoop-bucket`).
 - **WinGet** — manifest PR to `microsoft/winget-pkgs` per release.
 - **AUR** (Arch) — `PKGBUILD` `-bin` package pointing at the release binary.
 - **Nix** — flake output and/or a nixpkgs derivation.
@@ -267,7 +267,7 @@ registries).
 - **npm wrapper** — a `bin`-shim so JS-ecosystem agents can `npx svault`; only if
   real demand appears.
 
-> Website hub: `svault.soluzy.app` hosts `install.sh` and a tabbed install block
+> Website hub (host TBD): would serve `install.sh` and a tabbed install block
 > (brew / curl / cargo / docker).
 
 ### 4. Remaining polish — Planned

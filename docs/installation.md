@@ -14,7 +14,7 @@ The crate is published as [`svault-ai`](https://crates.io/crates/svault-ai); the
 ## From source
 
 ```bash
-git clone https://github.com/Soluzy/Svault.git
+git clone https://github.com/nim444/Svault.git
 cd Svault
 cargo build --release
 ./target/release/svault --version
@@ -44,10 +44,10 @@ should see the same vaults.
 
 ## Binary install (coming soon)
 
-A one-line installer is planned:
+A one-line installer is planned (the hosting URL is not finalized yet):
 
 ```bash
-curl -fsSL https://svault.soluzy.app/install.sh | sh
+curl -fsSL https://<install-host>/install.sh | sh
 ```
 
 ## Requirements

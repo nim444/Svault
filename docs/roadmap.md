@@ -254,14 +254,14 @@ once wired.
 
 **Next (one pass — covers Mac/Linux/Rust users and agents):**
 
-- **Install script** — `curl -fsSL https://svault.soluzy.app/install.sh | sh`:
-  detect OS and arch, download the matching release binary, drop it on PATH. The
-  link the README and website lead with.
-- **Homebrew tap** — `brew install soluzy/tap/svault` from a `Soluzy/homebrew-tap`
+- **Install script** — `curl -fsSL https://<install-host>/install.sh | sh`
+  (hosting URL not finalized yet): detect OS and arch, download the matching
+  release binary, drop it on PATH. The link the README leads with.
+- **Homebrew tap** — `brew install nim444/tap/svault` from a `nim444/homebrew-tap`
   repo (own tap, not homebrew-core); CI bumps the formula on each `v*` tag.
 - **cargo-binstall** — `[package.metadata.binstall]` in `Cargo.toml` so
   `cargo binstall svault-ai` pulls a prebuilt binary instead of compiling.
-- **Docker image** — `ghcr.io/soluzy/svault`, pushed on each tag; this matters
+- **Docker image** — `ghcr.io/nim444/svault`, pushed on each tag; this matters
   for the AI-agent and CI use case, where agents run in containers.
 
 **Later (niche audiences, more upkeep):**
@@ -276,7 +276,7 @@ once wired.
   projects; use the own tap until there's traction.
 - **npm wrapper** — only if JS-ecosystem agents (`npx`) show real demand.
 
-The website (`svault.soluzy.app`) becomes the hub: it hosts `install.sh` and a
+A project website (host TBD) becomes the hub: it hosts `install.sh` and a
 tabbed Install block (brew / curl / cargo / docker).
 
 ## Not planned (yet)
