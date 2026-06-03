@@ -27,8 +27,8 @@ Once the daemon is running, the normal commands route through it automatically:
 ```bash
 svault daemon start
 svault unlock myvault        # key cached in the daemon, no .session file written
-svault get API_KEY --scope deploy --reason "ci" --caller ci   # served from memory, no prompt
-svault secret get API_KEY    # served from memory, no prompt
+svault secret get API_KEY    # human read, served from memory, no prompt
+svault get API_KEY --scope deploy --reason "ci" --caller ci   # DEPRECATED agent path (use svault mcp); same gate, served from memory
 svault status                # shows "unlocked (daemon)" for in-memory vaults
 svault lock myvault          # drops the key from the daemon
 ```
@@ -37,7 +37,7 @@ If no daemon is running, every command behaves exactly as before (file session).
 
 You can also control it from the [interactive TUI](tui.md): the header shows a `daemon running` / `daemon off` indicator, and pressing `d` on the vault list starts it if it's off or stops it if it's running.
 
-> **Note:** the daemon accelerates the **read** path (`unlock`, `get`, `secret get`, `lock`, `status`). Mutations — `secret add`, `secret list`, `secret remove` — still prompt for the master passphrase (to unwrap the vault's data key), because the daemon deliberately holds only the key, not the passphrase, and does not expose write operations over the socket.
+> **Note:** the daemon accelerates the **read** path (`unlock`, `get`, `secret get`, `lock`, `status`). Other secret operations — `secret add`, `secret list`, `secret remove` — still prompt for the master passphrase (to unwrap the vault's data key), because the daemon serves only the single-secret gated `get` over the socket and deliberately holds the key, not the passphrase.
 
 ## Auto-lock
 
@@ -51,7 +51,7 @@ Two timers, both stored in the **encrypted keyring** (`.svault/keyring.enc`):
 There is **no plaintext `.svault/config.yaml`**. These knobs — along with
 `daemon.max_connections`, the backend, and the judge registry — live AES-256-GCM
 encrypted in the keyring. The daemon reads them at start: built-in defaults
-(15 min / 8 h / 512) until the keyring is unlocked, and any changed value takes
+(15 min / 6 h / 512) until the keyring is unlocked, and any changed value takes
 effect at the **next daemon start**. (The judge itself activates as soon as the
 keyring is unlocked, without a restart.) A background ticker runs roughly every 10
 seconds and evicts — and zeroizes — any key past either limit.
@@ -83,7 +83,7 @@ svault daemon doctor --fix    # also remove a stale socket / pid file
 
 ## How it works
 
-- One daemon per project `.svault/`. Socket at `.svault/daemon.sock` (mode `0600`), pid at `.svault/daemon.pid`, log at `.svault/daemon.log`. All three are inside `.svault/`, which is gitignored.
+- One daemon per store `.svault/` (by default `~/.svault`; `SVAULT_HOME` overrides the base dir). Socket at `.svault/daemon.sock` (mode `0600`), pid at `.svault/daemon.pid`, log at `.svault/daemon.log`. All three are inside `.svault/`, which is gitignored.
 - `start` execs `svault daemon run` in its own session (`setsid`) so closing the terminal won't kill it; output goes to the log file.
 - Protocol: newline-delimited JSON requests (`Ping`, `Status`, `Unlock`, `Lock`, `LockAll`, `Get`, `GetGated`, `Shutdown`) over the socket. `Get` is the human path (audited); `GetGated` is the **enforced agent path** — the daemon runs the policy engine and AI judge and audits the decision (with the peer UID) before returning a value. Every read, human or agent, is recorded.
 - **Concurrency:** the listener spawns one thread per connection. Shared key state is a mutex-guarded map, but a `Get` holds the lock only long enough to copy the 32-byte key and update the last-used timestamp; the AES-GCM decryption happens outside the lock, so parallel reads from many agents don't serialize on each other.

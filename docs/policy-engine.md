@@ -3,15 +3,17 @@
 This is what makes Svault *AI-aware*. There are two paths to a secret:
 
 - **`svault secret get`** — the **human path**. Passphrase, no questions asked (audited).
-- **`svault get`** — the **agent path**. A structured request an AI must justify, run through a pipeline and **enforced inside the daemon** so it can't be bypassed by talking to the socket directly.
+- **The agent path** — a structured request an AI must justify, run through a pipeline and **enforced inside the daemon** so it can't be bypassed by talking to the socket directly. Agents reach it through the **MCP server** (`svault mcp`); the `svault get` CLI command is the same gate but is **deprecated** (it still works, and the examples below use it for brevity, but new integrations should use MCP — see [mcp.md](mcp.md)).
 
 ## Enforced, not advisory
 
-The agent path is evaluated **where the key lives** — the daemon. `svault get`
-sends a structured `GetGated` request; the daemon evaluates policy, consults the
-AI judge for sensitive secrets, writes the audit record, and only then returns a
-value. When no daemon is running, the CLI runs the **same** gate locally before
-unlocking. There is no unguarded read path.
+The agent path is evaluated **where the key lives** — the daemon. An agent request
+(`svault_get_secret` over MCP, or the deprecated `svault get`) becomes a structured
+`GetGated` request; the daemon evaluates policy, consults the AI judge for sensitive
+secrets, writes the audit record, and only then returns a value. When no daemon is
+running, the CLI/MCP runs the **same** gate locally against an already-unlocked
+session — a locked vault is refused (a human must `svault unlock` first); the agent
+path never prompts. There is no unguarded read path.
 
 Every decision is audited and stamped with the connecting process's **peer UID**
 (unforgeable), alongside the self-asserted `--caller` string.

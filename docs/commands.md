@@ -91,20 +91,24 @@ request's stated reason against it. `--window` (repeatable, local time) and
 
 ## Policy engine — the agent path
 
-See [Policy engine](policy-engine.md) for the full pipeline. Since 0.9.0 the agent
-path is **enforced inside the daemon** (and re-run locally when no daemon is up).
+See [Policy engine](policy-engine.md) for the full pipeline. The agent path is
+**enforced inside the daemon** (and re-run locally when no daemon is up).
 
-Since 0.9.2 the policy (classification + caller rules) is **encrypted inside the
-vault**, so a denied request returns only a generic message — the real reason is
-in the audit log — and both `policy` subcommands unlock the vault.
+The policy (classification + caller rules) is **encrypted inside the vault**, so a
+denied request returns only a generic message — the real reason is in the audit
+log — and both `policy` subcommands unlock the vault.
+
+**Agents use the MCP server** (`svault mcp`) — that is the supported agent door. The
+`svault get` CLI command runs the identical gate but is **deprecated** (it still
+works and prints a deprecation note; it will be removed in a later release).
 
 ```bash
-svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # enforced, gated request (never prompts: a locked vault tells you to unlock first)
-svault policy init                 # seed caller rules into the vault's encrypted policy
-svault policy check <caller>       # what a caller can access, conditions, seals + recent activity (unlocks the vault)
+svault mcp                         # run the local MCP server (stdio) — the agent door (see mcp.md)
+svault get <NAME> --scope <S> --reason "<R>" [--caller C] [-v VAULT]   # DEPRECATED agent path (same gate; use MCP). Never prompts: a locked vault tells you to unlock first
+svault policy init [-v VAULT]      # seed caller rules into the vault's encrypted policy
+svault policy check <caller> [-v VAULT]   # what a caller can access, conditions, seals + recent activity (unlocks the vault)
 svault pending [VAULT]             # list sealed secrets awaiting human approval (one vault, or all)
 svault approve <NAME> [-v VAULT]   # clear a seal (human-only — re-prompts the master, ignores any cached session)
-svault mcp                         # run the local MCP server (stdio) — gated access for AI agents (see mcp.md)
 ```
 
 `svault mcp` exposes the same gated path over the [Model Context Protocol](mcp.md)
@@ -210,8 +214,10 @@ svault install [--platform claude|cursor|...]   # wire into an AI platform (not 
 
 ## Vault selection
 
-- `VAULT` is **positional** for `create`, `settings`, `unlock`, `lock`, `recover`, and `export`.
-- `secret` and `get` take it via `-v` / `--vault`.
+- Every vault-scoped command accepts `-v` / `--vault <VAULT>` — `secret`, `get`,
+  `policy`, `settings`, `unlock`, `lock`, `pending`, `recover`, and `export`.
+- `settings`, `unlock`, `lock`, `pending`, `recover`, and `export` also accept a
+  **positional** `VAULT` (the `-v` form works everywhere and is interchangeable).
 - Omit it to use the only vault, or you'll be prompted to pick when several exist.
 
 ---
@@ -262,10 +268,13 @@ ok: all vaults locked
 
 ## 3. Give an AI agent scoped, audited access
 
-The agent never sees your passphrase. It calls `svault get`; the daemon evaluates
+The agent never sees your passphrase. It reaches secrets through the **MCP server**
+(`svault mcp`, the supported agent door — see [mcp.md](mcp.md)); the daemon evaluates
 the policy, scores the reason with the AI judge for medium/high secrets, audits
 the decision (with the peer UID), and only then returns a value — there's no
-unguarded path.
+unguarded path. The `svault get` shown below runs the identical gate but is
+**deprecated** (it still works and prints a deprecation note); new agents should
+use MCP.
 
 ```bash
 # One-time: seed caller rules into the vault's encrypted policy, then edit

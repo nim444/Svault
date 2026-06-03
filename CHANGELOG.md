@@ -5,6 +5,59 @@ All notable changes to Svault are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - UNRELEASED (release candidate)
+
+Svault's first **stable** release. The agent-ready secret layer is feature-complete
+and independently security-reviewed; 1.0.0 is the consolidation, not new scope.
+
+What 1.0.0 stands on (built across the 0.9.x line):
+- **Enforced policy gate** — every agent read runs reason → classification → scope →
+  caller → conditions → rate/burst → tier → AI judge, evaluated where the key lives
+  (the daemon), audited with the connecting process's real peer UID. No unguarded
+  read path; denials are generic to the caller.
+- **Everything encrypted at rest** — secret values *and* the whole policy surface
+  (classification, caller rules, judge assignment, seals) live AES-256-GCM inside
+  `vault.enc`; `meta.yaml` leaks no classification or secret names.
+- **Unified unlock** — one master passphrase opens every vault and the keyring, via
+  the keyslot model; YubiKey (FIDO2) and a recovery code are alternative OR-slots; a
+  6-hour re-auth cap on every path.
+- **Conditional access + seal/escalate**, the **MCP server** as the agent door, and
+  the honest same-UID trust model stated up front.
+- **Independently security-reviewed** — three external model reviews of the 0.9.9
+  surface (no Critical/High), with the actionable findings fixed before this release
+  (`docs/security-review/`).
+
+Changes since 0.9.9:
+
+### Changed
+- **`svault get` is deprecated.** The agent door is now the **MCP server**
+  (`svault mcp`); `svault get` runs the identical gate but prints a deprecation note
+  to stderr and will be removed in a later release. Docs reframed so agents use MCP
+  and humans use `svault secret get` + the management commands.
+- **`-v/--vault` works on every vault-scoped command.** Added the `-v/--vault` flag to
+  `policy` (previously it could not target a vault — `svault policy check <caller> -v
+  <vault>` errored) and as an accepted alias on the commands that only took a
+  positional vault (`settings`, `unlock`, `lock`, `pending`, `recover`, `export`); the
+  positional form still works.
+
+### Fixed
+- `svault judge test` printed its judge/model/threshold summary line twice.
+- `svault keyring` help listed a `rekey` action with "change its passphrase"; the
+  keyring has no separate passphrase (it's opened by the master). Help now points to
+  `svault master rekey`, and the unknown-action hint mentions it.
+- `svault create` no longer prints a `git add ~/.svault/<name>/` hint for the default
+  home store (it only makes sense for a project-scoped `SVAULT_HOME`).
+- `svault install` is now clearly labelled "not yet implemented" and points to the
+  manual MCP setup, instead of looking like a shipped command.
+- `svault policy init` now spells out that the seeded callers are deny-by-default
+  (`default` holds no scopes, `claude-code` only `misc`) and that you must grant each
+  caller the scopes its secrets use — previously the documented `policy init` → `get`
+  flow denied every scoped read with no hint why.
+- Docs drift: `policy-engine.md` no longer says the CLI "runs the gate locally before
+  unlocking" (the agent path never prompts); `daemon.md` no longer calls `secret list`
+  a "mutation". QA checklist scratch notes cleaned up; added a check that `meta.yaml`
+  exposes no secret names at rest.
+
 ## [0.9.9] - 2026-06-03
 
 The **conditional access + seal/escalate** release — the last feature milestone
@@ -31,14 +84,6 @@ seals a secret and hands it to a human instead of letting an agent grind against
   secrets are marked in the secret browser and `A` clears the selected one.
 - `svault policy check` now shows each secret's windows / required callers and any
   active seals.
-
-### Changed
-- The MCP capability descriptor notes that some secrets are restricted by
-  caller/time or may be temporarily sealed, and that a denial can be final and
-  require a human — without revealing the window or seal criteria, so a well-behaved
-  agent stops rather than retrying in a loop.
-
-### Added
 - **The store now lives at `~/.svault` by default.** The `svault` binary resolves
   its store under the user's home directory regardless of the working directory it's
   launched from — so the CLI/TUI, the daemon, and especially the `svault mcp` server
@@ -49,6 +94,12 @@ seals a secret and hands it to a human instead of letting an agent grind against
   `$SVAULT_HOME/.svault` instead of home (e.g. a project-scoped store, or to point an
   MCP server at a non-home location). It governs the whole store — vaults, master
   keyslots, keyring, sessions, daemon socket — so every surface stays consistent.
+
+### Changed
+- The MCP capability descriptor notes that some secrets are restricted by
+  caller/time or may be temporarily sealed, and that a denial can be final and
+  require a human — without revealing the window or seal criteria, so a well-behaved
+  agent stops rather than retrying in a loop.
 
 ### Hardened
 Acting on the three independent 0.9.9 security reviews (`docs/security-review/`), the

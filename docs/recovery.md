@@ -93,4 +93,4 @@ A corrupted bundle (any altered file) fails the checksum check and is rejected b
 
 ### Portability
 
-The bundle is **fully self-contained** — it carries no machine-specific state (no absolute paths, hostnames, or user IDs), so a vault exported on one machine imports cleanly on another. The bundle records its own format version, and `import` rejects anything it doesn't understand. Both ends must therefore run Svault releases that share the export format and the fixed Argon2id derivation parameters; this holds across the current 0.9.x line.
+The bundle is **fully self-contained** — it carries no machine-specific state (no absolute paths, hostnames, or user IDs), so a vault exported on one machine imports cleanly on another. The bundle records its own format version, and `import` rejects anything it doesn't understand. Both ends must therefore run Svault releases that share the export format and the fixed Argon2id derivation parameters; this holds across the 1.0 release line.

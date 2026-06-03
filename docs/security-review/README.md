@@ -103,5 +103,5 @@ when it happens.
 ## Reporting a vulnerability
 
 These reviews are proactive, not a substitute for disclosure. To report a security
-issue privately, open a [private security advisory](https://github.com/Soluzy/Svault/security/advisories/new)
+issue privately, open a [private security advisory](https://github.com/nim444/Svault/security/advisories/new)
 on GitHub rather than a public issue.

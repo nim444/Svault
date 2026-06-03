@@ -56,8 +56,15 @@ enum Commands {
     },
     /// View or change a vault's settings (description, agents, rate limit, auto-lock, login, AI judge + assigned judge)
     Settings {
-        /// Vault name (positional). Omit to use the only vault or pick interactively.
+        /// Vault name — positional, or via `-v/--vault`. Omit to use the only vault or pick interactively.
         vault: Option<String>,
+        #[arg(
+            long = "vault",
+            short = 'v',
+            value_name = "VAULT",
+            conflicts_with = "vault"
+        )]
+        vault_flag: Option<String>,
     },
     /// Manage secrets: add | get | list | remove
     Secret {
@@ -90,20 +97,35 @@ enum Commands {
     Vaults,
     /// Unlock vault — caches the derived key for this session
     Unlock {
-        /// Vault name (positional). Omit to use the only vault or pick interactively.
+        /// Vault name — positional, or via `-v/--vault`. Omit to use the only vault or pick interactively.
         vault: Option<String>,
+        #[arg(
+            long = "vault",
+            short = 'v',
+            value_name = "VAULT",
+            conflicts_with = "vault"
+        )]
+        vault_flag: Option<String>,
     },
     /// Lock vault — clears the cached key
     Lock {
         /// Lock all vaults
         #[arg(long)]
         all: bool,
-        /// Vault name (positional). Omit to use the only vault or pick interactively.
+        /// Vault name — positional, or via `-v/--vault`. Omit to use the only vault or pick interactively.
         vault: Option<String>,
+        #[arg(
+            long = "vault",
+            short = 'v',
+            value_name = "VAULT",
+            conflicts_with = "vault"
+        )]
+        vault_flag: Option<String>,
     },
     /// Show lock status of all vaults
     Status,
-    /// Wire Svault into your AI platform (Step 4)
+    /// [not yet implemented] Wire Svault into your AI platform. For now, configure
+    /// the MCP server manually — see docs/mcp.md.
     Install {
         #[arg(long, default_value = "auto")]
         platform: String,
@@ -112,7 +134,8 @@ enum Commands {
     },
     /// Run the local MCP server (stdio): expose gated secret access to AI agents
     Mcp,
-    /// Request a secret through the policy engine — the agent path.
+    /// [DEPRECATED] Request a secret through the policy engine. Agents should use
+    /// the MCP server (`svault mcp`) instead — this still works but will be removed.
     Get {
         name: String,
         #[arg(long)]
@@ -131,11 +154,21 @@ enum Commands {
         action: String,
         /// Caller name (for `check`).
         caller: Option<String>,
+        /// Vault name. Omit to use the only vault or pick interactively.
+        #[arg(long, short = 'v')]
+        vault: Option<String>,
     },
     /// List sealed secrets awaiting human approval (one vault, or all).
     Pending {
-        /// Vault name (positional). Omit to scan every vault.
+        /// Vault name — positional, or via `-v/--vault`. Omit to scan every vault.
         vault: Option<String>,
+        #[arg(
+            long = "vault",
+            short = 'v',
+            value_name = "VAULT",
+            conflicts_with = "vault"
+        )]
+        vault_flag: Option<String>,
     },
     /// Clear a seal so agents can request the secret again (human-only).
     Approve {
@@ -147,16 +180,30 @@ enum Commands {
     },
     /// Recover a vault with its recovery code and set a new passphrase
     Recover {
-        /// Vault name (positional). Omit to use the only vault or pick interactively.
+        /// Vault name — positional, or via `-v/--vault`. Omit to use the only vault or pick interactively.
         vault: Option<String>,
+        #[arg(
+            long = "vault",
+            short = 'v',
+            value_name = "VAULT",
+            conflicts_with = "vault"
+        )]
+        vault_flag: Option<String>,
         /// Skip the passphrase strength floor (for non-interactive / scripted use)
         #[arg(long)]
         force: bool,
     },
     /// Export a vault to a portable encrypted bundle
     Export {
-        /// Vault name (positional). Omit to use the only vault or pick interactively.
+        /// Vault name — positional, or via `-v/--vault`. Omit to use the only vault or pick interactively.
         vault: Option<String>,
+        #[arg(
+            long = "vault",
+            short = 'v',
+            value_name = "VAULT",
+            conflicts_with = "vault"
+        )]
+        vault_flag: Option<String>,
         /// Output file (default: <name>.svault-export.json)
         #[arg(long)]
         out: Option<String>,
@@ -197,9 +244,10 @@ enum Commands {
     /// config (replaces the old plaintext config.yaml + openrouter.key).
     ///
     /// Actions: `init` (create it), `unlock` / `lock` (cache/clear its key for
-    /// this session), `rekey` (change its passphrase), `status`.
+    /// this session), `status`. The keyring is opened by your master passphrase —
+    /// there is no separate keyring passphrase, so to change it use `master rekey`.
     Keyring {
-        /// init | unlock | lock | rekey | status
+        /// init | unlock | lock | status
         action: String,
     },
     /// AI judge registry: define multiple named judges (model, thresholds,
@@ -265,7 +313,7 @@ pub fn run() -> Result<()> {
     };
     match command {
         Commands::Create { name, force } => cmd_create(name, force),
-        Commands::Settings { vault } => cmd_settings(vault.as_deref()),
+        Commands::Settings { vault, vault_flag } => cmd_settings(vault_flag.or(vault).as_deref()),
         Commands::Secret {
             action,
             name,
@@ -288,14 +336,21 @@ pub fn run() -> Result<()> {
             require_callers,
         ),
         Commands::Vaults => cmd_vaults(),
-        Commands::Unlock { vault } => cmd_unlock(vault.as_deref()),
-        Commands::Lock { all, vault } => cmd_lock(all, vault.as_deref()),
+        Commands::Unlock { vault, vault_flag } => cmd_unlock(vault_flag.or(vault).as_deref()),
+        Commands::Lock {
+            all,
+            vault,
+            vault_flag,
+        } => cmd_lock(all, vault_flag.or(vault).as_deref()),
         Commands::Status => cmd_status(),
         Commands::Install { platform, .. } => {
             println!(
-                "{} Install for '{}' coming in Step 4",
+                "{} `svault install` is not yet implemented (requested platform: '{}').",
                 style("pending:").yellow(),
                 platform
+            );
+            println!(
+                "  For now, wire the MCP server in by hand — see docs/mcp.md (`command: svault`, `args: [mcp]`)."
             );
             Ok(())
         }
@@ -307,11 +362,23 @@ pub fn run() -> Result<()> {
             caller,
             vault,
         } => cmd_get(&name, &scope, &reason, caller.as_deref(), vault.as_deref()),
-        Commands::Policy { action, caller } => cmd_policy(&action, caller.as_deref()),
-        Commands::Pending { vault } => cmd_pending(vault.as_deref()),
+        Commands::Policy {
+            action,
+            caller,
+            vault,
+        } => cmd_policy(&action, caller.as_deref(), vault.as_deref()),
+        Commands::Pending { vault, vault_flag } => cmd_pending(vault_flag.or(vault).as_deref()),
         Commands::Approve { secret, vault } => cmd_approve(&secret, vault.as_deref()),
-        Commands::Recover { vault, force } => cmd_recover(vault.as_deref(), force),
-        Commands::Export { vault, out } => cmd_export(vault.as_deref(), out.as_deref()),
+        Commands::Recover {
+            vault,
+            vault_flag,
+            force,
+        } => cmd_recover(vault_flag.or(vault).as_deref(), force),
+        Commands::Export {
+            vault,
+            vault_flag,
+            out,
+        } => cmd_export(vault_flag.or(vault).as_deref(), out.as_deref()),
         Commands::Import { file, name } => cmd_import(&file, name.as_deref()),
         Commands::Daemon { action, fix } => cmd_daemon(&action, fix),
         Commands::Master { action, sub, force } => cmd_master(&action, sub.as_deref(), force),
@@ -510,10 +577,18 @@ fn cmd_create(name_arg: Option<String>, force: bool) -> Result<()> {
         "{}",
         style("  vault.enc + meta.yaml are safe to commit — encrypted at rest.").dim()
     );
-    println!(
-        "{}",
-        style(format!("  git add {}/", vault_dir.display())).dim()
-    );
+    // Only suggest `git add` for a project-scoped store (SVAULT_HOME pointed at a
+    // project dir). The default store is `~/.svault`, which no one commits into a
+    // repo, so the hint would be misleading there.
+    let under_home = crate::core::vault::user_home()
+        .map(|h| vault_dir.starts_with(&h))
+        .unwrap_or(false);
+    if !under_home {
+        println!(
+            "{}",
+            style(format!("  git add {}/", vault_dir.display())).dim()
+        );
+    }
 
     println!();
     println!("{}", style("  RECOVERY CODE").yellow().bold());
@@ -1116,6 +1191,14 @@ fn cmd_get(
     caller_arg: Option<&str>,
     vault_name: Option<&str>,
 ) -> Result<()> {
+    // Deprecated agent door. The gated path is the same as the MCP server's, so
+    // this still works, but agents should move to `svault mcp` — we'll remove the
+    // CLI agent path in a later release. Warning goes to stderr so it never
+    // pollutes the value an agent reads from stdout.
+    eprintln!(
+        "{} `svault get` is deprecated — agents should use the MCP server (`svault mcp`). It still works for now.",
+        style("note:").yellow()
+    );
     let vault_dir = resolve_vault_dir(vault_name)?;
     let meta_preview = VaultMeta::load_unverified(&vault_dir)?;
 
@@ -1201,22 +1284,22 @@ fn deny_and_exit(why: &str, caller: &str, name: &str, scope: &str) -> ! {
 /// `svault policy check <caller>` and `svault policy init`. Caller rules now live
 /// AES-256-GCM encrypted inside each vault (not a committable `svault.policy.yaml`),
 /// so both subcommands resolve a vault and unlock it to read/write the policy.
-fn cmd_policy(action: &str, caller: Option<&str>) -> Result<()> {
+fn cmd_policy(action: &str, caller: Option<&str>, vault_name: Option<&str>) -> Result<()> {
     match action {
         "check" => {
             let Some(caller) = caller else {
                 eprintln!(
-                    "{} Usage: svault policy check <caller>",
+                    "{} Usage: svault policy check <caller> [-v <vault>]",
                     style("error:").red()
                 );
                 std::process::exit(1);
             };
-            let vault_dir = resolve_vault_dir(None)?;
+            let vault_dir = resolve_vault_dir(vault_name)?;
             let preview = VaultMeta::load_unverified(&vault_dir)?;
             let vault = open_unlocked_or_prompt(&vault_dir, &preview.name)?;
             cmd_policy_check(&vault, caller)
         }
-        "init" => cmd_policy_init(),
+        "init" => cmd_policy_init(vault_name),
         _ => {
             eprintln!(
                 "{} Unknown action '{}'. Use: check | init",
@@ -1354,8 +1437,8 @@ fn cmd_policy_check(vault: &Vault, caller: &str) -> Result<()> {
 }
 
 /// Seed default caller rules into a vault's encrypted policy.
-fn cmd_policy_init() -> Result<()> {
-    let vault_dir = resolve_vault_dir(None)?;
+fn cmd_policy_init(vault_name: Option<&str>) -> Result<()> {
+    let vault_dir = resolve_vault_dir(vault_name)?;
     let preview = VaultMeta::load_unverified(&vault_dir)?;
     let vault = open_unlocked_or_prompt(&vault_dir, &preview.name)?;
 
@@ -1397,8 +1480,19 @@ fn cmd_policy_init() -> Result<()> {
     );
     println!(
         "{}",
-        style("  Classify secrets with 'svault secret add' (you'll be asked for scope/tier).")
-            .dim()
+        style(
+            "  These callers start deny-by-default: 'default' holds no scopes and \
+             'claude-code' only 'misc'."
+        )
+        .dim()
+    );
+    println!(
+        "{}",
+        style(
+            "  Grant each caller the scopes its secrets use (e.g. database, api) via \
+             'svault settings' — until then scoped gets are denied."
+        )
+        .dim()
     );
     Ok(())
 }
@@ -2362,7 +2456,7 @@ fn cmd_keyring(action: &str) -> Result<()> {
         "status" => cmd_keyring_status(),
         other => {
             eprintln!(
-                "{} Unknown action '{}'. Use: init | unlock | lock | status",
+                "{} Unknown action '{}'. Use: init | unlock | lock | status (rekey → 'svault master rekey')",
                 style("error:").red(),
                 other
             );
@@ -2748,13 +2842,6 @@ fn cmd_judge_test(judge_name: Option<&str>, t: JudgeTestArgs) -> Result<()> {
     let tier_enum = parse_tier(t.tier);
     println!(
         "{} judge={name} model={} tier={tier_enum} (allow≥{}, high≥{})",
-        style("judge:").bold().cyan(),
-        rt.model,
-        rt.allow_threshold,
-        rt.high_threshold
-    );
-    println!(
-        "{} model={} tier={tier_enum} (allow≥{}, high≥{})",
         style("judge:").bold().cyan(),
         rt.model,
         rt.allow_threshold,

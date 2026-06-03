@@ -2,8 +2,8 @@
 
 Svault is a secret access layer for cooperative AI agents, built CLI-first. The
 core is hardened and proven as a command-line tool before any wider surface is
-added — a secret manager has to be trustworthy at its base first. The remaining pre-1.0 work makes
-that proven core **agent-ready**: a single way to unlock, conditional access,
+added — a secret manager has to be trustworthy at its base first. The 0.9.x line
+made that proven core **agent-ready**: a single way to unlock, conditional access,
 anomaly defence that escalates to a human, and a local MCP surface. Each reuses
 the existing daemon choke point rather than introducing a new trust model. A
 desktop GUI comes only after 1.0.
@@ -21,12 +21,13 @@ For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 | Agent surface — MCP (0.9.7) | Shipped | `svault mcp` — a local stdio MCP server exposing the gated `svault_get_secret` / `svault_list_vaults` tools to AI agents, with a capability descriptor that advertises the request interface, not the decision criteria |
 | Hardware-key unlock + hardening (0.9.8) | Shipped | YubiKey (FIDO2 hmac-secret) unlock as an alternative keyslot (passphrase or touch, not 2FA); a 6-hour re-auth cap on every unlock path; a first-run onboarding flow with an app-level TUI sign-in / logout; storage is local-only and the docs are repositioned honestly |
 | Conditional access + escalation (0.9.9) | Shipped | Time-window / caller conditions in the encrypted policy; repeated denials seal a secret and escalate to a human (`svault pending` / `approve`, TUI `A`); agents never self-clear |
-| Stable release (1.0.0) | Target | Final independent security review of the full agent-ready surface + distribution channels, then the first stable release |
+| Independent security review | Shipped | Three independent external-model reviews of the full 0.9.9 surface (no Critical/High); the actionable findings fixed before 1.0 (`docs/security-review/`) |
+| Stable release (1.0.0) | In review | The agent-ready layer consolidated, independently reviewed, and stabilized — the first stable release. Distribution channels (install script, Homebrew, Docker) follow post-1.0 |
 | Desktop GUI (2.0.0) | Planned | Tauri vault manager + system tray |
 
-The project is intentionally staying on the 0.9.x line. **1.0.0 is reserved for
-when everything is finished and independently reviewed** — it is the target, not
-a date.
+The agent-ready surface is complete and independently reviewed. **1.0.0 is the
+consolidation of that work into the first stable release** — it is in a final
+manual QA pass before tagging, not new scope.
 
 ## Shipped
 
@@ -103,9 +104,9 @@ reconnaissance path. It is **not** a sandbox against a hostile same-UID process
 that reads the unlocked daemon's memory directly — that remains inherent to the
 documented same-UID trust model.
 
-## Next — the agent-ready path (remaining 0.9.x)
+## The agent-ready path (0.9.4 – 0.9.9, shipped)
 
-These releases turn the proven core into something that sits safely in front of
+These releases turned the proven core into something that sits safely in front of
 day-to-day AI agents. They all extend existing primitives — the keyslot pattern
 already in `recovery.rs`, the encrypted policy in `vault.enc`, and the
 peer-UID-bonded daemon socket — rather than adding a new trust model.
@@ -208,21 +209,28 @@ without touching the CLI or TUI.
   by design, so a brute-force pattern is stopped and handed to a person rather than
   ground down into a leak. (A notify channel for escalations is a later add.)
 
-## Target — 1.0.0 (stable release)
+## 1.0.0 — the first stable release (in review)
 
-1.0.0 is gated on two things, in this order:
+The agent-ready surface is built and the independent review is done, so 1.0.0 is
+the consolidation, not new scope:
 
-1. **A final independent security review** of the full agent-ready surface — the
-   enforced engine (including adversarial judge testing for prompt injection via
-   the `reason` field, and the caller-authorization decision: self-asserted today
-   with peer-UID-stamped audit — accept as a documented boundary or add an
-   OS-bound caller identity), plus the new keyslot unlock model, the seal/escalate
-   path, and the MCP surface.
-2. **Distribution channels** — an install script, a Homebrew tap, and a Docker
-   image (see below).
+- **The independent security review is complete.** Three external-model reviews of
+  the full 0.9.9 surface — the enforced engine (including adversarial judge testing
+  for prompt injection via the `reason` field, and the caller-authorization
+  decision: self-asserted today with peer-UID-stamped audit, accepted as a
+  documented boundary), the keyslot unlock model, the seal/escalate path, and the
+  MCP surface — found no Critical/High issues; the actionable findings were fixed
+  before 1.0 (`docs/security-review/`).
+- **What remains before tagging is a manual QA pass** across the CLI, TUI, and MCP
+  surfaces (`docs/qa-checklist.md`) — verifying the shipped behavior end-to-end, not
+  adding scope.
 
-A small backlog of accepted, non-blocking items remains: a Windows owner-only
-DACL, a tamper-evident audit sink, and tunable Argon2id parameters.
+**Distribution channels** (an install script, a Homebrew tap, cargo-binstall, and a
+Docker image — see below) follow *after* 1.0.0; `cargo install svault-ai` is the
+shipped channel today.
+
+A small backlog of accepted, non-blocking items remains for later: a Windows
+owner-only DACL, a tamper-evident audit sink, and tunable Argon2id parameters.
 
 ## Planned (post-1.0)
 
@@ -246,14 +254,14 @@ once wired.
 
 **Next (one pass — covers Mac/Linux/Rust users and agents):**
 
-- **Install script** — `curl -fsSL https://svault.soluzy.app/install.sh | sh`:
-  detect OS and arch, download the matching release binary, drop it on PATH. The
-  link the README and website lead with.
-- **Homebrew tap** — `brew install soluzy/tap/svault` from a `Soluzy/homebrew-tap`
+- **Install script** — `curl -fsSL https://<install-host>/install.sh | sh`
+  (hosting URL not finalized yet): detect OS and arch, download the matching
+  release binary, drop it on PATH. The link the README leads with.
+- **Homebrew tap** — `brew install nim444/tap/svault` from a `nim444/homebrew-tap`
   repo (own tap, not homebrew-core); CI bumps the formula on each `v*` tag.
 - **cargo-binstall** — `[package.metadata.binstall]` in `Cargo.toml` so
   `cargo binstall svault-ai` pulls a prebuilt binary instead of compiling.
-- **Docker image** — `ghcr.io/soluzy/svault`, pushed on each tag; this matters
+- **Docker image** — `ghcr.io/nim444/svault`, pushed on each tag; this matters
   for the AI-agent and CI use case, where agents run in containers.
 
 **Later (niche audiences, more upkeep):**
@@ -268,7 +276,7 @@ once wired.
   projects; use the own tap until there's traction.
 - **npm wrapper** — only if JS-ecosystem agents (`npx`) show real demand.
 
-The website (`svault.soluzy.app`) becomes the hub: it hosts `install.sh` and a
+A project website (host TBD) becomes the hub: it hosts `install.sh` and a
 tabbed Install block (brew / curl / cargo / docker).
 
 ## Not planned (yet)

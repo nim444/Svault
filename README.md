@@ -4,11 +4,11 @@
 
 **The principled way to give cooperative AI agents secret access.**
 
-[![lint](https://github.com/Soluzy/Svault/actions/workflows/lint.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/lint.yml)
-[![ubuntu](https://github.com/Soluzy/Svault/actions/workflows/ubuntu.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/ubuntu.yml)
-[![fedora](https://github.com/Soluzy/Svault/actions/workflows/fedora.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/fedora.yml)
-[![macos](https://github.com/Soluzy/Svault/actions/workflows/macos.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/macos.yml)
-[![windows](https://github.com/Soluzy/Svault/actions/workflows/windows.yml/badge.svg)](https://github.com/Soluzy/Svault/actions/workflows/windows.yml)
+[![lint](https://github.com/nim444/Svault/actions/workflows/lint.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/lint.yml)
+[![ubuntu](https://github.com/nim444/Svault/actions/workflows/ubuntu.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/ubuntu.yml)
+[![fedora](https://github.com/nim444/Svault/actions/workflows/fedora.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/fedora.yml)
+[![macos](https://github.com/nim444/Svault/actions/workflows/macos.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/macos.yml)
+[![windows](https://github.com/nim444/Svault/actions/workflows/windows.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/windows.yml)
 
 [![crates.io](https://img.shields.io/crates/v/svault-ai.svg)](https://crates.io/crates/svault-ai)
 [![downloads](https://img.shields.io/crates/d/svault-ai.svg)](https://crates.io/crates/svault-ai)
@@ -18,7 +18,7 @@
 
 </div>
 
-![Svault Banner](https://raw.githubusercontent.com/Soluzy/Svault/main/docs/banner.jpg)
+![Svault Banner](https://raw.githubusercontent.com/nim444/Svault/main/docs/banner.jpg)
 
 Svault is a **secret access layer for AI agents**, written in Rust. It sits between an agent and your credentials and makes every request structured, policy-gated, and audited: the agent must say *which* secret, in *what* scope, and *why* — and a sensitive request is scored by an AI judge before any value is returned.
 
@@ -44,7 +44,7 @@ flowchart LR
 | [Interactive mode (TUI)](docs/tui.md) | The full-screen dashboard and keybindings |
 | [Command reference](docs/commands.md) | Every subcommand and flag |
 | [End-to-end walkthrough](docs/walkthrough.md) | Full flow: create → classify → judge → gated `get`, with real model output |
-| [Policy engine](docs/policy-engine.md) | The agent path — `svault get`, scopes, tiers, audit |
+| [Policy engine](docs/policy-engine.md) | The agent path (via the MCP server), scopes, tiers, audit |
 | [MCP server](docs/mcp.md) | `svault mcp` — gated secret access for AI agents (Claude Code, Cursor) |
 | [Recovery & portability](docs/recovery.md) | Recovery code for a lost passphrase, export/import bundles |
 | [Daemon](docs/daemon.md) | Optional Unix daemon — keys in memory, auto-lock, `daemon start/stop/status/doctor` |
@@ -63,7 +63,7 @@ flowchart LR
 # Install
 cargo install svault-ai
 
-# 1. Create an encrypted vault (interactive: storage, name, agents, auto-lock,
+# 1. Create an encrypted vault (interactive: name, agents, auto-lock,
 #    default tier, AI judge). On first run you set one master passphrase — it
 #    unlocks every vault. Prints a one-time recovery code — save it.
 svault create
@@ -109,9 +109,10 @@ Browse all vaults (with live lock state), `c` create, `u` unlock / `l` lock, `s`
 
 <br>
 
-`svault secret get` is the **human path** — passphrase, no questions asked. `svault get` is the **agent path**: a structured request that an AI must justify, **enforced inside the daemon** that holds the key — not advisory. There is no unguarded read path, and every decision is audited with the connecting process's peer UID.
+`svault secret get` is the **human path** — passphrase, no questions asked. The **agent path** is a structured request that an AI must justify, **enforced inside the daemon** that holds the key — not advisory. Agents reach it through the **MCP server** (`svault mcp`, see [mcp.md](docs/mcp.md)); the `svault get` CLI below is the same gate but is **deprecated** (kept for illustration). There is no unguarded read path, and every decision is audited with the connecting process's peer UID.
 
 ```bash
+# deprecated CLI form of the agent gate (new integrations use the MCP server)
 svault get DB_URL --scope database --reason "run nightly migration" --caller claude-code
 ```
 
@@ -223,6 +224,100 @@ flowchart TD
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/tui-activity.png" width="760" alt="Svault TUI activity timeline"><br>
+  <sub>The Svault TUI — daemon status, vaults, and a live activity timeline.</sub>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/tui-dashboard-first.png" width="760" alt="Svault TUI dashboard"><br>
+  <sub>The vault dashboard with live lock state.</sub>
+</p>
+
+<details open>
+<summary><b>Onboarding &amp; setup</b></summary>
+
+<table>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/onboarding-disclaimer.png" width="280"><br><sub>Honest first-run disclaimer (same-UID boundary)</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/set-your-master-passphrase.png" width="280"><br><sub>Set the one master passphrase</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/save-recovery-code.png" width="280"><br><sub>One-time master recovery code</sub></td>
+</tr>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/create-vault.png" width="280"><br><sub>Create an encrypted vault</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/create-vault-recovery-key.png" width="280"><br><sub>Per-vault recovery code</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/enrol-yubikey.png" width="280"><br><sub>Optional YubiKey enrollment</sub></td>
+</tr>
+</table>
+</details>
+
+<details open>
+<summary><b>The TUI</b></summary>
+
+<table>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/deamon-active.png" width="280"><br><sub>Daemon running (keys in memory)</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/vault-list.png" width="280"><br><sub>Vault list</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/vault-no-secret-yet.png" width="280"><br><sub>A new, empty vault</sub></td>
+</tr>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/vault-add-secret-low.png" width="280"><br><sub>Add a secret</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/vault-secret-list.png" width="280"><br><sub>Secrets with their classification</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/vault-secret-classify.png" width="280"><br><sub>Classify: scope / tier / windows / callers</sub></td>
+</tr>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/tui-activity.png" width="280"><br><sub>Activity timeline</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/vault-activity-tui.png" width="280"><br><sub>Per-vault activity</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/help-popup.png" width="280"><br><sub>Help overlay</sub></td>
+</tr>
+</table>
+</details>
+
+<details open>
+<summary><b>The AI judge</b></summary>
+
+<table>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/ai-judge-first.png" width="280"><br><sub>Judge manager</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/ai-add-judge.png" width="280"><br><sub>Add a named judge</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/ai-judge-add-key.png" width="280"><br><sub>Set the judge's API key</sub></td>
+</tr>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/ai-judge-test.png" width="280"><br><sub>Test the judge</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/ai-judge-yes.png" width="280"><br><sub>Judge allows</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/ai-judge-no.png" width="280"><br><sub>Judge denies</sub></td>
+</tr>
+</table>
+</details>
+
+<details open>
+<summary><b>Agent access over MCP (Claude Code)</b></summary>
+
+<table>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/claude-code-mcp.png" width="280"><br><sub>Svault MCP server connected</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/claude-code-mcp-tools.png" width="280"><br><sub>Exposed MCP tools</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/claude-code-mcpsvault_list_vaults.png" width="280"><br><sub><code>svault_list_vaults</code></sub></td>
+</tr>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/claude-code-get-list-of-vault.png" width="280"><br><sub>Agent lists vaults</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/claude-code-mcp-svault_get_secret.png" width="280"><br><sub><code>svault_get_secret</code></sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/claude-code-get-low-secret.png" width="280"><br><sub>Agent reads a low-tier secret</sub></td>
+</tr>
+<tr>
+<td align="center" width="33%"><img src="docs/screenshots/claude-code-get-secret-medium-deny.png" width="280"><br><sub>Higher-tier read denied to the agent</sub></td>
+<td align="center" width="33%"><img src="docs/screenshots/claude-code-refuse.png" width="280"><br><sub>Generic denial — no reason leaked</sub></td>
+<td align="center" width="33%"></td>
+</tr>
+</table>
+</details>
+
+> Full set with capture notes in [`docs/screenshots/`](docs/screenshots/).
+
+---
+
 ## Roadmap
 
 | Milestone | Status | What |
@@ -235,7 +330,8 @@ flowchart TD
 | **Local MCP** | Shipped | `svault mcp` — a local stdio MCP server exposing gated `svault_get_secret` / `svault_list_vaults` to AI agents; serves only unlocked state, never the passphrase, with a capability descriptor that advertises the request interface, not the decision criteria |
 | **Hardware-key unlock + hardening** | Shipped | YubiKey (FIDO2 hmac-secret) unlock — an alternative keyslot over the master key (passphrase or touch, not 2FA); a 6-hour re-auth cap on every unlock path; first-run onboarding + an app-level TUI sign-in / logout; storage local-only |
 | **Conditional access + escalation** | Shipped | Time-window / required-caller conditions in the encrypted policy; repeated denials seal a secret and escalate to a human (`svault pending` / `approve`, TUI `A`) — agents never self-clear |
-| **Independent review + install channels** | Target | A final independent review of the full agent-ready surface and install channels (script, Homebrew, Docker), then the first stable release |
+| **Independent security review** | Shipped | Three independent external-model reviews of the full 0.9.9 surface (no Critical/High); the actionable findings fixed before 1.0 (`docs/security-review/`) |
+| **1.0.0 — stable** | In review | First stable release: the agent-ready layer consolidated and reviewed, agents on the MCP door, the store at `~/.svault`. Install channels (script, Homebrew, Docker) follow post-1.0 |
 | **Desktop GUI** | Planned | Desktop GUI (Tauri) + system tray |
 
 Detail for each milestone lives in the [changelog](CHANGELOG.md) and the [full roadmap](docs/roadmap.md).
@@ -250,7 +346,7 @@ Detail for each milestone lives in the [changelog](CHANGELOG.md) and the [full r
 cargo test
 ```
 
-**131 tests** (plus an `#[ignore]`d concurrency stress benchmark) cover the crypto core and tamper detection, vault operations, the master keyslot model (wrap/unwrap a data key under the master for both vaults and the keyring, rekey, master recovery-code reset, wrong-master rejection), the policy engine and the enforced daemon gate (including peer-UID-stamped audit and high-tier fail-closed behaviour), the AI judge — run against a fake transport, so the suite never touches the network — and the encrypted-at-rest guarantees for both the policy (`vault.enc`) and the keyring (`keyring.enc`).
+**144 tests** (plus an `#[ignore]`d concurrency stress benchmark) cover the crypto core and tamper detection, vault operations, the master keyslot model (wrap/unwrap a data key under the master for both vaults and the keyring, rekey, master recovery-code reset, wrong-master rejection), the policy engine and the enforced daemon gate (including peer-UID-stamped audit and high-tier fail-closed behaviour), the AI judge — run against a fake transport, so the suite never touches the network — and the encrypted-at-rest guarantees for both the policy (`vault.enc`) and the keyring (`keyring.enc`).
 
 CI runs the full suite on **Ubuntu, Fedora, macOS, and Windows** on every push and pull request. A heavier concurrency simulation runs on demand:
 
@@ -266,4 +362,4 @@ Methodology and a recorded run are in [docs/security-review/stress/0.6.0.md](doc
 
 Apache 2.0 — see [LICENSE](LICENSE).
 
-Built by [Soluzy](https://soluzy.ro).
+Built by [nim444](https://github.com/nim444).

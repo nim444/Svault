@@ -99,7 +99,7 @@ impl JudgeTransport for OpenRouterTransport {
             .post(&url)
             .set("Authorization", &format!("Bearer {}", *self.api_key))
             .set("Content-Type", "application/json")
-            .set("HTTP-Referer", "https://github.com/Soluzy/Svault")
+            .set("HTTP-Referer", "https://github.com/nim444/Svault")
             .set("X-Title", "Svault")
             .send_json(body)
             .map_err(|e| anyhow!("openrouter request failed: {e}"))?;

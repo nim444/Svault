@@ -13,7 +13,7 @@ grant or deny agent requests. The judge outputs below are **actual responses** f
 ## 1. Build
 
 ```bash
-git clone https://github.com/Soluzy/Svault.git
+git clone https://github.com/nim444/Svault.git
 cd Svault && cargo build --release
 alias svault="$PWD/target/release/svault"
 ```
@@ -148,7 +148,12 @@ svault judge test --vault billing-api --tier high --scope payments --secret STRI
 The last two are the headline behavior: same secret, same caller, same tier — the
 **reason versus the documented purpose** is what flips the decision.
 
-## 7. The agent request — `svault get`
+## 7. The agent request — the gate from a shell
+
+The canonical agent door is the **MCP server** (section 10). `svault get` runs the
+identical gate from a shell and is shown here because it's the quickest way to see
+the gate end-to-end — but it's **deprecated** (it prints a deprecation note to
+stderr and will be removed), so new integrations should wire up MCP instead.
 
 Unlock once (or run the [daemon](daemon.md) so the key stays in memory), then the
 agent path runs the full gate — policy, then tier, then judge, then audit —
@@ -202,9 +207,10 @@ svault policy check billing-worker   # scopes, reachable secrets, recent allows/
 
 ## 10. Hand it to an agent over MCP
 
-`svault get` is the agent path from a shell. The same gate is also reachable over
-the [Model Context Protocol](mcp.md), so an MCP-aware agent (Claude Code, Cursor)
-requests secrets directly instead of reading `.env` files.
+MCP is the canonical agent door. The same gate that the deprecated `svault get`
+runs from a shell is exposed over the [Model Context Protocol](mcp.md), so an
+MCP-aware agent (Claude Code, Cursor) requests secrets directly instead of reading
+`.env` files.
 
 The human unlocks once, then wires the server (or press `m`, then `w` in the TUI):
 
