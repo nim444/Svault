@@ -20,5 +20,8 @@ openrouter.key
 *.apikey
 **/.config/svault/
 
+# Internal, unpublished working drafts — never commit or package these.
+docs/marketplace-review.md
+
 # OS
 .DS_Store

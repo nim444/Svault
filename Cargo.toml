@@ -2,7 +2,7 @@
 name = "svault-ai"
 version = "1.0.0"
 edition = "2021"
-authors = ["Nima Karimi <nima@soluzy.ro>"]
+authors = ["Nima Karimi <nima.karimi@live.com>"]
 description = "Secret access layer for cooperative AI agents — structured, policy-gated, audited credential access"
 license = "Apache-2.0"
 repository = "https://github.com/nim444/Svault"
