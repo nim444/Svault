@@ -10,6 +10,7 @@ import {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
   forwardRef,
+  useEffect,
 } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import * as SwitchPrimitive from "@radix-ui/react-switch";
@@ -157,6 +158,38 @@ export function TierBadge({ tier }: { tier: string }) {
   const tone: Tone =
     tier === "high" ? "deny" : tier === "medium" ? "pending" : "neutral";
   return <Badge tone={tone}>{tier}</Badge>;
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+// A transient bottom-right notice that dismisses itself. Render it
+// conditionally; `onDone` clears the state that mounted it.
+export function Toast({
+  tone = "neutral",
+  children,
+  onDone,
+  duration = 2000,
+}: {
+  tone?: Tone;
+  children: ReactNode;
+  onDone: () => void;
+  duration?: number;
+}) {
+  useEffect(() => {
+    const t = setTimeout(onDone, duration);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div
+      className={cn(
+        "toast-in fixed bottom-6 right-6 z-50 max-w-sm rounded-lg border px-4 py-2.5 text-sm shadow-lg",
+        toneStyles[tone],
+        "bg-card",
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function StateDot({ tone }: { tone: Tone }) {

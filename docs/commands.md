@@ -118,7 +118,9 @@ never sees the master passphrase.
 
 ## The keyring
 
-All global config — the judge registry, each judge's API key, and operational
+All global config — the judge registry, each judge's API key, the named AI
+providers (API accounts a judge can draw its key from — GUI-managed), and
+operational
 knobs (lock timers, daemon `max_connections`, backend) — lives in a single
 **AES-256-GCM-encrypted keyring** at `.svault/keyring.enc`, opened by the **master
 passphrase** (its data key is wrapped under the master in
@@ -183,6 +185,12 @@ distrust a "production" reason. `--description` (secret purpose) and
 `set-key <name>` stores the key **encrypted in the keyring**, never in a plaintext
 file. An empty value clears the judge's key so it falls back to
 `$SVAULT_OPENROUTER_KEY`, which takes effect only when a judge has no stored key.
+
+A judge created in the **GUI** usually references a named **provider** instead
+of carrying its own key (the provider's key and base URL win at runtime;
+`judge list` shows `provider` for those). Providers are managed on the GUI's
+Judges & Policy screen — the CLI judge commands above keep working unchanged
+for own-key judges.
 
 ## Recovery & portability
 

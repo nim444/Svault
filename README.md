@@ -133,7 +133,7 @@ flowchart TD
     JUDGE -->|deny| DENY
 ```
 
-**The AI judge.** For medium/high-tier secrets, Svault asks a fast LLM — via your OpenRouter account — whether the stated *reason* plausibly justifies the request. This is the behavioural gate that makes Svault AI-aware. You can define **multiple named judges**, each with its own model, thresholds, and free-text **criteria**, pick a default, and assign one per vault.
+**The AI judge.** For medium/high-tier secrets, Svault asks a fast LLM — via your OpenRouter account — whether the stated *reason* plausibly justifies the request. This is the behavioural gate that makes Svault AI-aware. You can define **multiple named judges**, each with its own model, thresholds, and free-text **criteria**, pick a default, and assign one per vault. A judge carries its own API key or draws one from a named **AI provider** (an API account stored encrypted in the keyring — how the desktop GUI wires judges up; OpenRouter today).
 
 Everything that gates access is **AES-256-GCM encrypted at rest** — per-secret classification (scope/tier + an optional description the judge weighs against the reason) and caller rules live inside `vault.enc`; the judge registry and its API keys live in a separate encrypted **keyring** (`.svault/keyring.enc`). There are no plaintext config or key files. Because the policy is unreadable at rest, an agent can't study it to craft a passing request — and a denied `svault get` returns only a **generic** message, with the real reason recorded in the audit log for you.
 
@@ -333,7 +333,7 @@ flowchart TD
 | **Conditional access + escalation** | Shipped | Time-window / required-caller conditions in the encrypted policy; repeated denials seal a secret and escalate to a human (`svault pending` / `approve`, TUI `A`) — agents never self-clear |
 | **Independent security review** | Shipped | Three independent external-model reviews of the full 0.9.9 surface (no Critical/High); the actionable findings fixed before 1.0 (`docs/security-review/`) |
 | **1.0.0 — stable** | Shipped | First stable release: the agent-ready layer consolidated and reviewed, agents on the MCP door, the store at `~/.svault`. Published on [crates.io](https://crates.io/crates/svault-ai) (as `svault-ai`; the crate is `svault-cli` from 2.0.0). Install channels (script, Homebrew, Docker) follow post-1.0 |
-| **Desktop GUI (2.0.0)** | In progress | Cross-platform Tauri vault manager + system tray — all 12 handoff screens built over the same core/daemon, daemon auto-start, one install delivering GUI + CLI + TUI + MCP (`gui/`, [docs/gui.md](docs/gui.md)). Develops on the 1.1.0 line; ships publicly as 2.0.0 |
+| **Desktop GUI (2.0.0)** | In progress | Cross-platform Tauri vault manager + system tray — all 12 handoff screens built over the same core/daemon, daemon auto-start, one install delivering GUI + CLI + TUI + MCP (`gui/`, [docs/gui.md](docs/gui.md)). Develops on the 1.1.x line; ships publicly as 2.0.0 |
 
 Detail for each milestone lives in the [changelog](CHANGELOG.md) and the [full roadmap](docs/roadmap.md).
 

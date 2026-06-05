@@ -99,9 +99,30 @@ vault unlocked (`svault unlock`, ideally with the daemon running — see
 }
 ```
 
-**Cursor / VS Code / others** use the same shape in their MCP config
-(`command: "svault"`, `args: ["mcp"]`). Set `SVAULT_CALLER` to a stable identity
-per agent so the audit log and rate limits can tell them apart.
+**OpenCode** (`opencode.json` in the project root, or globally at
+`~/.config/opencode/opencode.json` / `.jsonc`) uses its own `mcp` shape — `type`
++ a single `command` array instead of `command`/`args`, and the env-var key is
+**`environment`**, not `env` (OpenCode's schema rejects unknown keys, so an
+`env` entry is silently useless — verified against the published
+`opencode.ai/config.json` schema and the OpenCode source):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "svault": {
+      "type": "local",
+      "command": ["svault", "mcp"],
+      "enabled": true,
+      "environment": { "SVAULT_CALLER": "opencode" }
+    }
+  }
+}
+```
+
+**Cursor / VS Code / others** use the same shape as Claude Code in their MCP
+config (`command: "svault"`, `args: ["mcp"]`). Set `SVAULT_CALLER` to a stable
+identity per agent so the audit log and rate limits can tell them apart.
 
 The store lives at **`~/.svault`** by default, so the server finds your vaults no
 matter which working directory the MCP host launches it from — and it shares that

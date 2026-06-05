@@ -26,7 +26,10 @@ lives AES-256-GCM **encrypted inside `vault.enc`**, not in the plaintext
 `meta.yaml`, so a same-UID agent can't read it at rest to plan a passing request.
 
 There is no plaintext config file. All **global** config — the registry of **named
-judges** (each with its own model, thresholds, free-text criteria, and API key)
+judges** (each with its own model, thresholds, free-text criteria, and API key),
+the named **AI providers** (API accounts — OpenRouter, OpenAI, Anthropic, or a
+local endpoint — that a judge can
+draw its key and base URL from instead of carrying its own),
 plus operational knobs (lock timers, daemon max-connections, backend) — lives
 AES-256-GCM **encrypted in `.svault/keyring.enc`**, opened by the **master
 passphrase** (the keyring has a random data key wrapped under the master in
@@ -54,7 +57,8 @@ override the base directory; the store then lives at `$SVAULT_HOME/.svault`.
   .master.session    ← master-key cache while unlocked, expires after 6h
                        (gitignored, mode 0600)
   keyring.enc        ← AES-256-GCM encrypted global config: the named-judge
-                       registry (model/thresholds/criteria/API key each) +
+                       registry (model/thresholds/criteria/API key each), the
+                       AI providers (API accounts judges can draw keys from) +
                        operational knobs                  (safe to commit, owner-only)
   keyring.keyslot.enc ← the keyring's data key wrapped under
                        the master key                     (safe to commit, owner-only)

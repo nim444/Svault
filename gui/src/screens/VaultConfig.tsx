@@ -8,6 +8,7 @@ import {
   VaultForm,
 } from "../lib/api";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { useJudgeActive } from "../lib/hooks";
 import { Page } from "../components/shell";
 import {
   Button,
@@ -43,6 +44,7 @@ export default function VaultConfig() {
   const navigate = useNavigate();
   const qc = useQueryClient();
 
+  const judgeActive = useJudgeActive();
   const [form, setForm] = useState<VaultForm>(emptyForm);
   const [callersText, setCallersText] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -147,7 +149,14 @@ export default function VaultConfig() {
                 placeholder="10/hour"
               />
             </Field>
-            <Field label="Default tier" hint="medium/high invoke the AI judge.">
+            <Field
+              label="Default tier"
+              hint={
+                judgeActive
+                  ? "medium/high invoke the AI judge."
+                  : "medium/high are human-only until an AI judge is active."
+              }
+            >
               <Segmented
                 value={form.default_tier}
                 onChange={(v) => set("default_tier", v)}
@@ -192,23 +201,25 @@ export default function VaultConfig() {
             </Select>
           </Field>
 
-          <Field label="AI judge">
-            <div className="flex flex-col gap-2">
-              <Checkbox
-                checked={form.judge_enabled}
-                onChange={(v) => set("judge_enabled", v)}
-              >
-                Use the AI judge for this vault's medium/high secrets
-              </Checkbox>
-              {form.judge_enabled && (
-                <Input
-                  placeholder="assigned judge name (blank = keyring default)"
-                  value={form.assigned_judge ?? ""}
-                  onChange={(e) => set("assigned_judge", e.target.value || null)}
-                />
-              )}
-            </div>
-          </Field>
+          {judgeActive && (
+            <Field label="AI judge">
+              <div className="flex flex-col gap-2">
+                <Checkbox
+                  checked={form.judge_enabled}
+                  onChange={(v) => set("judge_enabled", v)}
+                >
+                  Use the AI judge for this vault's medium/high secrets
+                </Checkbox>
+                {form.judge_enabled && (
+                  <Input
+                    placeholder="assigned judge name (blank = keyring default)"
+                    value={form.assigned_judge ?? ""}
+                    onChange={(e) => set("assigned_judge", e.target.value || null)}
+                  />
+                )}
+              </div>
+            </Field>
+          )}
 
           {error && <p className="text-sm text-state-deny">{error}</p>}
 

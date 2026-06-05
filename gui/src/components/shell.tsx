@@ -1,29 +1,43 @@
-import { ReactNode } from "react";
+import { ComponentType, ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ArchiveRestore,
+  Bot,
+  Hourglass,
+  ListChecks,
+  Plug,
+  Scale,
+  ScrollText,
+  Settings,
+  Vault,
+} from "lucide-react";
 import { lockAll, pending } from "../lib/api";
 import { useSessionStatus } from "../lib/hooks";
 import { countdownTo, formatSecs } from "../lib/time";
 import { useSession } from "../store/session";
+import { useStartState } from "../screens/Start";
 import { Badge, Button, StateDot, cx } from "./ui";
 
 interface NavItem {
   to: string;
   label: string;
+  icon: ComponentType<{ className?: string }>;
   badge?: number;
 }
 
 const primaryNav: NavItem[] = [
-  { to: "/vaults", label: "Vaults" },
-  { to: "/judges", label: "Judges & Policy" },
-  { to: "/mcp", label: "MCP" },
-  { to: "/audit", label: "Audit" },
-  { to: "/pending", label: "Pending" },
+  { to: "/vaults", label: "Vaults", icon: Vault },
+  { to: "/providers", label: "AI providers", icon: Bot },
+  { to: "/judges", label: "Judges & Policy", icon: Scale },
+  { to: "/mcp", label: "MCP", icon: Plug },
+  { to: "/audit", label: "Audit", icon: ScrollText },
+  { to: "/pending", label: "Pending", icon: Hourglass },
 ];
 
 const secondaryNav: NavItem[] = [
-  { to: "/backup", label: "Backup & recovery" },
-  { to: "/settings", label: "Settings" },
+  { to: "/backup", label: "Backup & recovery", icon: ArchiveRestore },
+  { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function AppShell() {
@@ -44,12 +58,24 @@ function Sidebar() {
     refetchInterval: 5000,
   });
   const pendingCount = pendingQ.data?.length ?? 0;
+  const start = useStartState();
   return (
     <aside className="flex w-58 shrink-0 flex-col border-r border-border-subtle bg-surface-sunken">
       <div className="px-4 py-4">
         <span className="text-lg font-semibold tracking-tight">Svault</span>
       </div>
       <nav className="flex flex-1 flex-col gap-0.5 px-2">
+        {start && !start.complete && (
+          <>
+            <NavRow
+              to="/start"
+              label="Getting started"
+              icon={ListChecks}
+              badge={start.remaining}
+            />
+            <div className="my-2 border-t border-border-subtle" />
+          </>
+        )}
         {primaryNav.map((item) => (
           <NavRow
             key={item.to}
@@ -67,7 +93,7 @@ function Sidebar() {
   );
 }
 
-function NavRow({ to, label, badge }: NavItem) {
+function NavRow({ to, label, icon: Icon, badge }: NavItem) {
   return (
     <NavLink
       to={to}
@@ -80,7 +106,10 @@ function NavRow({ to, label, badge }: NavItem) {
         )
       }
     >
-      <span>{label}</span>
+      <span className="flex items-center gap-2.5">
+        <Icon className="size-4 shrink-0 opacity-70" />
+        {label}
+      </span>
       {badge ? <Badge tone="pending">{badge}</Badge> : null}
     </NavLink>
   );

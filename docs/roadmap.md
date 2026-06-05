@@ -243,6 +243,14 @@ classification, judges & policy (with a live judge test), MCP wiring, audit
 timeline, pending approvals, backup/recovery, settings, and a menu-bar/tray
 popover. See [gui.md](gui.md) for architecture and how to run.
 
+- A **getting-started home**: a four-step checklist (add an AI provider →
+  optionally create a judge → create a vault → add a secret) that is the first
+  page until the store holds a secret; judge options stay hidden across the GUI
+  until a judge is actually active.
+- Named **AI providers** in the encrypted keyring (OpenRouter, OpenAI,
+  Anthropic, local/Ollama) with a dedicated GUI section — add, edit,
+  enable/disable, default; judges draw their API key from a provider instead of
+  each carrying its own, and pick models from the provider's live model list.
 - Vault dashboard with lock/unlock, a live auto-lock countdown, and a daemon
   session monitor.
 - Secret management with inline classification, a policy/judge surface, and an
@@ -254,15 +262,23 @@ Remaining before tagging 2.0.0: release bundling across the four targets
 (`tauri-action`), the sidecar wiring (`scripts/bundle-sidecar.sh`), icon-state
 assets for the tray, design/UX polish, and a manual QA pass over every screen.
 
-**Versioning plan.** The crate version is now **1.1.0** (bumped in `Cargo.toml`,
-the GUI crate, `tauri.conf.json`, and `package.json`). This is the development
-line carrying the GUI plus the small enabling core additions (the keyring
-`mcp_enabled` switch enforced by the MCP server, `daemon::client::vault_status`
-for the auto-lock countdown). **1.1.0 is not published or git-tagged on its own**
-— do not run `cargo publish` or cut a tag for it. The next public release is
+**TUI status.** The TUI is frozen as-is while the GUI is built — it stays
+shipped, correct, and truthful about state created elsewhere (e.g. it shows
+`key set` for provider-backed judges), but gains no new screens. Once the GUI's
+design settles, the TUI gets a redesign pass modeled on it.
+
+**Versioning plan.** The crate version is now **1.1.1** (bumped in `Cargo.toml`,
+the GUI crate, `tauri.conf.json`, and `package.json`). The **1.1.x** line is the
+development line carrying the GUI plus the small enabling core additions (the
+keyring `mcp_enabled` switch enforced by the MCP server,
+`daemon::client::vault_status`
+for the auto-lock countdown, and named AI providers — four kinds, enable/default,
+live model lists — with provider-aware judge resolution). **1.1.x versions are
+not published or git-tagged on their own**
+— do not run `cargo publish` or cut a tag for them. The next public release is
 **2.0.0**, which ships the desktop GUI together with these additions once the
 "remaining" items above are done. So `1.0.0` (released) → `2.0.0` (the GUI
-release), with `1.1.0` being the in-progress development line in between.
+release), with `1.1.x` being the in-progress development line in between.
 
 ## Distribution
 

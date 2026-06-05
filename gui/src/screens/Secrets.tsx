@@ -12,6 +12,7 @@ import {
   SecretSummary,
   vaultSettings,
 } from "../lib/api";
+import { useJudgeActive } from "../lib/hooks";
 import { shortTime } from "../lib/time";
 import { Page } from "../components/shell";
 import {
@@ -56,6 +57,7 @@ export default function Secrets() {
   const { leaf } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const judgeActive = useJudgeActive();
   const [panel, setPanel] = useState<PanelState>(blankPanel);
   const [toDelete, setToDelete] = useState<SecretSummary | null>(null);
   const [revealed, setRevealed] = useState<{ name: string; value: string } | null>(null);
@@ -235,7 +237,14 @@ export default function Secrets() {
                 onChange={(e) => setPanel({ ...panel, scope: e.target.value })}
               />
             </Field>
-            <Field label="Sensitivity tier" hint="medium/high invoke the AI judge.">
+            <Field
+              label="Sensitivity tier"
+              hint={
+                judgeActive
+                  ? "medium/high invoke the AI judge."
+                  : "medium/high are human-only until an AI judge is active."
+              }
+            >
               <Segmented
                 value={panel.tier}
                 onChange={(v) => setPanel({ ...panel, tier: v })}
@@ -246,13 +255,22 @@ export default function Secrets() {
                 ]}
               />
             </Field>
-            <Checkbox
-              checked={panel.require_reason}
-              onChange={(v) => setPanel({ ...panel, require_reason: v })}
+            {judgeActive && (
+              <Checkbox
+                checked={panel.require_reason}
+                onChange={(v) => setPanel({ ...panel, require_reason: v })}
+              >
+                Always judge (even at low tier)
+              </Checkbox>
+            )}
+            <Field
+              label="Description"
+              hint={
+                judgeActive
+                  ? "The judge weighs this against each request's reason."
+                  : "Shown alongside the secret; the AI judge uses it once one is active."
+              }
             >
-              Always judge (even at low tier)
-            </Checkbox>
-            <Field label="Description" hint="The judge weighs this against each request's reason.">
               <Input
                 value={panel.description}
                 onChange={(e) => setPanel({ ...panel, description: e.target.value })}

@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::commands::common::open_or_init_keyring;
 use crate::error::{emsg, CmdResult};
 
-use svault_cli::core::{audit, keyring, vault};
+use svault_cli::core::{audit, keyring, usage, vault};
 
 #[derive(Serialize)]
 pub struct ConnectedAgent {
@@ -66,7 +66,13 @@ pub fn connected_agents() -> Vec<ConnectedAgent> {
 pub fn mcp_toggle(enabled: bool) -> CmdResult<()> {
     let mut kr = open_or_init_keyring()?;
     kr.data.mcp_enabled = enabled;
-    kr.save().map_err(emsg)
+    kr.save().map_err(emsg)?;
+    usage::human(
+        &vault::svault_dir(),
+        if enabled { "mcp.enable" } else { "mcp.disable" },
+        Some("global"),
+    );
+    Ok(())
 }
 
 #[tauri::command]

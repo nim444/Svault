@@ -183,7 +183,8 @@ pub fn gated_get(
     let judge = keyring::open_from_session().and_then(|kr| {
         kr.data
             .resolve_judge(vault.policy.judge.judge.as_deref())
-            .and_then(|(_n, def)| JudgeRuntime::from_def(def))
+            .map(|(_n, def)| kr.data.materialize_judge(def))
+            .and_then(|def| JudgeRuntime::from_def(&def))
     });
     let req = policy::Request {
         vault: &vault.meta.name,

@@ -113,6 +113,44 @@ impl JudgeTransport for OpenRouterTransport {
     }
 }
 
+/// List the model ids a provider offers, for the GUI's model picker. All four
+/// supported kinds expose `GET {base}/models` returning `{ "data": [{ "id" }] }`
+/// (OpenRouter, OpenAI, Ollama/LM Studio natively; Anthropic on its native API
+/// with its own auth headers). Network access only — no store is touched.
+pub fn list_models(kind: &str, base_url: &str, api_key: &str) -> Result<Vec<String>> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(5))
+        .timeout(Duration::from_secs(10))
+        .build();
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let mut req = agent.get(&url);
+    let key = api_key.trim();
+    if kind == "anthropic" {
+        if key.is_empty() {
+            return Err(anyhow!("anthropic needs an API key to list models"));
+        }
+        req = req
+            .set("x-api-key", key)
+            .set("anthropic-version", "2023-06-01");
+    } else if !key.is_empty() {
+        req = req.set("Authorization", &format!("Bearer {key}"));
+    }
+    let v: serde_json::Value = req
+        .call()
+        .map_err(|e| anyhow!("model list request failed: {e}"))?
+        .into_json()
+        .map_err(|e| anyhow!("model list response not JSON: {e}"))?;
+    let mut ids: Vec<String> = v["data"]
+        .as_array()
+        .ok_or_else(|| anyhow!("model list response had no data array"))?
+        .iter()
+        .filter_map(|m| m["id"].as_str().map(str::to_string))
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
 /// A ready-to-use judge: a transport plus the resolved thresholds, model, and
 /// this judge's free-text criteria. Built per named judge from its [`JudgeDef`]
 /// when a request needs it.

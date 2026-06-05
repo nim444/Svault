@@ -8,6 +8,7 @@ import {
   unlockVault,
   VaultSummary,
 } from "../lib/api";
+import { useJudgeActive } from "../lib/hooks";
 import { shortTime } from "../lib/time";
 import { Page } from "../components/shell";
 import {
@@ -25,6 +26,7 @@ export default function Vaults() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [toDelete, setToDelete] = useState<VaultSummary | null>(null);
+  const judgeActive = useJudgeActive();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["vaults"],
@@ -86,7 +88,7 @@ export default function Vaults() {
                 <Th>State</Th>
                 <Th>Secrets</Th>
                 <Th>Default tier</Th>
-                <Th>Judge</Th>
+                {judgeActive && <Th>Judge</Th>}
                 <Th>Last activity</Th>
                 <Th>Actions</Th>
               </tr>
@@ -116,13 +118,15 @@ export default function Vaults() {
                   <Td>
                     <TierBadge tier={v.default_tier} />
                   </Td>
-                  <Td>
-                    {v.judge_enabled ? (
-                      <Badge tone="judge">{v.assigned_judge ?? "default"}</Badge>
-                    ) : (
-                      <span className="text-content-muted">off</span>
-                    )}
-                  </Td>
+                  {judgeActive && (
+                    <Td>
+                      {v.judge_enabled ? (
+                        <Badge tone="judge">{v.assigned_judge ?? "default"}</Badge>
+                      ) : (
+                        <span className="text-content-muted">off</span>
+                      )}
+                    </Td>
+                  )}
                   <Td className="text-content-muted">{shortTime(v.last_activity)}</Td>
                   <Td>
                     <div className="flex items-center gap-1">

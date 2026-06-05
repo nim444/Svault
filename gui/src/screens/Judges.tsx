@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   callerAccess,
@@ -12,6 +12,8 @@ import {
   keyringState,
   listVaults,
   policySurface,
+  providerList,
+  providerModels,
 } from "../lib/api";
 import { Page } from "../components/shell";
 import {
@@ -75,22 +77,50 @@ const blankJudge = {
   high_threshold: 80,
   criteria: "",
   api_key: "",
+  provider: "",
 };
 
 function JudgesTab() {
   const qc = useQueryClient();
   const judges = useQuery({ queryKey: ["judges"], queryFn: judgeList });
+  const providers = useQuery({ queryKey: ["providers"], queryFn: providerList });
   const [editor, setEditor] = useState({ ...blankJudge });
   const [error, setError] = useState<string | null>(null);
 
+  // Only enabled providers are selectable; pre-select the default one on a
+  // fresh form so the common path is pick-a-model-and-save.
+  const enabledProviders = (providers.data ?? []).filter((p) => p.enabled);
+  useEffect(() => {
+    if (editor.name === "" && editor.provider === "") {
+      const def = enabledProviders.find((p) => p.is_default);
+      if (def) setEditor((e) => ({ ...e, provider: def.name }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providers.data]);
+
+  // Live model list for the selected provider — datalist suggestions with
+  // free-text fallback if the fetch fails.
+  const models = useQuery({
+    queryKey: ["provider-models", editor.provider],
+    queryFn: () => providerModels(editor.provider),
+    enabled: editor.provider !== "",
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
   const saveM = useMutation({
     mutationFn: () =>
-      judgeSave({ ...editor, api_key: editor.api_key || null }),
+      judgeSave({
+        ...editor,
+        api_key: editor.api_key || null,
+        provider: editor.provider || null,
+      }),
     onSuccess: () => {
       setEditor({ ...blankJudge });
       setError(null);
       qc.invalidateQueries({ queryKey: ["judges"] });
       qc.invalidateQueries({ queryKey: ["keyring-state"] });
+      qc.invalidateQueries({ queryKey: ["providers"] });
     },
     onError: (e) => setError(String(e)),
   });
@@ -123,7 +153,10 @@ function JudgesTab() {
                     {j.name}
                     {!j.has_key && <Badge tone="pending">no key</Badge>}
                   </div>
-                  <div className="text-xs text-content-muted">{j.model}</div>
+                  <div className="text-xs text-content-muted">
+                    {j.model}
+                    {j.provider && <> · via {j.provider}</>}
+                  </div>
                 </div>
                 <div className="flex gap-1">
                   <Button
@@ -137,6 +170,7 @@ function JudgesTab() {
                         high_threshold: j.high_threshold,
                         criteria: j.criteria,
                         api_key: "",
+                        provider: j.provider ?? "",
                       })
                     }
                   >
@@ -175,11 +209,24 @@ function JudgesTab() {
                 onChange={(e) => setEditor({ ...editor, name: e.target.value })}
               />
             </Field>
-            <Field label="Model">
+            <Field
+              label="Model"
+              hint={
+                models.data
+                  ? "Live list from the provider; free text works too."
+                  : "Type a model id; the list loads when a provider is selected."
+              }
+            >
               <Input
+                list="judge-model-options"
                 value={editor.model}
                 onChange={(e) => setEditor({ ...editor, model: e.target.value })}
               />
+              <datalist id="judge-model-options">
+                {(models.data ?? []).map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
             </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Allow ≥">
@@ -208,14 +255,32 @@ function JudgesTab() {
                 onChange={(e) => setEditor({ ...editor, criteria: e.target.value })}
               />
             </Field>
-            <Field label="API key" hint="Stored encrypted. Blank = keep / use $SVAULT_OPENROUTER_KEY.">
-              <Input
-                type="password"
-                placeholder={editor.name ? "unchanged" : ""}
-                value={editor.api_key}
-                onChange={(e) => setEditor({ ...editor, api_key: e.target.value })}
-              />
+            <Field
+              label="Provider"
+              hint="The judge draws its API key from this provider. 'Own key' keeps a key on the judge itself."
+            >
+              <Select
+                value={editor.provider}
+                onChange={(e) => setEditor({ ...editor, provider: e.target.value })}
+              >
+                <option value="">own key</option>
+                {enabledProviders.map((p) => (
+                  <option key={p.name} value={p.name}>
+                    {p.name} ({p.kind})
+                  </option>
+                ))}
+              </Select>
             </Field>
+            {!editor.provider && (
+              <Field label="API key" hint="Stored encrypted. Blank = keep / use $SVAULT_OPENROUTER_KEY.">
+                <Input
+                  type="password"
+                  placeholder={editor.name ? "unchanged" : ""}
+                  value={editor.api_key}
+                  onChange={(e) => setEditor({ ...editor, api_key: e.target.value })}
+                />
+              </Field>
+            )}
             {error && <p className="text-sm text-state-deny">{error}</p>}
             <div className="flex gap-2">
               {editor.name && (

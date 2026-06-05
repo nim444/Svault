@@ -59,6 +59,60 @@ pub fn exists() -> bool {
     keyring_path().exists()
 }
 
+/// The provider kinds Svault knows how to talk to. All four speak the
+/// OpenAI-compatible `/chat/completions` + `GET /models` surface the judge
+/// transport uses — a kind only decides the default base URL and auth headers.
+pub const PROVIDER_KINDS: [&str; 4] = ["openrouter", "openai", "anthropic", "local"];
+
+/// The default base URL for a provider kind. Anthropic is its
+/// OpenAI-compatibility endpoint; `local` assumes an Ollama/LM Studio-style
+/// server.
+pub fn provider_kind_base_url(kind: &str) -> Option<&'static str> {
+    match kind {
+        "openrouter" => Some("https://openrouter.ai/api/v1"),
+        "openai" => Some("https://api.openai.com/v1"),
+        "anthropic" => Some("https://api.anthropic.com/v1"),
+        "local" => Some("http://localhost:11434/v1"),
+        _ => None,
+    }
+}
+
+/// One named AI provider: an API account that judges draw their key and base
+/// URL from. The key is encrypted at rest like everything else in the keyring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderDef {
+    #[serde(default = "default_provider_kind")]
+    pub kind: String,
+    #[serde(default = "default_base_url")]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    /// A disabled provider lends no credentials: judges referencing it become
+    /// keyless, so the gate falls back to the static tier rules (high =
+    /// human-only) without deleting any config.
+    #[serde(default = "default_provider_enabled")]
+    pub enabled: bool,
+}
+
+fn default_provider_kind() -> String {
+    "openrouter".to_string()
+}
+
+fn default_provider_enabled() -> bool {
+    true
+}
+
+impl Default for ProviderDef {
+    fn default() -> Self {
+        Self {
+            kind: default_provider_kind(),
+            base_url: default_base_url(),
+            api_key: String::new(),
+            enabled: true,
+        }
+    }
+}
+
 /// One named judge: a model + thresholds + free-text criteria + its own API key.
 /// The criteria are injected into the judge prompt; the key is encrypted at rest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,6 +135,11 @@ pub struct JudgeDef {
     /// `$SVAULT_OPENROUTER_KEY`" (an explicit, opt-in env override).
     #[serde(default)]
     pub api_key: String,
+    /// Named [`ProviderDef`] this judge draws its key and base URL from. When
+    /// set and the provider exists, it wins over the judge's own `api_key` /
+    /// `base_url` (see [`KeyringData::materialize_judge`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 fn default_model() -> String {
@@ -109,6 +168,7 @@ impl Default for JudgeDef {
             high_threshold: default_high_threshold(),
             criteria: String::new(),
             api_key: String::new(),
+            provider: None,
         }
     }
 }
@@ -125,6 +185,13 @@ pub struct KeyringData {
     pub daemon: DaemonConfig,
     #[serde(default)]
     pub backend: Backend,
+    /// Named AI providers (API accounts) that judges reference.
+    #[serde(default)]
+    pub providers: BTreeMap<String, ProviderDef>,
+    /// The provider pre-selected for new judges. Purely a UI default — judge
+    /// resolution always uses the judge's own explicit `provider` reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_provider: Option<String>,
     // Judge registry.
     #[serde(default)]
     pub judge_enabled: bool,
@@ -155,6 +222,8 @@ impl Default for KeyringData {
             lock: LockConfig::default(),
             daemon: DaemonConfig::default(),
             backend: Backend::default(),
+            providers: BTreeMap::new(),
+            default_provider: None,
             judge_enabled: false,
             default_judge: None,
             judges: BTreeMap::new(),
@@ -175,6 +244,37 @@ impl KeyringData {
         self.judges
             .get_key_value(name)
             .map(|(k, d)| (k.as_str(), d))
+    }
+
+    /// Resolve a judge's effective credentials: if it references a named
+    /// provider that exists, the provider's API key and base URL win over the
+    /// judge's own fields. Returns an owned def ready for
+    /// [`crate::core::judge::JudgeRuntime::from_def`].
+    pub fn materialize_judge(&self, def: &JudgeDef) -> JudgeDef {
+        let mut out = def.clone();
+        if let Some(p) = def.provider.as_deref().and_then(|n| self.providers.get(n)) {
+            // A disabled provider lends nothing — the judge stays on its own
+            // (usually empty) key and the gate falls back to static tier rules.
+            if !p.enabled {
+                return out;
+            }
+            if !p.api_key.is_empty() {
+                out.api_key = p.api_key.clone();
+            } else if p.kind == "local" {
+                // Local endpoints (Ollama/LM Studio) need no key, but the judge
+                // runtime treats "no key" as "judge off" — send a harmless
+                // placeholder bearer instead.
+                out.api_key = "local".to_string();
+            }
+            out.base_url = p.base_url.clone();
+        }
+        out
+    }
+
+    /// Whether a judge would actually have an API key at runtime — its own,
+    /// or its provider's.
+    pub fn judge_has_key(&self, def: &JudgeDef) -> bool {
+        !self.materialize_judge(def).api_key.is_empty()
     }
 }
 

@@ -197,7 +197,7 @@ mod imp {
     fn resolve_judge(policy: &policy::VaultPolicyData) -> Option<JudgeRuntime> {
         let kr = crate::core::keyring::open_from_session()?;
         let (_name, def) = kr.data.resolve_judge(policy.judge.judge.as_deref())?;
-        JudgeRuntime::from_def(def)
+        JudgeRuntime::from_def(&kr.data.materialize_judge(def))
     }
 
     // ── Request handling ──────────────────────────────────────────────────

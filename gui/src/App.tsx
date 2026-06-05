@@ -5,10 +5,12 @@ import { useSession } from "./store/session";
 import { AppShell } from "./components/shell";
 import SignIn from "./screens/SignIn";
 import Onboarding from "./screens/Onboarding";
+import Start, { useStartState } from "./screens/Start";
 import Vaults from "./screens/Vaults";
 import VaultConfig from "./screens/VaultConfig";
 import Secrets from "./screens/Secrets";
 import Judges from "./screens/Judges";
+import Providers from "./screens/Providers";
 import Mcp from "./screens/Mcp";
 import Pending from "./screens/Pending";
 import Audit from "./screens/Audit";
@@ -76,11 +78,13 @@ function Gate() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route index element={<Navigate to="/vaults" replace />} />
+        <Route index element={<IndexRedirect />} />
+        <Route path="/start" element={<Start />} />
         <Route path="/vaults" element={<Vaults />} />
         <Route path="/vaults/new" element={<VaultConfig />} />
         <Route path="/vaults/:leaf" element={<Secrets />} />
         <Route path="/vaults/:leaf/settings" element={<VaultConfig />} />
+        <Route path="/providers" element={<Providers />} />
         <Route path="/judges" element={<Judges />} />
         <Route path="/mcp" element={<Mcp />} />
         <Route path="/audit" element={<Audit />} />
@@ -91,4 +95,12 @@ function Gate() {
       </Route>
     </Routes>
   );
+}
+
+// Land on the getting-started checklist until the store has a vault with at
+// least one secret; from then on the vault list is home.
+function IndexRedirect() {
+  const start = useStartState();
+  if (!start) return null;
+  return <Navigate to={start.complete ? "/vaults" : "/start"} replace />;
 }
