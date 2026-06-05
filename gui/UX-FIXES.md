@@ -117,6 +117,24 @@ Functionality is considered correct across the board; this pass is purely UX.
   least one judge defined), with a divider before the session stats.
 - Sidebar nav order: AI providers → Guardian → Vaults → MCP → Audit → Pending.
 
+### Create vault wizard — WIP
+- Vault creation is a **three-step wizard** (Basics → Agent access →
+  Protection) with the same step indicator as the judge wizard; edit keeps the
+  flat form.
+- Every step opens with a plain-words explainer: what a vault is; that agents
+  come through the gate and every allowed request still runs the full check;
+  what the tiers mean (low released on request, medium judge-gated, high
+  strict — human-only with no active judge).
+- Better field copy: description explains the judge reads it with every
+  request (with an example); "Allow agent" became **"Who may ask"** with
+  per-mode explanations (No agents / Named only / Any agent); rate limit
+  explains the runaway-agent ceiling with examples; "Login method" became
+  **"Unlock with"**.
+- Assigned judge is a **dropdown of defined judges** (+ "default judge")
+  instead of a free-text name, in both wizard and edit.
+- Recovery-code dialog matches the approved onboarding style: red warning,
+  green code box, bold confirm checkbox, Done fully dimmed until checked.
+
 ### Audit: Activity view + config-change events — WIP
 - Provider/judge/MCP config changes now land in the audit trail: every GUI
   mutation (provider add/update/remove/enable/disable/default, judge
