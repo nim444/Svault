@@ -147,9 +147,9 @@ function DaemonBlock() {
   return (
     <div className="m-2 rounded-lg border border-border-subtle bg-surface p-3 text-xs">
       <div className="mb-2 space-y-1.5">
-        <StatusRow on={judgeActive} label="AI judges" />
-        <StatusRow on={daemonUp} label="Daemon" />
-        <StatusRow on={mcp.data ?? false} label="MCP" />
+        <StatusRow on={judgeActive} label="Guardian" />
+        <StatusRow on={daemonUp} label="Key service" />
+        <StatusRow on={mcp.data ?? false} label="Agent gateway" />
       </div>
       <div className="mb-2 border-t border-border-subtle" />
       <dl className="mb-3 space-y-1 text-content-muted">
