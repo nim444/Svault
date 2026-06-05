@@ -11,6 +11,7 @@ import {
   providerToggle,
 } from "../lib/api";
 import { Page } from "../components/shell";
+import { kindLabel, ProviderLogo } from "../components/provider-logo";
 import {
   Badge,
   Button,
@@ -98,9 +99,9 @@ export default function Providers() {
 
         {providers.data && list.length === 0 && (
           <div className="rounded-xl border border-dashed border-border-subtle p-10 text-center text-content-muted">
-            No providers yet. Add your OpenRouter, OpenAI, Anthropic, or local
-            (Ollama) account — judges then pick a provider instead of carrying
-            their own key.
+            No providers yet. Add your OpenRouter, OpenAI, Anthropic, Ollama,
+            or LM Studio account — judges then pick a provider instead of
+            carrying their own key.
           </div>
         )}
 
@@ -113,12 +114,13 @@ export default function Providers() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
+                  <ProviderLogo kind={p.kind} />
                   <span className="font-medium">{p.name}</span>
-                  <Badge tone="neutral">{p.kind}</Badge>
                   {p.is_default && <Badge tone="judge">default</Badge>}
-                  {!p.has_key && p.kind !== "local" && (
-                    <Badge tone="pending">no key</Badge>
-                  )}
+                  {!p.has_key &&
+                    !["ollama", "lmstudio", "local"].includes(p.kind) && (
+                      <Badge tone="pending">no key</Badge>
+                    )}
                   {!p.enabled && <Badge tone="deny">disabled</Badge>}
                 </div>
                 <Toggle
@@ -303,7 +305,7 @@ function EditorModal({
           >
             {kinds.map((k) => (
               <option key={k.kind} value={k.kind}>
-                {k.kind}
+                {kindLabel(k.kind)}
               </option>
             ))}
           </Select>

@@ -59,22 +59,29 @@ pub fn exists() -> bool {
     keyring_path().exists()
 }
 
-/// The provider kinds Svault knows how to talk to. All four speak the
+/// The provider kinds Svault knows how to talk to. All of them speak the
 /// OpenAI-compatible `/chat/completions` + `GET /models` surface the judge
 /// transport uses — a kind only decides the default base URL and auth headers.
-pub const PROVIDER_KINDS: [&str; 4] = ["openrouter", "openai", "anthropic", "local"];
+pub const PROVIDER_KINDS: [&str; 5] = ["openrouter", "openai", "anthropic", "ollama", "lmstudio"];
 
 /// The default base URL for a provider kind. Anthropic is its
-/// OpenAI-compatibility endpoint; `local` assumes an Ollama/LM Studio-style
-/// server.
+/// OpenAI-compatibility endpoint; Ollama and LM Studio are local servers on
+/// their default ports.
 pub fn provider_kind_base_url(kind: &str) -> Option<&'static str> {
     match kind {
         "openrouter" => Some("https://openrouter.ai/api/v1"),
         "openai" => Some("https://api.openai.com/v1"),
         "anthropic" => Some("https://api.anthropic.com/v1"),
-        "local" => Some("http://localhost:11434/v1"),
+        "ollama" => Some("http://localhost:11434/v1"),
+        "lmstudio" => Some("http://localhost:1234/v1"),
         _ => None,
     }
+}
+
+/// Local endpoints need no API key (the judge runtime gets a placeholder
+/// bearer instead). `local` is the pre-split name for Ollama, kept accepted.
+pub fn provider_kind_key_optional(kind: &str) -> bool {
+    matches!(kind, "ollama" | "lmstudio" | "local")
 }
 
 /// One named AI provider: an API account that judges draw their key and base
@@ -260,7 +267,7 @@ impl KeyringData {
             }
             if !p.api_key.is_empty() {
                 out.api_key = p.api_key.clone();
-            } else if p.kind == "local" {
+            } else if provider_kind_key_optional(&p.kind) {
                 // Local endpoints (Ollama/LM Studio) need no key, but the judge
                 // runtime treats "no key" as "judge off" — send a harmless
                 // placeholder bearer instead.

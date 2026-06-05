@@ -41,9 +41,9 @@ and [docs/gui.md](docs/gui.md).
   enforced server-side in `mcp::call_get_secret`; and
   `daemon::client::vault_status()` for the GUI's per-vault auto-lock countdown.
 - **Named AI providers in the keyring** (`ProviderDef`: kind / base URL / API
-  key / enabled), with four kinds: `openrouter`, `openai`, `anthropic` (via its
-  OpenAI-compatibility endpoint), and `local` (Ollama / LM Studio, no key
-  needed). A judge references a provider by name and draws its key and base URL
+  key / enabled), with five kinds: `openrouter`, `openai`, `anthropic` (via its
+  OpenAI-compatibility endpoint), `ollama`, and `lmstudio` (local servers, no
+  key needed). A judge references a provider by name and draws its key and base URL
   from it at runtime (`KeyringData::materialize_judge`); a judge's own
   `api_key` remains the fallback, and `$SVAULT_OPENROUTER_KEY` behind that.
   Disabling a provider lends no credentials (its judges fall back to static

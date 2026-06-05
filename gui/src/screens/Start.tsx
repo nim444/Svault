@@ -13,6 +13,7 @@ import {
   providerSave,
 } from "../lib/api";
 import { Page } from "../components/shell";
+import { kindLabel } from "../components/provider-logo";
 import { Badge, Button, Card, Field, Input, Select } from "../components/ui";
 
 // Getting-started home: the four setup steps, checked off as the store fills
@@ -82,7 +83,7 @@ export default function Start() {
           n={1}
           title="Add an AI provider"
           done={state.hasProvider}
-          summary="OpenRouter, OpenAI, Anthropic, or a local endpoint (Ollama) — it powers the AI judge that reviews agent requests."
+          summary="OpenRouter, OpenAI, Anthropic, Ollama, or LM Studio — it powers the AI judge that reviews agent requests."
         >
           <ProviderForm />
         </Step>
@@ -220,7 +221,7 @@ function ProviderForm() {
         <Select value={kind} onChange={(e) => setKind(e.target.value)}>
           {(kinds.data ?? []).map((k) => (
             <option key={k.kind} value={k.kind}>
-              {k.kind}
+              {kindLabel(k.kind)}
             </option>
           ))}
         </Select>
@@ -286,7 +287,7 @@ function JudgeForm() {
         <Select value={effective} onChange={(e) => setProvider(e.target.value)}>
           {enabled.map((p) => (
             <option key={p.name} value={p.name}>
-              {p.name} ({p.kind})
+              {p.name} ({kindLabel(p.kind)})
             </option>
           ))}
         </Select>

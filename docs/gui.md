@@ -112,10 +112,11 @@ incomplete (the optional judge doesn't count); it disappears once done.
 
 ### AI providers (own sidebar section)
 
-Providers are managed on a dedicated screen, not inside Judges & Policy. Four
+Providers are managed on a dedicated screen, not inside Judges & Policy. Five
 **kinds** are supported — `openrouter`, `openai`, `anthropic` (via its
-OpenAI-compatibility endpoint), and `local` (Ollama / LM Studio; no API key
-needed). A kind only decides the default base URL and auth headers: every kind
+OpenAI-compatibility endpoint), `ollama`, and `lmstudio` (local servers; no API
+key needed). Each kind shows its brand mark in the list (simple-icons; OpenAI's
+mark inlined). A kind only decides the default base URL and auth headers: every kind
 speaks the same OpenAI-style `/chat/completions` judge transport and exposes
 `GET /models`, so there is one code path.
 

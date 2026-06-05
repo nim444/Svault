@@ -16,6 +16,7 @@ import {
   providerModels,
 } from "../lib/api";
 import { Page } from "../components/shell";
+import { kindLabel } from "../components/provider-logo";
 import {
   Badge,
   Button,
@@ -266,7 +267,7 @@ function JudgesTab() {
                 <option value="">own key</option>
                 {enabledProviders.map((p) => (
                   <option key={p.name} value={p.name}>
-                    {p.name} ({p.kind})
+                    {p.name} ({kindLabel(p.kind)})
                   </option>
                 ))}
               </Select>

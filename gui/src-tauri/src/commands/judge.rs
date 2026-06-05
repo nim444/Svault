@@ -306,7 +306,7 @@ pub fn provider_kinds() -> Vec<ProviderKind> {
             base_url: keyring::provider_kind_base_url(k)
                 .unwrap_or_default()
                 .to_string(),
-            key_optional: *k == "local",
+            key_optional: keyring::provider_kind_key_optional(k),
         })
         .collect()
 }
@@ -366,7 +366,7 @@ pub fn provider_save(form: ProviderFormInput) -> CmdResult<()> {
     if !form.api_key.trim().is_empty() {
         def.api_key = form.api_key.trim().to_string();
     }
-    if def.api_key.is_empty() && kind != "local" {
+    if def.api_key.is_empty() && !keyring::provider_kind_key_optional(&kind) {
         return Err("an API key is required for this provider kind".into());
     }
     let updating = kr.data.providers.contains_key(&name);
