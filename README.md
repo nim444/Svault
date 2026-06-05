@@ -333,7 +333,7 @@ flowchart TD
 | **Conditional access + escalation** | Shipped | Time-window / required-caller conditions in the encrypted policy; repeated denials seal a secret and escalate to a human (`svault pending` / `approve`, TUI `A`) — agents never self-clear |
 | **Independent security review** | Shipped | Three independent external-model reviews of the full 0.9.9 surface (no Critical/High); the actionable findings fixed before 1.0 (`docs/security-review/`) |
 | **1.0.0 — stable** | Shipped | First stable release: the agent-ready layer consolidated and reviewed, agents on the MCP door, the store at `~/.svault`. Published on [crates.io](https://crates.io/crates/svault-ai) (as `svault-ai`; the crate is `svault-cli` from 2.0.0). Install channels (script, Homebrew, Docker) follow post-1.0 |
-| **Desktop GUI (2.0.0)** | In progress | Cross-platform Tauri vault manager + system tray — all 12 handoff screens built over the same core/daemon, daemon auto-start, one install delivering GUI + CLI + TUI + MCP (`gui-app/`, [docs/gui.md](docs/gui.md)). Develops on the 1.1.0 line; ships publicly as 2.0.0 |
+| **Desktop GUI (2.0.0)** | In progress | Cross-platform Tauri vault manager + system tray — all 12 handoff screens built over the same core/daemon, daemon auto-start, one install delivering GUI + CLI + TUI + MCP (`gui/`, [docs/gui.md](docs/gui.md)). Develops on the 1.1.0 line; ships publicly as 2.0.0 |
 
 Detail for each milestone lives in the [changelog](CHANGELOG.md) and the [full roadmap](docs/roadmap.md).
 

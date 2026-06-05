@@ -22,7 +22,7 @@ and [docs/gui.md](docs/gui.md).
   crate stays `svault-gui` (never published; ships as Tauri bundles).
 
 ### Added
-- **Desktop GUI (Tauri + React)** in `gui-app/` — a cross-platform vault manager
+- **Desktop GUI (Tauri + React)** in `gui/` — a cross-platform vault manager
   that drives the same `svault-cli` core and daemon as the CLI/TUI/MCP (no
   reimplemented crypto, policy, or judge). All 12 design-handoff screens are
   built: sign-in, first-run onboarding (with a splash), vault list/config,
@@ -42,9 +42,10 @@ and [docs/gui.md](docs/gui.md).
   `daemon::client::vault_status()` for the GUI's per-vault auto-lock countdown.
 
 ### Notes
-- The GUI is delivered as a separate Tauri app crate (`gui-app/`); `tauri` is
-  **not** a dependency of the published `svault-cli` library, so
-  `cargo install svault-cli` stays lean. The `src/gui/` module remains a stub.
+- The GUI is delivered as a separate Tauri app crate (`gui/`, formerly
+  `gui-app/`); `tauri` is **not** a dependency of the published `svault-cli`
+  library, so `cargo install svault-cli` stays lean. The old `src/gui/` stub
+  module was removed from the library.
 - The GUI frontend uses **Bun** as its package manager / script runner
   (`bun install`, `bun run tauri dev`); `package-lock.json` was replaced by
   `bun.lock`.

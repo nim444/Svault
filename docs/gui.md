@@ -17,7 +17,7 @@ app renders correctly offline.
 ## Layout
 
 ```
-gui-app/                     # the Tauri desktop app (not published to crates.io)
+gui/                     # the Tauri desktop app (not published to crates.io)
   src/                       # React + TypeScript frontend (Vite + Tailwind v4)
     screens/                 # one file per screen (01–12)
     components/              # app shell + UI primitives
@@ -39,7 +39,7 @@ at `~/.svault`, exactly like `cli::run`) and stamps the audit source as `gui`.
 ## Run it (development)
 
 ```sh
-cd gui-app
+cd gui
 bun install          # first time only
 bun run tauri dev    # launches the app against the live frontend
 ```
@@ -61,10 +61,10 @@ daemon client speak the same socket protocol.
 
 ```sh
 # Frontend
-cd gui-app && bun run build          # tsc + vite
+cd gui && bun run build          # tsc + vite
 
 # Backend
-cd gui-app/src-tauri
+cd gui/src-tauri
 cargo build
 cargo fmt --all --check
 cargo clippy
@@ -126,10 +126,10 @@ To wire the sidecar before `bun run tauri build`:
 
    ```sh
    scripts/bundle-sidecar.sh        # builds svault, copies to
-                                    # gui-app/src-tauri/binaries/svault-<triple>
+                                    # gui/src-tauri/binaries/svault-<triple>
    ```
 
-2. Add to `gui-app/src-tauri/tauri.conf.json` under `bundle`:
+2. Add to `gui/src-tauri/tauri.conf.json` under `bundle`:
 
    ```json
    "externalBin": ["binaries/svault"]

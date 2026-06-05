@@ -23,7 +23,7 @@ For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 | Conditional access + escalation (0.9.9) | Shipped | Time-window / caller conditions in the encrypted policy; repeated denials seal a secret and escalate to a human (`svault pending` / `approve`, TUI `A`); agents never self-clear |
 | Independent security review | Shipped | Three independent external-model reviews of the full 0.9.9 surface (no Critical/High); the actionable findings fixed before 1.0 (`docs/security-review/`) |
 | Stable release (1.0.0) | In review | The agent-ready layer consolidated, independently reviewed, and stabilized — the first stable release. Distribution channels (install script, Homebrew, Docker) follow post-1.0 |
-| Desktop GUI (2.0.0) | In progress | Tauri vault manager + system tray — all 12 handoff screens built over the existing core/daemon (`gui-app/`, `docs/gui.md`) |
+| Desktop GUI (2.0.0) | In progress | Tauri vault manager + system tray — all 12 handoff screens built over the existing core/daemon (`gui/`, `docs/gui.md`) |
 
 The agent-ready surface is complete and independently reviewed. **1.0.0 is the
 consolidation of that work into the first stable release** — it is in a final
@@ -236,7 +236,7 @@ owner-only DACL, a tamper-evident audit sink, and tunable Argon2id parameters.
 
 ### 2.0.0 — Desktop GUI (Tauri)
 
-A cross-platform Tauri app in `gui-app/` that drives the **same** `core`/`daemon`
+A cross-platform Tauri app in `gui/` that drives the **same** `core`/`daemon`
 as the CLI/TUI/MCP (no reimplemented crypto or policy). All 12 screens from the
 design handoff are built: sign-in/onboarding, vault list, vault config, secrets +
 classification, judges & policy (with a live judge test), MCP wiring, audit

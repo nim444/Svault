@@ -101,7 +101,7 @@ calls into `core`.
 
 ```
 src/
-  lib.rs            pub mod core; daemon; tui; cli; mcp; gui;
+  lib.rs            pub mod core; daemon; tui; cli; mcp;
   main.rs           fn main() { svault_cli::cli::run() }
   core/             frontend-agnostic engine — no dependency on any frontend
     crypto, secfile, passphrase, config, meta, master, recovery, keyring,
@@ -110,19 +110,19 @@ src/
   tui/              interactive Ratatui terminal UI (mod, ui, theme)
   cli/              the `svault` command-line frontend; exposes cli::run()
   mcp/              the local MCP server (`svault mcp`) — gated access for AI agents
-  gui/              stub (the desktop GUI lives in the gui-app/ crate, see below)
+gui/                the desktop GUI — a separate Tauri app crate (see below)
 ```
 
-The **desktop GUI** (roadmap 2.0.0) is a separate Tauri app crate at `gui-app/`
-rather than a module under `src/`: `gui-app/src-tauri` path-depends on `svault-cli`
+The **desktop GUI** (roadmap 2.0.0) is a separate Tauri app crate at `gui/`
+rather than a module under `src/`: `gui/src-tauri` path-depends on `svault-cli`
 and exposes thin Tauri commands over the same `core` + `daemon`, so `tauri` never
 becomes a dependency of the published library. It is still a `core`-driven
-frontend in every sense — it just compiles as its own binary. The `src/gui/`
-module remains a stub. See [docs/gui.md](gui.md).
+frontend in every sense — it just compiles as its own binary. See
+[docs/gui.md](gui.md).
 
 Dependency direction is one-way: `core` depends on nothing above it; `daemon`,
 `tui`, and `cli` depend on `core` (and `cli`/`tui` reach the daemon client); the
-`gui-app/` crate depends on `core` + `daemon` the same way. Adding a frontend
+`gui/` crate depends on `core` + `daemon` the same way. Adding a frontend
 means adding a sibling that consumes `core` — no churn in the existing layers. Note that the `core` module name shadows the std `core` crate; the
 source uses `std` throughout, so reach the std crate with `::core` if ever needed.
 
