@@ -111,6 +111,12 @@ Functionality is considered correct across the board; this pass is purely UX.
      criteria with an example. Creating the first judge flips the global judge
      switch on.
 
+### Sidebar status block — WIP
+- The "Daemon up/down" header became three green/red indicator rows: **Daemon**
+  (socket up), **MCP** (door switch), **AI judges** (global switch on + at
+  least one judge defined), with a divider before the session stats.
+- Sidebar nav order: AI providers → Guardian → Vaults → MCP → Audit → Pending.
+
 ### Audit: Activity view + config-change events — WIP
 - Provider/judge/MCP config changes now land in the audit trail: every GUI
   mutation (provider add/update/remove/enable/disable/default, judge
