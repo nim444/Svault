@@ -143,6 +143,18 @@ mod imp {
             _ => Vec::new(),
         }
     }
+
+    /// Full per-vault status (name + idle/hard auto-lock countdowns) from the
+    /// daemon. Empty when no daemon is up. Used by the GUI's daemon status block.
+    pub fn vault_status() -> Vec<crate::daemon::VaultStatus> {
+        if !available() {
+            return Vec::new();
+        }
+        match daemon::send(&base(), &Request::Status) {
+            Ok(Response::Status { vaults }) => vaults,
+            _ => Vec::new(),
+        }
+    }
 }
 
 #[cfg(not(unix))]
@@ -174,6 +186,9 @@ mod imp {
     pub fn unlocked_vaults() -> Vec<String> {
         Vec::new()
     }
+    pub fn vault_status() -> Vec<crate::daemon::VaultStatus> {
+        Vec::new()
+    }
 }
 
-pub use imp::{get, get_gated, lock, lock_all, unlock_with_key, unlocked_vaults};
+pub use imp::{get, get_gated, lock, lock_all, unlock_with_key, unlocked_vaults, vault_status};

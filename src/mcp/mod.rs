@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 
 use crate::core::crypto::VaultKey;
 use crate::core::vault::{list_vault_dirs, Vault};
-use crate::core::{gate, session, usage};
+use crate::core::{gate, keyring, session, usage};
 use crate::daemon::client::{self, GatedOutcome};
 
 /// MCP protocol revision we implement. Stable and broadly supported by clients.
@@ -190,9 +190,24 @@ fn call_list_vaults() -> Result<Value, (i64, String)> {
     Ok(tool_text(&text, false))
 }
 
+/// Whether the local MCP door is enabled (a human-controlled switch in the
+/// encrypted keyring). Unreadable/locked/absent keyring defaults to enabled, so
+/// behaviour is unchanged unless a human explicitly turns the door off.
+fn mcp_enabled() -> bool {
+    keyring::open_from_session()
+        .map(|kr| kr.data.mcp_enabled)
+        .unwrap_or(true)
+}
+
 /// `svault_get_secret` — the gated agent path. Daemon first (the enforced choke
 /// point), then the in-process gate against the session key; never prompts.
 fn call_get_secret(args: &Value) -> Result<Value, (i64, String)> {
+    // Honour the human's MCP enable switch before any policy work. Generic
+    // message — an agent can't tell "door off" from a policy denial, and only a
+    // human can flip it back on.
+    if !mcp_enabled() {
+        return Ok(tool_text("request not available", true));
+    }
     let name = required_str(args, "name")?;
     let scope = required_str(args, "scope")?;
     let reason = required_str(args, "reason")?;

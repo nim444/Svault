@@ -50,6 +50,14 @@ A one-line installer is planned (the hosting URL is not finalized yet):
 curl -fsSL https://<install-host>/install.sh | sh
 ```
 
+## Desktop GUI (coming in 2.0.0)
+
+A cross-platform desktop app (Tauri) is in development on the 1.1.0 line and will
+ship as **2.0.0**. The plan is **one installer** that delivers the GUI plus the
+`svault` CLI, TUI, and MCP server (the binary is bundled as a sidecar, with an
+in-app *Install CLI to PATH*). Until then, run it from source — see
+[docs/gui.md](gui.md). The GUI shares the same `~/.svault` store as the CLI.
+
 ## Requirements
 
 - **Rust** 1.74 or newer (only needed to build from source / `cargo install`).

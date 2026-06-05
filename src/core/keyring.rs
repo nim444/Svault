@@ -132,6 +132,16 @@ pub struct KeyringData {
     pub default_judge: Option<String>,
     #[serde(default)]
     pub judges: BTreeMap<String, JudgeDef>,
+    /// Master enable switch for the local MCP server (`svault mcp`). When false,
+    /// the server still starts but refuses every tool call with a generic
+    /// "not available" — a human-controlled door that an agent cannot reopen.
+    /// Defaults to true so existing keyrings keep serving agents as before.
+    #[serde(default = "default_mcp_enabled")]
+    pub mcp_enabled: bool,
+}
+
+fn default_mcp_enabled() -> bool {
+    true
 }
 
 fn default_keyring_version() -> u32 {
@@ -148,6 +158,7 @@ impl Default for KeyringData {
             judge_enabled: false,
             default_judge: None,
             judges: BTreeMap::new(),
+            mcp_enabled: true,
         }
     }
 }

@@ -12,14 +12,16 @@ candidate** and how the project reached it. Shipped versions are detailed in
 
 > **Version policy.** The project stayed on the **0.9.x** line until the
 > agent-ready surface was built and independently reviewed. **1.0.0 is the first
-> stable, reviewed release** — the consolidation of that work, now in a final
-> manual QA pass before tagging.
+> stable, reviewed release** (tagged and published on crates.io). The desktop GUI
+> now develops on the **1.1.0** line, which is not released on its own — it ships
+> publicly as **2.0.0**.
 
-## Current state (1.0.0 release candidate)
+## Current state (1.0.0 released; 1.1.0 GUI line in progress)
 
 The agent-ready surface is complete: every layer below is implemented, tested, and
-independently reviewed. 1.0.0 consolidates this work into the first stable release
-rather than adding scope.
+independently reviewed. 1.0.0 consolidated this work into the first stable release
+(tagged and published) rather than adding scope. Active development is now the
+desktop GUI on the 1.1.0 line (see [Beyond 1.0.0](#beyond-100)).
 
 **Encrypted local vaults.** AES-256-GCM secret storage with Argon2id key
 derivation. Secret values are zeroized from memory on drop (`ZeroizeOnDrop` on
@@ -164,9 +166,10 @@ rekey` covers it. `svault keyring rekey` removed. One secret now opens everythin
 surface, or on-disk format change. `src/` became a **library crate** (`lib.rs`)
 with a thin `svault` bin over `cli::run()`, split into a frontend-agnostic
 **`core`** (crypto, vault, policy, judge, keyring, master, recovery, …) and the
-frontends that drive it: `daemon/`, `tui/`, `cli/`, plus `mcp/` and `gui/`
-placeholders. Lets the planned MCP and GUI surfaces reuse `core` without touching
-the CLI or TUI. (The YubiKey keyslot that previously held the 0.9.6 slot is
+frontends that drive it: `daemon/`, `tui/`, `cli/`, plus `mcp/` (then a
+placeholder, now the shipped MCP server) and a `gui/` slot (the GUI later landed
+as the separate `gui-app/` Tauri crate). Lets each new surface reuse `core`
+without touching the CLI or TUI. (The YubiKey keyslot that previously held the 0.9.6 slot is
 postponed to post-1.0 — see [Deferred / not planned](#deferred--not-planned).)
 
 **Agent surface — MCP (0.9.7, shipped).** `svault mcp` runs a local MCP server
@@ -279,19 +282,26 @@ distribution work.
 
 These are deliberately sequenced after a stable, audited CLI.
 
-### 2.0.0 — Desktop GUI (Tauri)
+### 2.0.0 — Desktop GUI (Tauri) — in progress
 
 `svault-gui`, a cross-platform desktop app (macOS, Linux, Windows) built with
-Tauri — lightweight, single binary, offline, no runtime deps. Planned surface:
+Tauri — React + TypeScript over the same `svault-ai` core and daemon (no
+reimplemented crypto, policy, or judge). It lives in the `gui-app/` crate so
+`tauri` never becomes a dependency of the published library. Develops on the
+1.1.0 line; ships as 2.0.0. All 12 design-handoff screens are built:
 
-- Vault dashboard (list, lock/unlock state, last accessed).
-- Lock/unlock panel and visual auto-lock settings (idle timeout, hard-max cap).
-- Session monitor with an auto-lock countdown.
-- Secret management (names only, never values; add/remove).
-- Policy viewer (what a caller can access, from the unlocked vault's encrypted
-  policy) and an audit-log viewer.
-- System-tray status, notifications, and a settings UI (daemon socket path, log
-  level).
+- Sign-in / out and first-run onboarding (splash, terms, master passphrase,
+  one-time recovery code, optional YubiKey).
+- Vault dashboard (list, lock/unlock state, last activity) and vault config.
+- Secret management (names + classification; values only on explicit reveal).
+- Judges & policy (registry + live test bench, caller access viewer), MCP wiring,
+  audit timeline, pending approvals, backup & recovery, settings.
+- System-tray popover with daemon status and an auto-lock countdown.
+- Daemon auto-start on launch; one install delivers GUI + CLI + TUI + MCP.
+
+Remaining before tagging 2.0.0: release bundling across the four targets, the
+sidecar wiring, tray icon-state assets, design/UX polish, and a manual QA pass.
+See [docs/gui.md](docs/gui.md).
 
 ## Deferred / not planned
 

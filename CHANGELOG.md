@@ -5,7 +5,39 @@ All notable changes to Svault are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - UNRELEASED (release candidate)
+## [1.1.0] - UNRELEASED (development line)
+
+The desktop GUI development line. **1.1.0 is not released or tagged on its own** —
+it is the in-progress line carrying the GUI plus a few small enabling core
+additions; the GUI ships to the public as **2.0.0**. See [roadmap](docs/roadmap.md)
+and [docs/gui.md](docs/gui.md).
+
+### Added
+- **Desktop GUI (Tauri + React)** in `gui-app/` — a cross-platform vault manager
+  that drives the same `svault-ai` core and daemon as the CLI/TUI/MCP (no
+  reimplemented crypto, policy, or judge). All 12 design-handoff screens are
+  built: sign-in, first-run onboarding (with a splash), vault list/config,
+  secrets, judges & policy, MCP wiring, audit, pending approvals, backup &
+  recovery, settings, and a tray popover. Typography is **IBM Plex Sans** (UI) +
+  **IBM Plex Mono** (codes/secrets/paths/logs), bundled offline.
+- **Daemon auto-start with the GUI.** On supported platforms (macOS, Linux) the
+  app starts the daemon on launch if it isn't already running, so Svault behaves
+  like a running service. Windows has no daemon (the 0600 session fallback). Keys
+  still live only in the daemon's memory and only after a human unlock.
+- `daemon::start_quiet_with_exe(path)` — start the daemon from an explicit
+  `svault` binary instead of the current executable, so the GUI launches the
+  bundled `svault` sidecar (its own executable can't run the daemon).
+- Core additions for the GUI (small, backward-compatible): a keyring
+  `mcp_enabled` flag (default `true`), the human-controlled MCP door switch
+  enforced server-side in `mcp::call_get_secret`; and
+  `daemon::client::vault_status()` for the GUI's per-vault auto-lock countdown.
+
+### Notes
+- The GUI is delivered as a separate Tauri app crate (`gui-app/`); `tauri` is
+  **not** a dependency of the published `svault-ai` library, so
+  `cargo install svault-ai` stays lean. The `src/gui/` module remains a stub.
+
+## [1.0.0] - 2026-06-03
 
 Svault's first **stable** release. The agent-ready secret layer is feature-complete
 and independently security-reviewed; 1.0.0 is the consolidation, not new scope.

@@ -42,6 +42,7 @@ flowchart LR
 |---|---|
 | [Installation](docs/installation.md) | crates.io, from source, supported platforms |
 | [Interactive mode (TUI)](docs/tui.md) | The full-screen dashboard and keybindings |
+| [Desktop GUI (Tauri)](docs/gui.md) | The 2.0.0 desktop app — all 12 screens, daemon auto-start, one install for GUI + CLI + TUI + MCP (in development) |
 | [Command reference](docs/commands.md) | Every subcommand and flag |
 | [End-to-end walkthrough](docs/walkthrough.md) | Full flow: create → classify → judge → gated `get`, with real model output |
 | [Policy engine](docs/policy-engine.md) | The agent path (via the MCP server), scopes, tiers, audit |
@@ -331,8 +332,8 @@ flowchart TD
 | **Hardware-key unlock + hardening** | Shipped | YubiKey (FIDO2 hmac-secret) unlock — an alternative keyslot over the master key (passphrase or touch, not 2FA); a 6-hour re-auth cap on every unlock path; first-run onboarding + an app-level TUI sign-in / logout; storage local-only |
 | **Conditional access + escalation** | Shipped | Time-window / required-caller conditions in the encrypted policy; repeated denials seal a secret and escalate to a human (`svault pending` / `approve`, TUI `A`) — agents never self-clear |
 | **Independent security review** | Shipped | Three independent external-model reviews of the full 0.9.9 surface (no Critical/High); the actionable findings fixed before 1.0 (`docs/security-review/`) |
-| **1.0.0 — stable** | In review | First stable release: the agent-ready layer consolidated and reviewed, agents on the MCP door, the store at `~/.svault`. Install channels (script, Homebrew, Docker) follow post-1.0 |
-| **Desktop GUI** | Planned | Desktop GUI (Tauri) + system tray |
+| **1.0.0 — stable** | Shipped | First stable release: the agent-ready layer consolidated and reviewed, agents on the MCP door, the store at `~/.svault`. Published on [crates.io](https://crates.io/crates/svault-ai). Install channels (script, Homebrew, Docker) follow post-1.0 |
+| **Desktop GUI (2.0.0)** | In progress | Cross-platform Tauri vault manager + system tray — all 12 handoff screens built over the same core/daemon, daemon auto-start, one install delivering GUI + CLI + TUI + MCP (`gui-app/`, [docs/gui.md](docs/gui.md)). Develops on the 1.1.0 line; ships publicly as 2.0.0 |
 
 Detail for each milestone lives in the [changelog](CHANGELOG.md) and the [full roadmap](docs/roadmap.md).
 

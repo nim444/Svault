@@ -1,8 +1,7 @@
-//! GUI frontend — placeholder.
+//! GUI frontend — stub.
 //!
-//! Intended to provide a graphical front end for managing vaults, secrets,
-//! policy, and judge configuration. Like the other frontends it will drive
-//! [`crate::core`] and the [`crate::daemon`] client rather than reimplementing
-//! any secret-handling logic.
-//
-// TODO(post-0.9.6): implement the GUI frontend.
+//! The desktop GUI is **not** implemented in this module. It is a separate Tauri
+//! app crate at `gui-app/` (crate `svault-gui`) that path-depends on `svault-ai`
+//! and drives [`crate::core`] + the [`crate::daemon`] client over thin Tauri
+//! commands — so `tauri` never becomes a dependency of the published library.
+//! See `docs/gui.md`. This module is kept only as the historical frontend slot.
