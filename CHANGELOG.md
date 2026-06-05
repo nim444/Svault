@@ -56,6 +56,16 @@ and [docs/gui.md](docs/gui.md).
   lists only enabled providers and gains a **live model picker** fed by the
   provider's `GET /models` endpoint (`judge::list_models`), with free text as
   fallback.
+- **Guardian screen (GUI)** — the judges screen is renamed **Guardian** and
+  rebuilt: judges as a responsive card grid (provider logo, model,
+  allow/high summary; Test / Set default / Edit / confirm-gated Remove), and
+  add/edit as a **three-step wizard** in a modal (provider → live model list
+  with a per-kind recommended pick → thresholds with a plain-words explainer +
+  optional criteria). With no provider configured the wizard explains that the
+  judge cannot reason — static policies only, medium/high stay human-only —
+  and links to the AI providers screen. The always-visible live-test panel is
+  now a per-judge Test modal. Sidebar reordered: AI providers → Guardian →
+  Vaults.
 - **Audit activity view** — the GUI Audit screen now has two sub-tabs: gate
   decisions (as before) and an **Activity** timeline merging all vault usage
   logs plus the global `.svault/usage.log`. Provider, judge, and MCP-door

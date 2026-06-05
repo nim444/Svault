@@ -12,7 +12,7 @@ import {
   Settings,
   Vault,
 } from "lucide-react";
-import { lockAll, pending } from "../lib/api";
+import { keyringState, lockAll, mcpEnabled, pending } from "../lib/api";
 import { useSessionStatus } from "../lib/hooks";
 import { countdownTo, formatSecs } from "../lib/time";
 import { useSession } from "../store/session";
@@ -27,9 +27,9 @@ interface NavItem {
 }
 
 const primaryNav: NavItem[] = [
-  { to: "/vaults", label: "Vaults", icon: Vault },
   { to: "/providers", label: "AI providers", icon: Bot },
-  { to: "/judges", label: "Judges & Policy", icon: Scale },
+  { to: "/judges", label: "Guardian", icon: Scale },
+  { to: "/vaults", label: "Vaults", icon: Vault },
   { to: "/mcp", label: "MCP", icon: Plug },
   { to: "/audit", label: "Audit", icon: ScrollText },
   { to: "/pending", label: "Pending", icon: Hourglass },
@@ -124,6 +124,21 @@ function DaemonBlock() {
   const unlockedCount = data?.unlocked_vaults.length ?? 0;
   const daemonUp = data?.daemon_up ?? false;
 
+  // Service indicators: the MCP door switch and whether the AI judge is
+  // actually active (global switch on + at least one judge defined).
+  const mcp = useQuery({
+    queryKey: ["mcp-enabled"],
+    queryFn: mcpEnabled,
+    refetchInterval: 5000,
+  });
+  const ks = useQuery({
+    queryKey: ["keyring-state"],
+    queryFn: keyringState,
+    refetchInterval: 5000,
+  });
+  const judgeActive =
+    (ks.data?.judge_enabled ?? false) && (ks.data?.judge_count ?? 0) > 0;
+
   async function onLockAll() {
     await lockAll();
     qc.invalidateQueries();
@@ -131,12 +146,12 @@ function DaemonBlock() {
 
   return (
     <div className="m-2 rounded-lg border border-border-subtle bg-surface p-3 text-xs">
-      <div className="mb-2 flex items-center gap-2">
-        <StateDot tone={daemonUp ? "allow" : "deny"} />
-        <span className="font-medium text-content">
-          Daemon {daemonUp ? "up" : "down"}
-        </span>
+      <div className="mb-2 space-y-1.5">
+        <StatusRow on={judgeActive} label="Guardian" />
+        <StatusRow on={daemonUp} label="Key service" />
+        <StatusRow on={mcp.data ?? false} label="Agent gateway" />
       </div>
+      <div className="mb-2 border-t border-border-subtle" />
       <dl className="mb-3 space-y-1 text-content-muted">
         <Row k="Keys in memory" v={unlockedCount > 0 ? "yes" : "no"} />
         <Row k="Vaults unlocked" v={String(unlockedCount)} />
@@ -158,6 +173,15 @@ function DaemonBlock() {
           Sign out
         </Button>
       </div>
+    </div>
+  );
+}
+
+function StatusRow({ on, label }: { on: boolean; label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <StateDot tone={on ? "allow" : "deny"} />
+      <span className="font-medium text-content">{label}</span>
     </div>
   );
 }

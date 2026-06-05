@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   callerAccess,
+  JudgeInfo,
   judgeList,
   judgeRemove,
   judgeSave,
@@ -16,13 +18,15 @@ import {
   providerModels,
 } from "../lib/api";
 import { Page } from "../components/shell";
-import { kindLabel } from "../components/provider-logo";
+import { kindLabel, ProviderLogo } from "../components/provider-logo";
 import {
   Badge,
   Button,
   Card,
+  ConfirmDialog,
   Field,
   Input,
+  Modal,
   Select,
   SubTabs,
   Textarea,
@@ -44,7 +48,7 @@ export default function Judges() {
 
   return (
     <Page
-      title="Judges & Policy"
+      title="Guardian"
       actions={
         <div className="flex items-center gap-3">
           <span className="text-sm text-content-muted">AI judge</span>
@@ -59,7 +63,7 @@ export default function Judges() {
         value={tab}
         onChange={setTab}
         tabs={[
-          { value: "judges", label: "Judges & test" },
+          { value: "judges", label: "Judges" },
           { value: "policy", label: "Policy surface" },
           { value: "caller", label: "Caller access" },
         ]}
@@ -71,243 +75,430 @@ export default function Judges() {
   );
 }
 
-const blankJudge = {
-  name: "",
-  model: "google/gemini-2.5-flash",
-  allow_threshold: 60,
-  high_threshold: 80,
-  criteria: "",
-  api_key: "",
-  provider: "",
-};
-
 function JudgesTab() {
   const qc = useQueryClient();
   const judges = useQuery({ queryKey: ["judges"], queryFn: judgeList });
   const providers = useQuery({ queryKey: ["providers"], queryFn: providerList });
-  const [editor, setEditor] = useState({ ...blankJudge });
-  const [error, setError] = useState<string | null>(null);
+  const [wizard, setWizard] = useState<JudgeInfo | null | "new">(null);
+  const [toDelete, setToDelete] = useState<JudgeInfo | null>(null);
+  const [testing, setTesting] = useState<JudgeInfo | null>(null);
 
-  // Only enabled providers are selectable; pre-select the default one on a
-  // fresh form so the common path is pick-a-model-and-save.
-  const enabledProviders = (providers.data ?? []).filter((p) => p.enabled);
-  useEffect(() => {
-    if (editor.name === "" && editor.provider === "") {
-      const def = enabledProviders.find((p) => p.is_default);
-      if (def) setEditor((e) => ({ ...e, provider: def.name }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providers.data]);
-
-  // Live model list for the selected provider — datalist suggestions with
-  // free-text fallback if the fetch fails.
-  const models = useQuery({
-    queryKey: ["provider-models", editor.provider],
-    queryFn: () => providerModels(editor.provider),
-    enabled: editor.provider !== "",
-    staleTime: 5 * 60 * 1000,
-    retry: false,
-  });
-
-  const saveM = useMutation({
-    mutationFn: () =>
-      judgeSave({
-        ...editor,
-        api_key: editor.api_key || null,
-        provider: editor.provider || null,
-      }),
-    onSuccess: () => {
-      setEditor({ ...blankJudge });
-      setError(null);
-      qc.invalidateQueries({ queryKey: ["judges"] });
-      qc.invalidateQueries({ queryKey: ["keyring-state"] });
-      qc.invalidateQueries({ queryKey: ["providers"] });
-    },
-    onError: (e) => setError(String(e)),
-  });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["judges"] });
+    qc.invalidateQueries({ queryKey: ["keyring-state"] });
+    qc.invalidateQueries({ queryKey: ["providers"] });
+  };
   const removeM = useMutation({
     mutationFn: judgeRemove,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["judges"] }),
+    onSuccess: () => {
+      setToDelete(null);
+      refresh();
+    },
   });
-  const defaultM = useMutation({
-    mutationFn: judgeSetDefault,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["judges"] }),
-  });
+  const defaultM = useMutation({ mutationFn: judgeSetDefault, onSuccess: refresh });
+
+  const providerKindOf = (name: string | null) =>
+    (providers.data ?? []).find((p) => p.name === name)?.kind;
 
   return (
-    <div className="grid grid-cols-2 gap-6">
-      <div className="flex flex-col gap-4">
-        <Card className="p-4">
-          <h3 className="mb-3 text-sm font-semibold">Registry</h3>
-          {(judges.data ?? []).length === 0 && (
-            <p className="text-sm text-content-muted">No judges yet. Add one →</p>
-          )}
-          <div className="flex flex-col gap-2">
-            {(judges.data ?? []).map((j) => (
-              <div
-                key={j.name}
-                className="flex items-center justify-between rounded-lg border border-border-subtle p-2.5 text-sm"
-              >
-                <div>
-                  <div className="flex items-center gap-2 font-medium">
-                    {j.is_default && <span title="Default">★</span>}
-                    {j.name}
-                    {!j.has_key && <Badge tone="pending">no key</Badge>}
-                  </div>
-                  <div className="text-xs text-content-muted">
-                    {j.model}
-                    {j.provider && <> · via {j.provider}</>}
-                  </div>
-                </div>
-                <div className="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    className="px-2 py-1 text-xs"
-                    onClick={() =>
-                      setEditor({
-                        name: j.name,
-                        model: j.model,
-                        allow_threshold: j.allow_threshold,
-                        high_threshold: j.high_threshold,
-                        criteria: j.criteria,
-                        api_key: "",
-                        provider: j.provider ?? "",
-                      })
-                    }
-                  >
-                    Edit
-                  </Button>
-                  {!j.is_default && (
-                    <Button
-                      variant="ghost"
-                      className="px-2 py-1 text-xs"
-                      onClick={() => defaultM.mutate(j.name)}
-                    >
-                      Set ★
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    className="px-2 py-1 text-xs text-state-deny"
-                    onClick={() => removeM.mutate(j.name)}
-                  >
-                    ✕
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-end">
+        <Button onClick={() => setWizard("new")}>+ Add judge</Button>
+      </div>
 
-        <Card className="p-4">
-          <h3 className="mb-3 text-sm font-semibold">
-            {editor.name ? `Editor · ${editor.name}` : "New judge"}
-          </h3>
-          <div className="flex flex-col gap-3">
-            <Field label="Name">
-              <Input
-                value={editor.name}
-                onChange={(e) => setEditor({ ...editor, name: e.target.value })}
-              />
-            </Field>
-            <Field
-              label="Model"
-              hint={
-                models.data
-                  ? "Live list from the provider; free text works too."
-                  : "Type a model id; the list loads when a provider is selected."
-              }
-            >
-              <Input
-                list="judge-model-options"
-                value={editor.model}
-                onChange={(e) => setEditor({ ...editor, model: e.target.value })}
-              />
-              <datalist id="judge-model-options">
-                {(models.data ?? []).map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Allow ≥">
-                <Input
-                  type="number"
-                  value={editor.allow_threshold}
-                  onChange={(e) =>
-                    setEditor({ ...editor, allow_threshold: Number(e.target.value) })
-                  }
-                />
-              </Field>
-              <Field label="High ≥">
-                <Input
-                  type="number"
-                  value={editor.high_threshold}
-                  onChange={(e) =>
-                    setEditor({ ...editor, high_threshold: Number(e.target.value) })
-                  }
-                />
-              </Field>
+      {(judges.data ?? []).length === 0 && (
+        <div className="rounded-xl border border-dashed border-border-subtle p-8 text-center text-sm text-content-muted">
+          No judges yet. A judge is the AI reviewer that scores each agent
+          request's reason before a medium/high secret is released.
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {(judges.data ?? []).map((j) => (
+          <Card key={j.name} className="flex flex-col p-4">
+            <div className="flex items-center gap-2">
+              {j.provider && (
+                <ProviderLogo kind={providerKindOf(j.provider) ?? ""} className="size-4" />
+              )}
+              <span className="font-medium">{j.name}</span>
+              {j.is_default && <Badge tone="judge">default</Badge>}
+              {!j.has_key && <Badge tone="pending">no key</Badge>}
             </div>
-            <Field label="Criteria" hint="Injected into the judge's prompt.">
-              <Textarea
-                rows={3}
-                value={editor.criteria}
-                onChange={(e) => setEditor({ ...editor, criteria: e.target.value })}
-              />
-            </Field>
-            <Field
-              label="Provider"
-              hint="The judge draws its API key from this provider. 'Own key' keeps a key on the judge itself."
-            >
-              <Select
-                value={editor.provider}
-                onChange={(e) => setEditor({ ...editor, provider: e.target.value })}
+            <div className="mt-1 font-mono text-xs text-content-muted">{j.model}</div>
+            <div className="mt-1 text-xs text-content-muted">
+              {j.provider ? `via ${j.provider}` : "own key"} · allow ≥
+              {j.allow_threshold} · high ≥{j.high_threshold}
+              {j.criteria && " · custom criteria"}
+            </div>
+            <div className="mt-3 flex items-center gap-1 border-t border-border-subtle pt-3">
+              <Button
+                variant="secondary"
+                className="px-2 py-1 text-xs"
+                onClick={() => setTesting(j)}
               >
-                <option value="">own key</option>
-                {enabledProviders.map((p) => (
-                  <option key={p.name} value={p.name}>
-                    {p.name} ({kindLabel(p.kind)})
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            {!editor.provider && (
-              <Field label="API key" hint="Stored encrypted. Blank = keep / use $SVAULT_OPENROUTER_KEY.">
-                <Input
-                  type="password"
-                  placeholder={editor.name ? "unchanged" : ""}
-                  value={editor.api_key}
-                  onChange={(e) => setEditor({ ...editor, api_key: e.target.value })}
-                />
-              </Field>
-            )}
-            {error && <p className="text-sm text-state-deny">{error}</p>}
-            <div className="flex gap-2">
-              {editor.name && (
-                <Button variant="ghost" onClick={() => setEditor({ ...blankJudge })}>
-                  Clear
+                Test
+              </Button>
+              {!j.is_default && (
+                <Button
+                  variant="ghost"
+                  className="px-2 py-1 text-xs"
+                  onClick={() => defaultM.mutate(j.name)}
+                >
+                  Set default
                 </Button>
               )}
               <Button
-                disabled={saveM.isPending || !editor.name.trim()}
-                onClick={() => saveM.mutate()}
+                variant="ghost"
+                className="px-2 py-1 text-xs"
+                onClick={() => setWizard(j)}
               >
-                Save judge
+                Edit
+              </Button>
+              <Button
+                variant="ghost"
+                className="ml-auto px-2 py-1 text-xs text-state-deny"
+                onClick={() => setToDelete(j)}
+              >
+                Remove
               </Button>
             </div>
-          </div>
-        </Card>
+          </Card>
+        ))}
       </div>
 
-      <TestBench />
+      {testing && <TestModal judge={testing} onClose={() => setTesting(null)} />}
+
+      {wizard !== null && (
+        <JudgeWizard
+          existing={wizard === "new" ? null : wizard}
+          onClose={() => setWizard(null)}
+          onSaved={() => {
+            setWizard(null);
+            refresh();
+          }}
+        />
+      )}
+
+      {toDelete && (
+        <ConfirmDialog
+          title={`Remove judge "${toDelete.name}"?`}
+          danger
+          confirmLabel="Remove judge"
+          busy={removeM.isPending}
+          message={
+            <>
+              Vaults assigned to it fall back to the keyring's default judge;
+              with no judge left, medium/high secrets become human-only.
+            </>
+          }
+          onCancel={() => setToDelete(null)}
+          onConfirm={() => removeM.mutate(toDelete.name)}
+        />
+      )}
     </div>
   );
 }
 
-function TestBench() {
+// ── Add/edit judge wizard ────────────────────────────────────────────────────
+// Three steps: provider → model (live list, with a recommendation) → tuning
+// (thresholds + criteria). Without a provider there is nothing to reason with,
+// so the wizard says exactly what that means instead of offering a dead end.
+
+// Preferred judge models per provider kind, best first. The recommendation is
+// the first fetched model containing one of these; otherwise the first model.
+const RECOMMENDED: Record<string, string[]> = {
+  openrouter: ["google/gemini-2.5-flash", "gpt-4.1-mini", "claude-haiku"],
+  openai: ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4.1"],
+  anthropic: ["haiku", "sonnet"],
+  ollama: ["llama3", "qwen", "mistral"],
+  lmstudio: ["llama3", "qwen", "mistral"],
+  local: ["llama3", "qwen", "mistral"],
+};
+
+function recommendModel(kind: string | undefined, models: string[]): string | null {
+  if (models.length === 0) return null;
+  for (const pref of RECOMMENDED[kind ?? ""] ?? []) {
+    const hit = models.find((m) => m.toLowerCase().includes(pref.toLowerCase()));
+    if (hit) return hit;
+  }
+  return models[0];
+}
+
+function JudgeWizard({
+  existing,
+  onClose,
+  onSaved,
+}: {
+  existing: JudgeInfo | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const navigate = useNavigate();
+  const ks = useQuery({ queryKey: ["keyring-state"], queryFn: keyringState });
+  const providersQ = useQuery({ queryKey: ["providers"], queryFn: providerList });
+  const providers = (providersQ.data ?? []).filter((p) => p.enabled);
+
+  const [step, setStep] = useState(0);
+  const [provider, setProvider] = useState(existing?.provider ?? "");
+  const [model, setModel] = useState(existing?.model ?? "");
+  const [name, setName] = useState(existing?.name ?? "");
+  const [allow, setAllow] = useState(existing?.allow_threshold ?? 60);
+  const [high, setHigh] = useState(existing?.high_threshold ?? 80);
+  const [criteria, setCriteria] = useState(existing?.criteria ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  // Pre-select the default provider once the list arrives (new judge only).
+  const effectiveProvider =
+    provider ||
+    (existing ? "" : (providers.find((p) => p.is_default)?.name ?? providers[0]?.name ?? ""));
+  const selectedKind = providers.find((p) => p.name === effectiveProvider)?.kind;
+
+  const models = useQuery({
+    queryKey: ["provider-models", effectiveProvider],
+    queryFn: () => providerModels(effectiveProvider),
+    enabled: effectiveProvider !== "",
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  const recommended = useMemo(
+    () => recommendModel(selectedKind, models.data ?? []),
+    [selectedKind, models.data],
+  );
+  // The dropdown's value: explicit choice, else the recommendation.
+  const effectiveModel = model || recommended || "";
+
+  const saveM = useMutation({
+    mutationFn: async () => {
+      await judgeSave({
+        name: name.trim() || "default",
+        model: effectiveModel.trim(),
+        allow_threshold: allow,
+        high_threshold: high,
+        criteria,
+        api_key: null,
+        provider: effectiveProvider || null,
+      });
+      // Creating the first judge is the moment the gate becomes AI-aware —
+      // flip the global switch on rather than leaving a silent dead toggle.
+      if (!ks.data?.judge_enabled) await judgeToggle(true);
+    },
+    onSuccess: onSaved,
+    onError: (e) => setError(String(e)),
+  });
+
+  const noProviders = providersQ.data && providers.length === 0;
+  const steps = ["Provider", "Model", "Tuning"];
+
+  return (
+    <Modal
+      title={existing ? `Edit judge · ${existing.name}` : "Add judge"}
+      onClose={onClose}
+      width="max-w-lg"
+    >
+      {/* Step indicator */}
+      <div className="mb-4 flex items-center gap-2 text-xs">
+        {steps.map((s, i) => (
+          <div key={s} className="flex items-center gap-2">
+            {i > 0 && <span className="text-content-muted">—</span>}
+            <span
+              className={`flex items-center gap-1.5 ${
+                i === step ? "font-semibold text-content" : "text-content-muted"
+              }`}
+            >
+              <span
+                className={`flex size-4.5 items-center justify-center rounded-full border text-[10px] ${
+                  i < step
+                    ? "border-state-allow/50 text-state-allow"
+                    : i === step
+                      ? "border-content"
+                      : "border-border-subtle"
+                }`}
+              >
+                {i < step ? "✓" : i + 1}
+              </span>
+              {s}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {step === 0 && (
+        <div className="flex flex-col gap-3">
+          {noProviders ? (
+            <>
+              <div className="rounded-lg border border-state-pending/40 bg-state-pending/10 p-3 text-sm">
+                <p className="font-medium">No AI provider available.</p>
+                <p className="mt-1 text-content-muted">
+                  Without a provider the judge has no model to reason with —
+                  only your static policies apply, and medium/high-tier secrets
+                  stay <strong>human-only</strong>. Add a provider first, then
+                  come back to create a judge.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button onClick={() => navigate("/providers")}>Add a provider</Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <Field
+                label="Provider"
+                hint="The API account this judge calls. Manage them on the AI providers screen."
+              >
+                <Select
+                  value={effectiveProvider}
+                  onChange={(e) => {
+                    setProvider(e.target.value);
+                    setModel("");
+                  }}
+                >
+                  {providers.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name} ({kindLabel(p.kind)})
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button disabled={!effectiveProvider} onClick={() => setStep(1)}>
+                  Next
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {step === 1 && (
+        <div className="flex flex-col gap-3">
+          {models.isLoading && (
+            <p className="text-sm text-content-muted">
+              Loading models from {effectiveProvider}…
+            </p>
+          )}
+          {models.data && models.data.length > 0 ? (
+            <Field
+              label="Model"
+              hint="A cheap, fast model is ideal — the judge makes one short scoring call per request."
+            >
+              <Select value={effectiveModel} onChange={(e) => setModel(e.target.value)}>
+                {models.data.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                    {m === recommended ? "  (recommended)" : ""}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          ) : (
+            !models.isLoading && (
+              <Field
+                label="Model"
+                hint={
+                  models.isError
+                    ? `Couldn't load the model list (${String(models.error)}) — type a model id.`
+                    : "Type a model id."
+                }
+              >
+                <Input
+                  value={model}
+                  placeholder="e.g. google/gemini-2.5-flash"
+                  onChange={(e) => setModel(e.target.value)}
+                />
+              </Field>
+            )
+          )}
+          <div className="flex justify-between gap-2">
+            <Button variant="ghost" onClick={() => setStep(0)}>
+              Back
+            </Button>
+            <Button disabled={!effectiveModel.trim()} onClick={() => setStep(2)}>
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="flex flex-col gap-3">
+          <Field label="Name" hint="How vaults refer to this judge.">
+            <Input
+              value={name}
+              disabled={!!existing}
+              placeholder="default"
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+
+          <div className="rounded-lg border border-border-subtle bg-surface-sunken p-3 text-xs text-content-muted">
+            The judge scores every request <strong>0–100</strong> on how
+            plausibly the stated reason justifies access. A{" "}
+            <strong>medium</strong>-tier secret is released at or above the
+            Allow score; a <strong>high</strong>-tier secret needs the High
+            score. Raise them for stricter gating, lower for more permissive.
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Allow score (medium)" hint="Default 60.">
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={allow}
+                onChange={(e) => setAllow(Number(e.target.value))}
+              />
+            </Field>
+            <Field label="High score (high)" hint="Default 80.">
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={high}
+                onChange={(e) => setHigh(Number(e.target.value))}
+              />
+            </Field>
+          </div>
+
+          <Field
+            label="Criteria (optional)"
+            hint="Your own rules, added to the judge's prompt — e.g. 'deny anything mentioning production deploys outside business hours'."
+          >
+            <Textarea
+              rows={3}
+              value={criteria}
+              onChange={(e) => setCriteria(e.target.value)}
+            />
+          </Field>
+
+          {error && <p className="text-sm text-state-deny">{error}</p>}
+          <div className="flex justify-between gap-2">
+            <Button variant="ghost" onClick={() => setStep(1)}>
+              Back
+            </Button>
+            <Button disabled={saveM.isPending} onClick={() => saveM.mutate()}>
+              {saveM.isPending
+                ? "Saving…"
+                : existing
+                  ? "Save changes"
+                  : "Create judge"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// Per-judge live test, in a modal — opened from a card's Test button rather
+// than squatting on the page.
+function TestModal({ judge, onClose }: { judge: JudgeInfo; onClose: () => void }) {
   const [t, setT] = useState({
-    judge: "",
+    judge: judge.name,
     reason: "run the nightly database migration to apply pending changes",
     scope: "database",
     secret: "DB_PASSWORD",
@@ -331,10 +522,10 @@ function TestBench() {
   });
 
   return (
-    <Card className="h-fit p-4">
-      <h3 className="mb-3 text-sm font-semibold">Live test</h3>
+    <Modal title={`Live test · ${judge.name}`} onClose={onClose} width="max-w-lg">
       <p className="mb-3 text-xs text-content-muted">
-        Runs the real model against a sample request.
+        Runs the real model against a sample request — nothing is read or
+        written.
       </p>
       <div className="flex flex-col gap-3">
         <Field label="Reason">
@@ -388,7 +579,7 @@ function TestBench() {
           </div>
         )}
       </div>
-    </Card>
+    </Modal>
   );
 }
 

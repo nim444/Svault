@@ -86,6 +86,55 @@ Functionality is considered correct across the board; this pass is purely UX.
   sea of empty space. Cards restructured as tiles: badges + enable toggle on
   top, URL/usage/test result in the middle, action row pinned at the bottom.
 
+### Guardian (Judges) — WIP
+- Sidebar item renamed **Judges & Policy → Guardian** (page title too); first
+  sub-tab is now just "Judges".
+- The always-visible Live test panel is gone — each judge card has a **Test**
+  button that opens the live test in a modal, pre-targeting that judge. Judge
+  cards are a responsive grid (1/2/3 columns) like providers.
+- Judge registry redesigned as **cards** (provider logo, name, default / no-key
+  badges, model in mono, "via provider · allow ≥60 · high ≥80" summary line,
+  Set default / Edit / Remove actions) — the old cramped inline editor is gone.
+- Remove is now confirm-gated, explaining the fallback (vaults fall back to the
+  default judge; none left = medium/high go human-only).
+- **Add/Edit is a 3-step wizard in a modal** (blurred backdrop, step indicator):
+  1. **Provider** — pick an enabled provider (default pre-selected). With no
+     provider available the wizard explains it instead of dead-ending: "without
+     a provider the judge has no model to reason with — only static policies
+     apply and medium/high stay human-only", with an "Add a provider" button.
+  2. **Model** — live dropdown of the provider's models with a
+     **(recommended)** pick pre-selected per kind (gemini-flash for OpenRouter,
+     4.1-mini for OpenAI, haiku for Anthropic, llama3-class for local); free
+     text fallback when the list can't load.
+  3. **Tuning** — name, Allow/High scores with a plain-words explainer (judge
+     scores 0–100; medium released ≥ Allow, high needs ≥ High), optional
+     criteria with an example. Creating the first judge flips the global judge
+     switch on.
+
+### Sidebar status block — WIP
+- The "Daemon up/down" header became three green/red indicator rows: **Daemon**
+  (socket up), **MCP** (door switch), **AI judges** (global switch on + at
+  least one judge defined), with a divider before the session stats.
+- Sidebar nav order: AI providers → Guardian → Vaults → MCP → Audit → Pending.
+
+### Create vault wizard — WIP
+- Vault creation is a **three-step wizard** (Basics → Agent access →
+  Protection) with the same step indicator as the judge wizard; edit keeps the
+  flat form.
+- Every step opens with a plain-words explainer: what a vault is; that agents
+  come through the gate and every allowed request still runs the full check;
+  what the tiers mean (low released on request, medium judge-gated, high
+  strict — human-only with no active judge).
+- Better field copy: description explains the judge reads it with every
+  request (with an example); "Allow agent" became **"Who may ask"** with
+  per-mode explanations (No agents / Named only / Any agent); rate limit
+  explains the runaway-agent ceiling with examples; "Login method" became
+  **"Unlock with"**.
+- Assigned judge is a **dropdown of defined judges** (+ "default judge")
+  instead of a free-text name, in both wizard and edit.
+- Recovery-code dialog matches the approved onboarding style: red warning,
+  green code box, bold confirm checkbox, Done fully dimmed until checked.
+
 ### Audit: Activity view + config-change events — WIP
 - Provider/judge/MCP config changes now land in the audit trail: every GUI
   mutation (provider add/update/remove/enable/disable/default, judge

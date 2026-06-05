@@ -84,7 +84,7 @@ All 12 screens from `docs/design_handoff_svault_gui/` are implemented, plus a
 | 03 | Vault list | `vaults::list_vaults`, `lock_vault`/`unlock_vault`, `delete_vault` |
 | 04 | Vault config | `vaults::create_vault` / `vault_settings` / `save_settings` |
 | 05 | Secrets | `secrets` (`list_secrets`, `add`/`edit`/`remove`, `reveal_secret`) |
-| 06 | Judges & Policy | `judge` (providers, registry + live test), `policy` (surface, caller access) |
+| 06 | Guardian (judges & policy) | `judge` (registry, add/edit wizard, per-judge live test), `policy` (surface, caller access) |
 | 07 | MCP | `mcp` (connected agents, enable toggle, wiring config) |
 | 08 | Audit | `audit::audit_events` (gate decisions: real peer UID + denial reason) + `audit::activity_events` (usage timeline incl. global provider/judge/MCP config changes) |
 | 09 | Pending | `pending` (`pending`, `approve_unseal`) |
@@ -102,7 +102,7 @@ The steps, checked off live as the store fills in:
    API accounts stored **encrypted in the keyring**
    (`core::keyring::ProviderDef`); judges draw their key and base URL from one.
 2. **Create a judge** *(optional)* — pick a provider + model; thresholds get
-   sane defaults (tunable later on Judges & Policy). Creating it also flips the
+   sane defaults (tunable later on the Guardian screen). Creating it also flips the
    global judge switch on. Locked until a provider exists.
 3. **Create a vault** — jumps to the vault create form.
 4. **Add a secret** — jumps into the first vault. Locked until a vault exists.
@@ -112,7 +112,7 @@ incomplete (the optional judge doesn't count); it disappears once done.
 
 ### AI providers (own sidebar section)
 
-Providers are managed on a dedicated screen, not inside Judges & Policy. Five
+Providers are managed on a dedicated screen, not inside Guardian. Five
 **kinds** are supported — `openrouter`, `openai`, `anthropic` (via its
 OpenAI-compatibility endpoint), `ollama`, and `lmstudio` (local servers; no API
 key needed). Each kind shows its brand mark in the list (simple-icons; OpenAI's
@@ -129,6 +129,28 @@ The judge form lists only **enabled** providers and offers a **live model
 picker**: the GUI fetches the provider's `/models` list
 (`core::judge::list_models`) into a searchable suggestion list, with free text
 as fallback when the endpoint is unreachable.
+
+### Guardian (judges)
+
+The judge screen is labeled **Guardian** in the sidebar (order: AI providers →
+Guardian → Vaults — the setup flow reads top-down). Judges render as a
+responsive card grid (provider logo, model, allow/high summary) with per-card
+actions: **Test** (opens the live test in a modal, pre-targeting that judge),
+Set default, Edit, and a confirm-gated Remove that states the fallback.
+
+Add/Edit is a **three-step wizard** in a modal:
+
+1. **Provider** — enabled providers only, the default pre-selected. With no
+   provider configured the wizard explains the consequence (no model to reason
+   with — static policies only, medium/high stay human-only) and offers a jump
+   to the AI providers screen instead of a dead end.
+2. **Model** — a dropdown of the provider's live model list with a
+   per-kind **(recommended)** pick pre-selected; free text fallback when the
+   list can't be fetched.
+3. **Tuning** — name, the Allow/High scores with a plain-words explainer (the
+   judge scores each request 0–100; medium releases at ≥ Allow, high needs
+   ≥ High), and optional criteria. Creating the first judge flips the global
+   judge switch on.
 
 ### Judge options hide until a judge is active
 
