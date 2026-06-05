@@ -143,6 +143,27 @@ export interface KeyringState {
   mcp_enabled: boolean;
   default_judge: string | null;
   judge_count: number;
+  provider_count: number;
+}
+export interface ProviderInfo {
+  name: string;
+  kind: string;
+  base_url: string;
+  has_key: boolean;
+  enabled: boolean;
+  is_default: boolean;
+  used_by: string[];
+}
+export interface ProviderKind {
+  kind: string;
+  base_url: string;
+  key_optional: boolean;
+}
+export interface ProviderForm {
+  name: string;
+  kind: string;
+  base_url: string;
+  api_key: string;
 }
 export interface JudgeInfo {
   name: string;
@@ -152,6 +173,7 @@ export interface JudgeInfo {
   criteria: string;
   has_key: boolean;
   is_default: boolean;
+  provider: string | null;
 }
 export interface JudgeFormInput {
   name: string;
@@ -160,6 +182,7 @@ export interface JudgeFormInput {
   high_threshold: number;
   criteria: string;
   api_key: string | null;
+  provider: string | null;
 }
 export interface JudgeTestInput {
   judge: string | null;
@@ -192,6 +215,18 @@ export const judgeToggle = (enabled: boolean) =>
 export const judgeTest = (input: JudgeTestInput) =>
   invoke<JudgeTestResult>("judge_test", { input });
 export const judgeNames = () => invoke<string[]>("judge_names");
+export const providerList = () => invoke<ProviderInfo[]>("provider_list");
+export const providerKinds = () => invoke<ProviderKind[]>("provider_kinds");
+export const providerSave = (form: ProviderForm) =>
+  invoke<void>("provider_save", { form });
+export const providerRemove = (name: string) =>
+  invoke<void>("provider_remove", { name });
+export const providerToggle = (name: string, enabled: boolean) =>
+  invoke<void>("provider_toggle", { name, enabled });
+export const providerSetDefault = (name: string) =>
+  invoke<void>("provider_set_default", { name });
+export const providerModels = (name: string) =>
+  invoke<string[]>("provider_models", { name });
 
 export interface CallerRuleInfo {
   name: string;
@@ -300,9 +335,23 @@ export interface AuditFilter {
   caller?: string;
   source?: string;
   limit?: number;
+  from?: number;
+  to?: number;
 }
 export const auditEvents = (filter: AuditFilter) =>
   invoke<AuditEvent[]>("audit_events", { filter });
+export interface ActivityEvent {
+  vault: string;
+  ts: string;
+  unix: number | null;
+  actor: string;
+  actor_id: string;
+  source: string;
+  action: string;
+  target: string | null;
+}
+export const activityEvents = (limit?: number, from?: number, to?: number) =>
+  invoke<ActivityEvent[]>("activity_events", { limit, from, to });
 export const auditCallers = () => invoke<string[]>("audit_callers");
 export const exportLog = (leaf: string, path: string) =>
   invoke<void>("export_log", { leafId: leaf, path });

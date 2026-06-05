@@ -33,3 +33,40 @@ export function shortTime(unix: number | null | undefined): string {
     ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
+
+// Human label for an audit/usage `source` code. The logs store the short code;
+// the UI shows what a person would call it.
+export function sourceLabel(source: string): string {
+  switch (source) {
+    case "gui":
+      return "Desktop app";
+    case "cli":
+      return "CLI";
+    case "tui":
+      return "Terminal UI";
+    case "mcp":
+      return "MCP (agent)";
+    default:
+      return source;
+  }
+}
+
+// Full timestamp for audit rows: "Jun 6, 14:32:05" (year added when not this year).
+export function fullTime(unix: number | null | undefined): string {
+  if (unix == null) return "—";
+  const d = new Date(unix * 1000);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return (
+    d.toLocaleDateString([], {
+      month: "short",
+      day: "numeric",
+      ...(sameYear ? {} : { year: "numeric" }),
+    }) +
+    ", " +
+    d.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+  );
+}

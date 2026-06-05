@@ -2595,6 +2595,7 @@ fn prompt_judge_def(existing: Option<&keyring::JudgeDef>) -> Result<keyring::Jud
         high_threshold,
         criteria,
         api_key: base.api_key,
+        provider: base.provider,
     })
 }
 
@@ -2717,7 +2718,11 @@ fn cmd_judge_list() -> Result<()> {
         } else {
             " "
         };
-        let key = if d.api_key.trim().is_empty() {
+        // A judge may carry its own key or draw one from a named provider
+        // (GUI-managed); show which.
+        let key = if d.provider.is_some() && kr.data.judge_has_key(d) {
+            "provider"
+        } else if d.api_key.trim().is_empty() {
             "env/none"
         } else {
             "set"
@@ -2827,7 +2832,7 @@ fn cmd_judge_test(judge_name: Option<&str>, t: JudgeTestArgs) -> Result<()> {
         eprintln!("{} no judge named '{}'", style("error:").red(), name);
         std::process::exit(1);
     };
-    let Some(rt) = judge::JudgeRuntime::from_def(def) else {
+    let Some(rt) = judge::JudgeRuntime::from_def(&kr.data.materialize_judge(def)) else {
         eprintln!(
             "{} judge '{}' has no API key.",
             style("error:").red().bold(),

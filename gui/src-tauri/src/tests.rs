@@ -92,6 +92,7 @@ fn gui_command_layer_end_to_end() {
         high_threshold: 80,
         criteria: "be strict".into(),
         api_key: None,
+        provider: None,
     })
     .unwrap();
     let judges = judge::judge_list().unwrap();

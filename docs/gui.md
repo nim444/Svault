@@ -5,7 +5,7 @@ that sits beside the CLI, TUI, and MCP frontends and drives the **same**
 `svault-cli` core and daemon. It never reimplements crypto, the policy engine, or
 the AI judge — every screen is a thin Tauri command over the existing Rust APIs.
 
-It develops on the **1.1.0** line and ships publicly as **2.0.0** (1.1.0 is not
+It develops on the **1.1.x** line and ships publicly as **2.0.0** (1.1.x is not
 released or tagged on its own). All 12 design-handoff screens are built; the work
 remaining before tagging is release bundling, the sidecar wiring, tray icon-state
 assets, and a manual QA pass.
@@ -72,22 +72,71 @@ cargo clippy
 
 ## Screens
 
-All 12 screens from `docs/design_handoff_svault_gui/` are implemented:
+All 12 screens from `docs/design_handoff_svault_gui/` are implemented, plus a
+**Getting started** home added during the UX pass:
 
 | # | Screen | Commands (in `src/commands/`) |
 |---|--------|-------------------------------|
+| — | Getting started (home) | composes `keyring_state`, `list_vaults`, `provider_save`, `judge_save` |
+| — | AI providers | `judge::provider_*` (list, save, toggle, set_default, remove, kinds, models) |
 | 01 | Sign in / out | `session` (`unlock`, `unlock_yubikey`, `lock_all`, `session_status`) |
 | 02 | Onboarding | `onboarding` (`init_master`, `enroll_yubikey`) |
 | 03 | Vault list | `vaults::list_vaults`, `lock_vault`/`unlock_vault`, `delete_vault` |
 | 04 | Vault config | `vaults::create_vault` / `vault_settings` / `save_settings` |
 | 05 | Secrets | `secrets` (`list_secrets`, `add`/`edit`/`remove`, `reveal_secret`) |
-| 06 | Judges & Policy | `judge` (registry + live test), `policy` (surface, caller access) |
+| 06 | Judges & Policy | `judge` (providers, registry + live test), `policy` (surface, caller access) |
 | 07 | MCP | `mcp` (connected agents, enable toggle, wiring config) |
-| 08 | Audit | `audit::audit_events` (real peer UID + real denial reason) |
+| 08 | Audit | `audit::audit_events` (gate decisions: real peer UID + denial reason) + `audit::activity_events` (usage timeline incl. global provider/judge/MCP config changes) |
 | 09 | Pending | `pending` (`pending`, `approve_unseal`) |
 | 10 | Backup & recovery | `backup` (export/import, recover_master, rotate_code) |
 | 11 | Settings | `settings` (prefs, rekey, daemon, diagnostics, install_cli) |
 | 12 | Tray popover | `tray` (`open_main`, `hide_popover`) |
+
+### Getting started (home)
+
+After sign-in the index route lands on a four-step checklist until the store
+has a vault holding at least one secret; from then on the vault list is home.
+The steps, checked off live as the store fills in:
+
+1. **Add an AI provider** — pick a kind and paste a key. Providers are named
+   API accounts stored **encrypted in the keyring**
+   (`core::keyring::ProviderDef`); judges draw their key and base URL from one.
+2. **Create a judge** *(optional)* — pick a provider + model; thresholds get
+   sane defaults (tunable later on Judges & Policy). Creating it also flips the
+   global judge switch on. Locked until a provider exists.
+3. **Create a vault** — jumps to the vault create form.
+4. **Add a secret** — jumps into the first vault. Locked until a vault exists.
+
+The sidebar shows a *Getting started* entry with a remaining-step badge while
+incomplete (the optional judge doesn't count); it disappears once done.
+
+### AI providers (own sidebar section)
+
+Providers are managed on a dedicated screen, not inside Judges & Policy. Five
+**kinds** are supported — `openrouter`, `openai`, `anthropic` (via its
+OpenAI-compatibility endpoint), `ollama`, and `lmstudio` (local servers; no API
+key needed). Each kind shows its brand mark in the list (simple-icons; OpenAI's
+mark inlined). A kind only decides the default base URL and auth headers: every kind
+speaks the same OpenAI-style `/chat/completions` judge transport and exposes
+`GET /models`, so there is one code path.
+
+Per provider: **enable/disable** (a disabled provider lends no credentials —
+its judges go keyless and the gate falls back to static tier rules, nothing is
+deleted), a **default** (pre-selected for new judges), edit (kind-prefilled
+base URL, key replace), and remove (refused while a judge references it).
+
+The judge form lists only **enabled** providers and offers a **live model
+picker**: the GUI fetches the provider's `/models` list
+(`core::judge::list_models`) into a searchable suggestion list, with free text
+as fallback when the endpoint is unreachable.
+
+### Judge options hide until a judge is active
+
+"Active" means the global judge switch is on **and** at least one judge is
+defined. Until then the GUI shows no judge surface to configure against: the
+vault list drops its Judge column, vault config hides the AI-judge field, the
+secret form hides "Always judge", and tier hints read "medium/high are
+human-only until an AI judge is active" — which is exactly what the gate does.
 
 ## Security model (held by the GUI)
 
@@ -107,6 +156,17 @@ Small, backward-compatible additions in `svault-cli`:
 - `keyring`: an `mcp_enabled` flag (default `true`) — the human-controlled MCP
   door switch, **enforced server-side** in `mcp::call_get_secret` (a disabled
   door returns the same generic "not available").
+- `keyring`: named **AI providers** (`ProviderDef`: kind / base URL / API key /
+  enabled — kinds: `openrouter`, `openai`, `anthropic`, `local`) plus a keyring
+  `default_provider` and an optional `provider` reference on each judge.
+  `KeyringData::materialize_judge` resolves the effective credentials — an
+  **enabled** provider's key/base URL win when set (`local` gets a placeholder
+  bearer so keyless endpoints still run), the judge's own `api_key` remains the
+  fallback — and every surface (daemon gate, CLI, TUI, GUI, MCP) builds its
+  judge runtime through it. Removing a provider is refused while a judge still
+  references it.
+- `judge::list_models(kind, base_url, api_key)` — fetch a provider's model ids
+  (`GET /models`, OpenAI-shaped on all four kinds) for the GUI's model picker.
 - `daemon::client::vault_status()` — per-vault idle/hard countdowns for the
   sidebar auto-lock display.
 - `daemon::start_quiet_with_exe(path)` — start the daemon from an explicit

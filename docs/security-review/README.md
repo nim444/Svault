@@ -42,6 +42,13 @@ those closures, the one residual (N-1: caller authorization still self-asserted,
 audit now peer-UID-stamped), and the judge's new surface (prompt injection, data
 egress, key handling). 0.9.9 ships with independent reviews (enforced gate + daemon + full encryption + Yubi + conditional seal + MCP now covered). The process continues for 1.0.0.
 
+The **desktop GUI** (Tauri) is reviewed separately from the core, since it adds its
+own attack surface — the webview as a possible adversary and the IPC command set as
+a capability boundary. The maintainer deep-dive register is
+**[findings/gui-1.1.0.md](findings/gui-1.1.0.md)** (arbitrary-path file-write IPC
+commands, disabled CSP, `change_master` re-auth, clipboard handling, and the
+read-only commands that skip the master gate).
+
 | Version | Date | Reviewer | Overall posture | Review |
 |---|---|---|---|---|
 | 0.9.9 | 2026-06-02 | opencode (x-ai/grok-build-0.1) | Low-Medium (Unix + daemon with enforced gate) — sound policy enforcement for cooperative agents; Windows / no-daemon remains higher residual; suitable for corporate CI/agent use under the documented same-UID model | [reviews/0.9.9-opencode.md](reviews/0.9.9-opencode.md) |

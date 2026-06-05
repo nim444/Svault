@@ -9,7 +9,7 @@ use crate::commands::common::leaf;
 use crate::error::{emsg, CmdResult};
 
 use svault_cli::core::meta::VaultMeta;
-use svault_cli::core::{audit, vault};
+use svault_cli::core::{audit, usage, vault};
 
 #[derive(Serialize)]
 pub struct AuditEvent {
@@ -45,6 +45,19 @@ pub struct AuditFilter {
     /// Cap the number of (newest-first) events returned.
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Inclusive unix-seconds range bounds.
+    #[serde(default)]
+    pub from: Option<i64>,
+    #[serde(default)]
+    pub to: Option<i64>,
+}
+
+fn in_range(unix: Option<i64>, from: Option<i64>, to: Option<i64>) -> bool {
+    match unix {
+        Some(t) => from.is_none_or(|f| t >= f) && to.is_none_or(|u| t <= u),
+        // Un-parseable timestamps only match an unbounded query.
+        None => from.is_none() && to.is_none(),
+    }
 }
 
 fn matches(e: &AuditEvent, f: &AuditFilter) -> bool {
@@ -69,7 +82,7 @@ fn matches(e: &AuditEvent, f: &AuditFilter) -> bool {
             return false;
         }
     }
-    true
+    in_range(e.unix, f.from, f.to)
 }
 
 #[tauri::command]
@@ -112,6 +125,66 @@ pub fn audit_events(filter: AuditFilter) -> CmdResult<Vec<AuditEvent>> {
         out.truncate(limit);
     }
     Ok(out)
+}
+
+#[derive(Serialize)]
+pub struct ActivityEvent {
+    /// Vault name, or "global" for store-wide config changes (providers,
+    /// judges, the MCP door).
+    pub vault: String,
+    pub ts: String,
+    pub unix: Option<i64>,
+    /// "human" or "agent".
+    pub actor: String,
+    /// Username for humans, the caller string for agents.
+    pub actor_id: String,
+    /// "cli" / "tui" / "gui" / "mcp".
+    pub source: String,
+    /// Short action key, e.g. `provider.add`, `judge.enable`, `secret.add`.
+    pub action: String,
+    pub target: Option<String>,
+}
+
+/// The activity timeline behind the Audit screen's Activity view: every usage
+/// event (who did what, through which surface — never a secret value), merged
+/// across all vaults plus the global `.svault/usage.log` (provider/judge/MCP
+/// config changes), newest first.
+#[tauri::command]
+pub fn activity_events(
+    limit: Option<usize>,
+    from: Option<i64>,
+    to: Option<i64>,
+) -> Vec<ActivityEvent> {
+    let limit = limit.unwrap_or(500);
+    let mut out: Vec<ActivityEvent> = Vec::new();
+
+    let mut push = |vault_name: &str, events: Vec<usage::Event>| {
+        for e in events {
+            out.push(ActivityEvent {
+                vault: vault_name.to_string(),
+                unix: e.timestamp().map(|t| t.timestamp()),
+                ts: e.ts,
+                actor: e.actor,
+                actor_id: e.actor_id,
+                source: e.source,
+                action: e.action,
+                target: e.target,
+            });
+        }
+    };
+
+    for dir in vault::list_vault_dirs() {
+        let vname = VaultMeta::load_unverified(&dir)
+            .map(|m| m.name)
+            .unwrap_or_else(|_| leaf(&dir));
+        push(&vname, usage::recent(&dir, limit));
+    }
+    push("global", usage::recent(&vault::svault_dir(), limit));
+
+    out.retain(|e| in_range(e.unix, from, to));
+    out.sort_by_key(|e| std::cmp::Reverse(e.unix));
+    out.truncate(limit);
+    out
 }
 
 /// Distinct caller names across all (or one) vault's audit logs — for the filter

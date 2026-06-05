@@ -1,12 +1,15 @@
 # Svault Desktop GUI
 
 A cross-platform desktop app (Tauri + React + TypeScript) for managing Svault
-vaults, secrets, policy, the AI judge, MCP wiring, audit, and recovery. It drives
+vaults, secrets, policy, AI providers and judges, MCP wiring, audit, and
+recovery. It drives
 the **same** `svault-cli` core and daemon as the CLI/TUI/MCP — it never
-reimplements crypto, the policy engine, or the judge.
+reimplements crypto, the policy engine, or the judge. First sign-in lands on a
+**getting-started checklist** (provider → optional judge → vault → secret)
+until the store holds a secret.
 
-This is the roadmap's **2.0.0** milestone. It develops on the **1.1.0** line and
-ships publicly as 2.0.0 (1.1.0 is not released on its own).
+This is the roadmap's **2.0.0** milestone. It develops on the **1.1.x** line and
+ships publicly as 2.0.0 (1.1.x is not released on its own).
 
 > Full documentation: [`../docs/gui.md`](../docs/gui.md).
 

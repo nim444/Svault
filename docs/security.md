@@ -74,7 +74,8 @@ lives in a single **AES-256-GCM-encrypted keyring** at `.svault/keyring.enc`, op
 by the **master passphrase** — the keyring has a random data key wrapped under the
 master in `.svault/keyring.keyslot.enc`, exactly like a vault (no separate keyring
 passphrase). It holds the judge registry, each judge's **API key**, each judge's
-**criteria and thresholds**, and the operational knobs (lock timers, daemon
+**criteria and thresholds**, the named **AI providers** (API accounts a judge
+can draw its key from), and the operational knobs (lock timers, daemon
 `max_connections`, backend). **Nothing abusable is readable at rest:** a same-UID
 agent can no longer read thresholds or criteria to tune a passing request, nor lift
 the API key from a plaintext file.
@@ -107,8 +108,13 @@ it uses the keyring's default judge. Manage all of it with
 `svault judge add|edit|remove|list|set-default|set-key|enable|disable|test` on the
 unlocked keyring.
 
-Each judge's **API key is encrypted in the keyring**, never written to a file. An
-empty stored key falls back to the opt-in `$SVAULT_OPENROUTER_KEY` environment
+Each judge's **API key is encrypted in the keyring**, never written to a file.
+A judge may instead reference a named **provider** (a keyring-encrypted API
+account — OpenRouter, OpenAI, Anthropic, or a local endpoint; how the GUI wires
+judges up); an **enabled** provider's key and
+base URL then win over the judge's own fields (a disabled one lends nothing, so
+its judges fall back to the static tier rules). A judge with neither falls back
+to the opt-in `$SVAULT_OPENROUTER_KEY` environment
 variable — env only, never a key file. On a server, export that variable where the
 daemon starts. The judge is **off until the keyring is unlocked, the global switch
 is on, and the resolved judge has a key**, so upgrading never silently calls out.

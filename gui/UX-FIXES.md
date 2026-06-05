@@ -34,6 +34,79 @@ Functionality is considered correct across the board; this pass is purely UX.
   "Touch your key twice…".
 - Confirmed working by user.
 
+## App shell
+
+### Getting started (home) — WIP
+- New first page after sign-in: a four-step checklist instead of dropping
+  straight into the vault list. The index route lands there until the store has
+  a vault with at least one secret; from then on the vault list is home.
+- Step 1: **Add an AI provider** — inline OpenRouter API key form (stored
+  encrypted in the keyring as a named provider).
+- Step 2: **Create a judge (optional)** — pick a provider + model, defaults for
+  thresholds; creating it also flips the global judge switch on. Locked until a
+  provider exists.
+- Step 3: **Create a vault** — navigates to the create form.
+- Step 4: **Add a secret** — navigates to the first vault; locked until a vault
+  exists.
+- Sidebar shows a "Getting started" entry with a remaining-step badge while
+  incomplete; it disappears once steps 1/3/4 are done (judge stays optional).
+
+### Sidebar icons — WIP
+- Every nav item now carries a small lucide icon (Vault, Scale, Plug,
+  ScrollText, Hourglass, ArchiveRestore, Settings; ListChecks for Getting
+  started).
+
+### Judge options hidden until a judge is active — WIP
+- "Active" = global judge switch on **and** at least one judge defined.
+- Until then: the vault list drops its Judge column, vault config hides the
+  AI-judge field, and the secret form hides "Always judge"; tier hints switch
+  to "medium/high are human-only until an AI judge is active."
+
+### AI providers (own sidebar section) — WIP
+- Promoted out of Judges & Policy into a dedicated "AI providers" screen with
+  its own sidebar item: add, edit, **enable/disable** (disabled = its judges go
+  keyless, gate falls back to human-only for medium/high; nothing deleted),
+  **set default**, remove (refused while a judge references it).
+- Four kinds: openrouter, openai, anthropic (OpenAI-compat endpoint), local
+  (Ollama/LM Studio — no API key needed). Kind prefills the base URL; one
+  shared judge transport.
+- The judge editor's Provider select lists only enabled providers and the
+  model field became a **live model picker** (fetched from the provider's
+  /models endpoint, free text fallback). Choosing a provider hides the
+  per-judge API key field.
+- Getting-started step 1 gained the kind select (key optional for local).
+- Add/Edit now open in a centered **modal with a blurred backdrop** instead of
+  an inline card under the list.
+- Per-provider **Test** button: live-calls the provider's /models endpoint.
+  The result shows as a bottom-right **toast** (new shared `Toast` primitive,
+  rise-in animation): green "valid — N models available" for 2s on success;
+  failures stay 5s so the real error is readable.
+- Provider list is a **responsive tile grid** — 1 column narrow, 2 from md,
+  3 from xl — growing right and down instead of a capped single column in a
+  sea of empty space. Cards restructured as tiles: badges + enable toggle on
+  top, URL/usage/test result in the middle, action row pinned at the bottom.
+
+### Audit: Activity view + config-change events — WIP
+- Provider/judge/MCP config changes now land in the audit trail: every GUI
+  mutation (provider add/update/remove/enable/disable/default, judge
+  add/update/remove/default/enable/disable, MCP door on/off) records a global
+  usage event (`.svault/usage.log`) — the same pattern the TUI uses for judge
+  changes.
+- The Audit screen gained two sub-tabs: **Gate decisions** and **Activity**
+  (all vault usage logs merged with the global one). Pause button removed —
+  both views always live-poll.
+- Both views are real **data tables** (TanStack Table): sortable columns,
+  full timestamps ("Jun 6, 14:32:05", monospace), quick-search box,
+  client-side **pagination** (25/50/100/250 per page, first/prev/next/last,
+  row count) over up to 5000 fetched rows.
+- **Date-range gadget** shared by both views: preset chips (1h / Today / 7d /
+  30d / All) plus a Custom from→to date picker; presets stay anchored to
+  "now" while polling. Range filtering is applied server-side (unix bounds on
+  `audit_events` / `activity_events`).
+- Gate decisions keep their structured filters (result / vault / caller) next
+  to the range bar; the table adds a Details column (rule + real reason,
+  truncated with hover tooltip).
+
 ## Daemon
 
 ### Auto-start on launch — done

@@ -651,7 +651,7 @@ impl JudgeForm {
                         allow: d.allow_threshold,
                         high: d.high_threshold,
                         criteria: d.criteria.clone(),
-                        has_key: !d.api_key.trim().is_empty(),
+                        has_key: kr.data.judge_has_key(d),
                     })
                     .collect();
                 Self {
@@ -3145,12 +3145,13 @@ impl App {
             reject!(0, format!("a judge named '{name}' already exists"));
         }
 
-        // Preserve the existing key across an edit (it is set separately).
-        let prior_key = ed
+        // Preserve the existing key and provider across an edit (the key is
+        // set separately; the provider is GUI-managed).
+        let (prior_key, prior_provider) = ed
             .original
             .as_ref()
             .and_then(|o| kr.data.judges.get(o))
-            .map(|d| d.api_key.clone())
+            .map(|d| (d.api_key.clone(), d.provider.clone()))
             .unwrap_or_default();
 
         // On rename, drop the old entry and carry the default pointer over.
@@ -3175,6 +3176,7 @@ impl App {
                 high_threshold: high,
                 criteria: ed.criteria.clone(),
                 api_key: prior_key,
+                provider: prior_provider,
             },
         );
         if first {
@@ -3296,7 +3298,8 @@ impl App {
             form.error = Some(format!("no judge named '{name}'"));
             return;
         };
-        let Some(rt) = crate::core::judge::JudgeRuntime::from_def(def) else {
+        let Some(rt) = crate::core::judge::JudgeRuntime::from_def(&kr.data.materialize_judge(def))
+        else {
             form.test_result = Some((
                 MsgKind::Error,
                 format!("judge '{name}' has no key — press k to set one"),

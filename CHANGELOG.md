@@ -5,9 +5,9 @@ All notable changes to Svault are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] - UNRELEASED (development line)
+## [1.1.1] - UNRELEASED (development line)
 
-The desktop GUI development line. **1.1.0 is not released or tagged on its own** —
+The desktop GUI development line (1.1.x). **It is not released or tagged on its own** —
 it is the in-progress line carrying the GUI plus a few small enabling core
 additions; the GUI ships to the public as **2.0.0**. See [roadmap](docs/roadmap.md)
 and [docs/gui.md](docs/gui.md).
@@ -40,6 +40,39 @@ and [docs/gui.md](docs/gui.md).
   `mcp_enabled` flag (default `true`), the human-controlled MCP door switch
   enforced server-side in `mcp::call_get_secret`; and
   `daemon::client::vault_status()` for the GUI's per-vault auto-lock countdown.
+- **Named AI providers in the keyring** (`ProviderDef`: kind / base URL / API
+  key / enabled), with five kinds: `openrouter`, `openai`, `anthropic` (via its
+  OpenAI-compatibility endpoint), `ollama`, and `lmstudio` (local servers, no
+  key needed). A judge references a provider by name and draws its key and base URL
+  from it at runtime (`KeyringData::materialize_judge`); a judge's own
+  `api_key` remains the fallback, and `$SVAULT_OPENROUTER_KEY` behind that.
+  Disabling a provider lends no credentials (its judges fall back to static
+  tier rules); a keyring `default_provider` pre-selects for new judges. All
+  surfaces (daemon gate, CLI, TUI, GUI, MCP) resolve through the same path;
+  `svault judge list` shows `provider` for provider-backed judges. Removing a
+  provider is refused while a judge references it.
+- **AI providers screen in the GUI** — a dedicated sidebar section to add,
+  edit, enable/disable, set-default, and remove providers. The judge form
+  lists only enabled providers and gains a **live model picker** fed by the
+  provider's `GET /models` endpoint (`judge::list_models`), with free text as
+  fallback.
+- **Audit activity view** — the GUI Audit screen now has two sub-tabs: gate
+  decisions (as before) and an **Activity** timeline merging all vault usage
+  logs plus the global `.svault/usage.log`. Provider, judge, and MCP-door
+  config changes made in the GUI are recorded there (`provider.add`,
+  `judge.enable`, `mcp.disable`, …), matching the TUI's global judge logging.
+- **Getting-started home in the GUI** — a four-step checklist (add an AI
+  provider → optionally create a judge → create a vault → add a secret) shown
+  as the first page after sign-in until the store holds a secret, with a
+  sidebar entry and remaining-step badge. Sidebar items now carry icons
+  (lucide-react).
+- **Judge options hidden until a judge is active** (global switch on + at least
+  one judge defined): the vault list's Judge column, the vault-config AI-judge
+  field, and the secret form's "Always judge" checkbox stay out of the way, and
+  tier hints state that medium/high are human-only until then.
+- **OpenCode MCP wiring documented** in [docs/mcp.md](docs/mcp.md) — OpenCode's
+  config uses `type: "local"`, a single `command` array, and `environment` (not
+  `env`) for variables like `SVAULT_CALLER`.
 
 ### Notes
 - The GUI is delivered as a separate Tauri app crate (`gui/`, formerly

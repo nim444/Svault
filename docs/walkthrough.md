@@ -237,7 +237,9 @@ security model, and a raw transcript.
 ## Notes
 
 - **Key safety.** Each judge's OpenRouter key is stored AES-256-GCM encrypted in
-  `.svault/keyring.enc`, never in a plaintext file. A judge with no stored key falls
+  `.svault/keyring.enc`, never in a plaintext file — either on the judge itself or
+  on the named **provider** it references (how the GUI wires judges). A judge with
+  no key from either falls
   back to the opt-in `$SVAULT_OPENROUTER_KEY` environment variable. Rotate a key with
   `svault judge set-key <name>` if it is ever exposed (for example, pasted into a chat
   or a log).

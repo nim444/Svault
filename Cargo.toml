@@ -3,7 +3,7 @@
 # `svault-ai`, now superseded — `svault` and `svault-core` are taken on
 # crates.io). The installed binary has always been `svault`.
 name = "svault-cli"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 authors = ["Nima Karimi <nima.karimi@live.com>"]
 description = "Svault — secret access layer for cooperative AI agents: structured, policy-gated, audited credential access over MCP (Claude Code, Codex, OpenCode) — CLI + TUI + MCP server + daemon"

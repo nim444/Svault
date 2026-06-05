@@ -13,15 +13,15 @@ candidate** and how the project reached it. Shipped versions are detailed in
 > **Version policy.** The project stayed on the **0.9.x** line until the
 > agent-ready surface was built and independently reviewed. **1.0.0 is the first
 > stable, reviewed release** (tagged and published on crates.io). The desktop GUI
-> now develops on the **1.1.0** line, which is not released on its own — it ships
+> now develops on the **1.1.x** line, which is not released on its own — it ships
 > publicly as **2.0.0**.
 
-## Current state (1.0.0 released; 1.1.0 GUI line in progress)
+## Current state (1.0.0 released; 1.1.x GUI line in progress)
 
 The agent-ready surface is complete: every layer below is implemented, tested, and
 independently reviewed. 1.0.0 consolidated this work into the first stable release
 (tagged and published) rather than adding scope. Active development is now the
-desktop GUI on the 1.1.0 line (see [Beyond 1.0.0](#beyond-100)).
+desktop GUI on the 1.1.x line (see [Beyond 1.0.0](#beyond-100)).
 
 **Encrypted local vaults.** AES-256-GCM secret storage with Argon2id key
 derivation. Secret values are zeroized from memory on drop (`ZeroizeOnDrop` on
@@ -290,13 +290,16 @@ These are deliberately sequenced after a stable, audited CLI.
 Tauri — React + TypeScript over the same `svault-cli` core and daemon (no
 reimplemented crypto, policy, or judge). It lives in the `gui/` crate so
 `tauri` never becomes a dependency of the published library. Develops on the
-1.1.0 line; ships as 2.0.0. All 12 design-handoff screens are built:
+1.1.x line; ships as 2.0.0. All 12 design-handoff screens are built:
 
 - Sign-in / out and first-run onboarding (splash, terms, master passphrase,
   one-time recovery code, optional YubiKey).
+- A getting-started home checklist (AI provider → optional judge → vault →
+  secret); judge options stay hidden GUI-wide until a judge is active.
 - Vault dashboard (list, lock/unlock state, last activity) and vault config.
 - Secret management (names + classification; values only on explicit reveal).
-- Judges & policy (registry + live test bench, caller access viewer), MCP wiring,
+- Judges & policy (named AI providers, registry + live test bench, caller
+  access viewer), MCP wiring,
   audit timeline, pending approvals, backup & recovery, settings.
 - System-tray popover with daemon status and an auto-lock countdown.
 - Daemon auto-start on launch; one install delivers GUI + CLI + TUI + MCP.
@@ -328,8 +331,10 @@ See [docs/gui.md](docs/gui.md).
 - `libc` (Unix) — `setsid` to detach the daemon, `getpeereid` for the peer-UID
   bond, `sigaction` for shutdown signals.
 
-Planned for later milestones: `tauri` + `serde_json` (2.0.0 GUI), and the
-deferred auth crates (`totp-rs`, `qrcode`, `yubico`, `security-framework`).
+The 2.0.0 GUI adds `tauri` + React/TypeScript (in the separate `gui/` crate
+only — never a dependency of the published library). Planned for later
+milestones: the
+deferred auth crates (`totp-rs`, `qrcode`, `security-framework`).
 
 ## Run locally
 

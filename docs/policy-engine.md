@@ -107,7 +107,9 @@ specific one — the **Assigned judge** prompt in `svault create` / `svault sett
 (and the TUI Create / Settings picker). **Change** a judge's
 model/thresholds/criteria with `svault judge edit <name>`; **rotate or clear** its
 key with `svault judge set-key <name>` (a cleared key falls back to the opt-in
-`$SVAULT_OPENROUTER_KEY`). Until the keyring is unlocked the judge is off and the
+`$SVAULT_OPENROUTER_KEY`). In the **GUI** a judge instead references a named
+**provider** (an API account in the keyring) and draws its key from there.
+Until the keyring is unlocked the judge is off and the
 static tier rules apply.
 
 ### 4. Make a request as the agent
@@ -265,7 +267,8 @@ storage.)
 See [security.md](security.md#ai-judge) for setup. In short: judges live in the
 AES-256-GCM-encrypted keyring (`.svault/keyring.enc`). Create it (`svault keyring
 init`), add one or more **named judges** (`svault judge add <name>` — each carries
-its own model, thresholds, free-text criteria, and API key), turn the judge on
+its own model, thresholds, free-text criteria, and an API key of its own or via
+a named **provider**), turn the judge on
 globally (`svault judge enable`), and unlock the keyring (`svault keyring unlock`).
 Each vault opts in via its per-vault toggle and uses the keyring's **default**
 judge unless assigned a specific one with `svault settings` (or the TUI). The
