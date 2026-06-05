@@ -27,9 +27,9 @@ interface NavItem {
 }
 
 const primaryNav: NavItem[] = [
-  { to: "/vaults", label: "Vaults", icon: Vault },
   { to: "/providers", label: "AI providers", icon: Bot },
-  { to: "/judges", label: "Judges & Policy", icon: Scale },
+  { to: "/judges", label: "Guardian", icon: Scale },
+  { to: "/vaults", label: "Vaults", icon: Vault },
   { to: "/mcp", label: "MCP", icon: Plug },
   { to: "/audit", label: "Audit", icon: ScrollText },
   { to: "/pending", label: "Pending", icon: Hourglass },

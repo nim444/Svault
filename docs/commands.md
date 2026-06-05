@@ -189,7 +189,7 @@ file. An empty value clears the judge's key so it falls back to
 A judge created in the **GUI** usually references a named **provider** instead
 of carrying its own key (the provider's key and base URL win at runtime;
 `judge list` shows `provider` for those). Providers are managed on the GUI's
-Judges & Policy screen — the CLI judge commands above keep working unchanged
+Guardian screen — the CLI judge commands above keep working unchanged
 for own-key judges.
 
 ## Recovery & portability

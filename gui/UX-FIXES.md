@@ -86,6 +86,31 @@ Functionality is considered correct across the board; this pass is purely UX.
   sea of empty space. Cards restructured as tiles: badges + enable toggle on
   top, URL/usage/test result in the middle, action row pinned at the bottom.
 
+### Guardian (Judges) — WIP
+- Sidebar item renamed **Judges & Policy → Guardian** (page title too); first
+  sub-tab is now just "Judges".
+- The always-visible Live test panel is gone — each judge card has a **Test**
+  button that opens the live test in a modal, pre-targeting that judge. Judge
+  cards are a responsive grid (1/2/3 columns) like providers.
+- Judge registry redesigned as **cards** (provider logo, name, default / no-key
+  badges, model in mono, "via provider · allow ≥60 · high ≥80" summary line,
+  Set default / Edit / Remove actions) — the old cramped inline editor is gone.
+- Remove is now confirm-gated, explaining the fallback (vaults fall back to the
+  default judge; none left = medium/high go human-only).
+- **Add/Edit is a 3-step wizard in a modal** (blurred backdrop, step indicator):
+  1. **Provider** — pick an enabled provider (default pre-selected). With no
+     provider available the wizard explains it instead of dead-ending: "without
+     a provider the judge has no model to reason with — only static policies
+     apply and medium/high stay human-only", with an "Add a provider" button.
+  2. **Model** — live dropdown of the provider's models with a
+     **(recommended)** pick pre-selected per kind (gemini-flash for OpenRouter,
+     4.1-mini for OpenAI, haiku for Anthropic, llama3-class for local); free
+     text fallback when the list can't load.
+  3. **Tuning** — name, Allow/High scores with a plain-words explainer (judge
+     scores 0–100; medium released ≥ Allow, high needs ≥ High), optional
+     criteria with an example. Creating the first judge flips the global judge
+     switch on.
+
 ### Audit: Activity view + config-change events — WIP
 - Provider/judge/MCP config changes now land in the audit trail: every GUI
   mutation (provider add/update/remove/enable/disable/default, judge
