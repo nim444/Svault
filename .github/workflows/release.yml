@@ -114,9 +114,9 @@ jobs:
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
           status=$(curl -s -o /dev/null -w '%{http_code}' \
             -H 'User-Agent: svault-release (https://github.com/nim444/Svault)' \
-            "https://crates.io/api/v1/crates/svault-ai/$version")
+            "https://crates.io/api/v1/crates/svault-cli/$version")
           if [ "$status" = "200" ]; then
-            echo "svault-ai $version is already on crates.io — skipping publish."
+            echo "svault-cli $version is already on crates.io — skipping publish."
             exit 0
           fi
           cargo publish --locked

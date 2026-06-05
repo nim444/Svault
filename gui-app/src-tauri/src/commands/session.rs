@@ -11,9 +11,9 @@ use zeroize::Zeroizing;
 use crate::error::{emsg, CmdResult};
 use crate::state::GuiState;
 
-use svault_ai::core::session::MAX_SESSION_SECS;
-use svault_ai::core::{keyring, master, session, usage, vault, yubikey};
-use svault_ai::daemon::{self, client};
+use svault_cli::core::session::MAX_SESSION_SECS;
+use svault_cli::core::{keyring, master, session, usage, vault, yubikey};
+use svault_cli::daemon::{self, client};
 
 /// The leaf directory name a vault is keyed under in the daemon / session.
 fn leaf(dir: &Path) -> String {

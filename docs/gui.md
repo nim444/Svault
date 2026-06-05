@@ -2,7 +2,7 @@
 
 The desktop GUI is the roadmap's **2.0.0** milestone: a cross-platform Tauri app
 that sits beside the CLI, TUI, and MCP frontends and drives the **same**
-`svault-ai` core and daemon. It never reimplements crypto, the policy engine, or
+`svault-cli` core and daemon. It never reimplements crypto, the policy engine, or
 the AI judge — every screen is a thin Tauri command over the existing Rust APIs.
 
 It develops on the **1.1.0** line and ships publicly as **2.0.0** (1.1.0 is not
@@ -30,8 +30,8 @@ gui-app/                     # the Tauri desktop app (not published to crates.io
     src/lib.rs               # builder: sets SVAULT_HOME=~, Source::Gui, tray
 ```
 
-The `src-tauri` crate path-depends on `svault-ai` (`../..`); `tauri` is **not** a
-dependency of the published library, so `cargo install svault-ai` stays lean.
+The `src-tauri` crate path-depends on `svault-cli` (`../..`); `tauri` is **not** a
+dependency of the published library, so `cargo install svault-cli` stays lean.
 
 At startup the backend defaults `SVAULT_HOME` to the user's home (one global store
 at `~/.svault`, exactly like `cli::run`) and stamps the audit source as `gui`.
@@ -40,8 +40,8 @@ at `~/.svault`, exactly like `cli::run`) and stamps the audit source as `gui`.
 
 ```sh
 cd gui-app
-npm install          # first time only
-npm run tauri dev    # launches the app against the live frontend
+bun install          # first time only
+bun run tauri dev    # launches the app against the live frontend
 ```
 
 First launch with no master set → a one-time splash → onboarding; thereafter →
@@ -50,7 +50,7 @@ vault made in one is visible in the others.
 
 **Daemon auto-start.** On launch (macOS/Linux) the GUI starts the daemon if it
 isn't already running, by spawning a `svault` binary — never its own executable.
-In a packaged build that's the bundled sidecar; **in `npm run tauri dev` there is
+In a packaged build that's the bundled sidecar; **in `bun run tauri dev` there is
 no sidecar**, so auto-start needs `svault` on your `PATH` (e.g. `cargo install
 --path .`, or the in-app *Install CLI to PATH*). If it can't find a distinct
 `svault`, it safely skips and you can start the daemon from Settings. Keep the
@@ -61,7 +61,7 @@ daemon client speak the same socket protocol.
 
 ```sh
 # Frontend
-cd gui-app && npm run build          # tsc + vite
+cd gui-app && bun run build          # tsc + vite
 
 # Backend
 cd gui-app/src-tauri
@@ -102,7 +102,7 @@ All 12 screens from `docs/design_handoff_svault_gui/` are implemented:
 
 ## Core additions for the GUI
 
-Small, backward-compatible additions in `svault-ai`:
+Small, backward-compatible additions in `svault-cli`:
 
 - `keyring`: an `mcp_enabled` flag (default `true`) — the human-controlled MCP
   door switch, **enforced server-side** in `mcp::call_get_secret` (a disabled
@@ -120,7 +120,7 @@ existing `svault` binary as a Tauri **sidecar**, and offer **Settings →
 Diagnostics → Install CLI to PATH** (`install_cli`), which copies the sidecar to
 `~/.local/bin`.
 
-To wire the sidecar before `npm run tauri build`:
+To wire the sidecar before `bun run tauri build`:
 
 1. Build the CLI and stage it per target triple:
 

@@ -1,4 +1,4 @@
-//! Tauri command layer — thin wrappers over `svault_ai::core` and the daemon
+//! Tauri command layer — thin wrappers over `svault_cli::core` and the daemon
 //! client. No crypto, policy, or judge logic lives here; these commands only
 //! marshal data between the React frontend and the existing Rust core.
 
@@ -36,10 +36,10 @@ pub struct AppInfo {
 pub fn app_info() -> AppInfo {
     AppInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        master_exists: svault_ai::core::master::exists(),
-        recovery_exists: svault_ai::core::master::master_recovery_exists(),
-        yubikey_enrolled: svault_ai::core::master::yubikey_enrolled(),
-        store_path: svault_ai::core::vault::svault_dir()
+        master_exists: svault_cli::core::master::exists(),
+        recovery_exists: svault_cli::core::master::master_recovery_exists(),
+        yubikey_enrolled: svault_cli::core::master::yubikey_enrolled(),
+        store_path: svault_cli::core::vault::svault_dir()
             .to_string_lossy()
             .into_owned(),
     }

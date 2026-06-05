@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::commands::common::{open_or_init_keyring, parse_tier};
 use crate::error::{emsg, CmdResult};
 
-use svault_ai::core::judge::{self, JudgeContext, JudgeVerdict};
-use svault_ai::core::keyring::{self, JudgeDef};
+use svault_cli::core::judge::{self, JudgeContext, JudgeVerdict};
+use svault_cli::core::keyring::{self, JudgeDef};
 
 #[derive(Serialize)]
 pub struct KeyringState {

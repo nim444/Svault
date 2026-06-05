@@ -11,7 +11,7 @@ use crate::commands::session::stamp_unlock;
 use crate::error::{emsg, CmdResult};
 use crate::state::GuiState;
 
-use svault_ai::core::master;
+use svault_cli::core::master;
 
 #[derive(Serialize)]
 pub struct InitResult {

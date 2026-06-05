@@ -6,9 +6,9 @@ use serde::Serialize;
 use crate::commands::common::{dir_for, leaf, open_vault, require_master};
 use crate::error::{emsg, CmdResult};
 
-use svault_ai::core::meta::VaultMeta;
-use svault_ai::core::vault::Vault;
-use svault_ai::core::{master, portable, recovery, secfile, session, usage, vault};
+use svault_cli::core::meta::VaultMeta;
+use svault_cli::core::vault::Vault;
+use svault_cli::core::{master, portable, recovery, secfile, session, usage, vault};
 
 /// Export a vault to an encrypted bundle at `path` (owner-only — it carries the
 /// wrapped key).

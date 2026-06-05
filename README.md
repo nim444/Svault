@@ -10,10 +10,10 @@
 [![macos](https://github.com/nim444/Svault/actions/workflows/macos.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/macos.yml)
 [![windows](https://github.com/nim444/Svault/actions/workflows/windows.yml/badge.svg)](https://github.com/nim444/Svault/actions/workflows/windows.yml)
 
-[![crates.io](https://img.shields.io/crates/v/svault-ai.svg)](https://crates.io/crates/svault-ai)
-[![downloads](https://img.shields.io/crates/d/svault-ai.svg)](https://crates.io/crates/svault-ai)
-[![docs.rs](https://img.shields.io/docsrs/svault-ai)](https://docs.rs/svault-ai)
-[![license](https://img.shields.io/crates/l/svault-ai.svg)](LICENSE)
+[![crates.io](https://img.shields.io/crates/v/svault-cli.svg)](https://crates.io/crates/svault-cli)
+[![downloads](https://img.shields.io/crates/d/svault-cli.svg)](https://crates.io/crates/svault-cli)
+[![docs.rs](https://img.shields.io/docsrs/svault-cli)](https://docs.rs/svault-cli)
+[![license](https://img.shields.io/github/license/nim444/Svault)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org)
 
 </div>
@@ -61,8 +61,8 @@ flowchart LR
 ## Quick start
 
 ```bash
-# Install
-cargo install svault-ai
+# Install (`svault-cli` from 2.0.0; up to 1.0.0 the crate was `svault-ai`)
+cargo install svault-cli
 
 # 1. Create an encrypted vault (interactive: name, agents, auto-lock,
 #    default tier, AI judge). On first run you set one master passphrase — it
@@ -332,7 +332,7 @@ flowchart TD
 | **Hardware-key unlock + hardening** | Shipped | YubiKey (FIDO2 hmac-secret) unlock — an alternative keyslot over the master key (passphrase or touch, not 2FA); a 6-hour re-auth cap on every unlock path; first-run onboarding + an app-level TUI sign-in / logout; storage local-only |
 | **Conditional access + escalation** | Shipped | Time-window / required-caller conditions in the encrypted policy; repeated denials seal a secret and escalate to a human (`svault pending` / `approve`, TUI `A`) — agents never self-clear |
 | **Independent security review** | Shipped | Three independent external-model reviews of the full 0.9.9 surface (no Critical/High); the actionable findings fixed before 1.0 (`docs/security-review/`) |
-| **1.0.0 — stable** | Shipped | First stable release: the agent-ready layer consolidated and reviewed, agents on the MCP door, the store at `~/.svault`. Published on [crates.io](https://crates.io/crates/svault-ai). Install channels (script, Homebrew, Docker) follow post-1.0 |
+| **1.0.0 — stable** | Shipped | First stable release: the agent-ready layer consolidated and reviewed, agents on the MCP door, the store at `~/.svault`. Published on [crates.io](https://crates.io/crates/svault-ai) (as `svault-ai`; the crate is `svault-cli` from 2.0.0). Install channels (script, Homebrew, Docker) follow post-1.0 |
 | **Desktop GUI (2.0.0)** | In progress | Cross-platform Tauri vault manager + system tray — all 12 handoff screens built over the same core/daemon, daemon auto-start, one install delivering GUI + CLI + TUI + MCP (`gui-app/`, [docs/gui.md](docs/gui.md)). Develops on the 1.1.0 line; ships publicly as 2.0.0 |
 
 Detail for each milestone lives in the [changelog](CHANGELOG.md) and the [full roadmap](docs/roadmap.md).

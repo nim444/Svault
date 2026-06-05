@@ -102,7 +102,7 @@ calls into `core`.
 ```
 src/
   lib.rs            pub mod core; daemon; tui; cli; mcp; gui;
-  main.rs           fn main() { svault_ai::cli::run() }
+  main.rs           fn main() { svault_cli::cli::run() }
   core/             frontend-agnostic engine — no dependency on any frontend
     crypto, secfile, passphrase, config, meta, master, recovery, keyring,
     vault, policy, judge, gate, audit, usage, session, portable, yubikey
@@ -114,7 +114,7 @@ src/
 ```
 
 The **desktop GUI** (roadmap 2.0.0) is a separate Tauri app crate at `gui-app/`
-rather than a module under `src/`: `gui-app/src-tauri` path-depends on `svault-ai`
+rather than a module under `src/`: `gui-app/src-tauri` path-depends on `svault-cli`
 and exposes thin Tauri commands over the same `core` + `daemon`, so `tauri` never
 becomes a dependency of the published library. It is still a `core`-driven
 frontend in every sense — it just compiles as its own binary. The `src/gui/`

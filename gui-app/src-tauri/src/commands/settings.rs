@@ -7,8 +7,8 @@ use zeroize::Zeroizing;
 use crate::commands::common::{open_or_init_keyring, require_master};
 use crate::error::{emsg, CmdResult};
 
-use svault_ai::core::{master, vault, yubikey};
-use svault_ai::daemon;
+use svault_cli::core::{master, vault, yubikey};
+use svault_cli::daemon;
 
 fn prefs_path() -> std::path::PathBuf {
     vault::svault_dir().join("gui-prefs.json")
@@ -75,7 +75,7 @@ pub fn daemon_info() -> DaemonInfo {
         .and_then(|s| s.trim().parse::<u32>().ok());
     // Config lives in the keyring; fall back to defaults when locked.
     let (max_connections, idle_timeout_secs, max_unlocked_secs) =
-        match svault_ai::core::keyring::open_from_session() {
+        match svault_cli::core::keyring::open_from_session() {
             Some(kr) => (
                 kr.data.daemon.max_connections,
                 kr.data.lock.idle_timeout_secs,

@@ -1,19 +1,24 @@
 [package]
-name = "svault-ai"
+# Published as `svault-cli` from 2.0.0 (1.0.0 and earlier were published as
+# `svault-ai`, now superseded — `svault` and `svault-core` are taken on
+# crates.io). The installed binary has always been `svault`.
+name = "svault-cli"
 version = "1.1.0"
 edition = "2021"
 authors = ["Nima Karimi <nima.karimi@live.com>"]
-description = "Secret access layer for cooperative AI agents — structured, policy-gated, audited credential access"
+description = "Svault — secret access layer for cooperative AI agents: structured, policy-gated, audited credential access over MCP (Claude Code, Codex, OpenCode) — CLI + TUI + MCP server + daemon"
 license = "Apache-2.0"
 repository = "https://github.com/nim444/Svault"
 homepage = "https://github.com/nim444/Svault"
-documentation = "https://docs.rs/svault-ai"
+documentation = "https://docs.rs/svault-cli"
 readme = "README.md"
-keywords = ["security", "secrets", "vault", "ai", "encryption"]
+# crates.io caps keywords at 5. Agent-host names (Claude Code, Codex, OpenCode)
+# are surfaced via the README/description instead.
+keywords = ["ai", "mcp", "agent", "secrets", "security"]
 categories = ["authentication", "cryptography", "command-line-utilities"]
 
 [lib]
-name = "svault_ai"
+name = "svault_cli"
 path = "src/lib.rs"
 
 [[bin]]

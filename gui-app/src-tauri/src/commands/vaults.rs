@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 use crate::commands::common::{dir_for, leaf, open_vault, parse_tier, require_master};
 use crate::error::{emsg, CmdResult};
 
-use svault_ai::core::meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
-use svault_ai::core::policy::VaultPolicyData;
-use svault_ai::core::{master, recovery, session, usage, vault, vault::Vault};
-use svault_ai::daemon::client;
+use svault_cli::core::meta::{AccessConfig, AllowAgent, LoginMethod, VaultMeta, VaultSettings};
+use svault_cli::core::policy::VaultPolicyData;
+use svault_cli::core::{master, recovery, session, usage, vault, vault::Vault};
+use svault_cli::daemon::client;
 
 #[derive(Serialize)]
 pub struct VaultSummary {

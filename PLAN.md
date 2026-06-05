@@ -1,7 +1,7 @@
 # Svault — Build Plan
 
 Svault is an AI-aware secret manager written in Rust: a single native binary
-(`svault`, crate `svault-ai`) with no runtime dependencies. It encrypts secrets
+(`svault`, crate `svault-cli`) with no runtime dependencies. It encrypts secrets
 at rest, holds unlocked keys in a memory-only daemon, and gates agent access
 through an enforced policy engine and an optional AI judge.
 
@@ -233,8 +233,10 @@ registries).
 
 **Done**
 
-- **crates.io** — published as `svault-ai`, binary `svault` (`cargo install
-  svault-ai`, builds from source).
+- **crates.io** — published as `svault-cli` from 2.0.0, binary `svault`
+  (`cargo install svault-cli`, builds from source). 1.0.0 and earlier were
+  published as `svault-ai` (superseded; `svault` and `svault-core` are taken
+  on crates.io by an unrelated project).
 - **GitHub Releases** — `release.yml` builds and uploads four target archives on
   each `v*` tag (the artifact source every channel below points at), with a
   matching `.sha256` and SLSA provenance per archive.
@@ -247,7 +249,7 @@ registries).
   project is personal) as `curl -fsSL https://<install-host>/install.sh | sh`;
   the primary install link in the README.
 - **cargo-binstall** — add `[package.metadata.binstall]` mapping `pkg-url` /
-  `pkg-fmt` to the release asset names so `cargo binstall svault-ai` fetches a
+  `pkg-fmt` to the release asset names so `cargo binstall svault-cli` fetches a
   prebuilt binary instead of compiling.
 - **Homebrew tap** — own `nim444/homebrew-tap` with `Formula/svault.rb`
   (per-arch `url` + `sha256`), auto-bumped on each `v*` tag. Install:
@@ -285,7 +287,7 @@ These are deliberately sequenced after a stable, audited CLI.
 ### 2.0.0 — Desktop GUI (Tauri) — in progress
 
 `svault-gui`, a cross-platform desktop app (macOS, Linux, Windows) built with
-Tauri — React + TypeScript over the same `svault-ai` core and daemon (no
+Tauri — React + TypeScript over the same `svault-cli` core and daemon (no
 reimplemented crypto, policy, or judge). It lives in the `gui-app/` crate so
 `tauri` never becomes a dependency of the published library. Develops on the
 1.1.0 line; ships as 2.0.0. All 12 design-handoff screens are built:

@@ -6,7 +6,7 @@
 use crate::commands::secrets::SecretForm;
 use crate::commands::vaults::VaultForm;
 use crate::commands::{audit, judge, mcp, pending, policy, secrets, vaults};
-use svault_ai::core::master;
+use svault_cli::core::master;
 
 fn vault_form(name: &str) -> VaultForm {
     VaultForm {
@@ -29,7 +29,7 @@ fn gui_command_layer_end_to_end() {
     let tmp = tempfile::tempdir().unwrap();
     std::env::set_var("SVAULT_HOME", tmp.path());
     // Mirror what `run()` does at startup.
-    svault_ai::core::usage::set_source(svault_ai::core::usage::Source::Gui);
+    svault_cli::core::usage::set_source(svault_cli::core::usage::Source::Gui);
 
     // Set the master + cache the session (what sign-in/onboarding does).
     let m = master::Master::init("a-strong-master-passphrase-123").unwrap();

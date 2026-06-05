@@ -7,8 +7,8 @@ use serde::Serialize;
 use crate::commands::common::open_vault;
 use crate::error::CmdResult;
 
-use svault_ai::core::audit;
-use svault_ai::core::policy::{SEAL_DENY_THRESHOLD, SEAL_WINDOW_SECS};
+use svault_cli::core::audit;
+use svault_cli::core::policy::{SEAL_DENY_THRESHOLD, SEAL_WINDOW_SECS};
 
 #[derive(Serialize)]
 pub struct CallerRuleInfo {
@@ -51,7 +51,7 @@ pub struct PolicySurface {
     pub seal_window_secs: i64,
 }
 
-fn conditioned(policy: &svault_ai::core::policy::VaultPolicyData) -> Vec<ConditionInfo> {
+fn conditioned(policy: &svault_cli::core::policy::VaultPolicyData) -> Vec<ConditionInfo> {
     policy
         .secrets
         .iter()
