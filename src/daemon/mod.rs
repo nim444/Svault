@@ -773,6 +773,14 @@ mod imp {
     /// printing, so callers like the TUI (which can't write to stdout) can show
     /// it in their own status line.
     pub fn start_quiet() -> Result<String> {
+        let exe = std::env::current_exe().context("locate svault binary")?;
+        start_quiet_with_exe(&exe)
+    }
+
+    /// Start the daemon using an explicit `svault` binary instead of the current
+    /// executable. The GUI uses this: its own executable is the desktop app, not
+    /// the CLI, so it must launch the bundled `svault` sidecar to run the daemon.
+    pub fn start_quiet_with_exe(exe: &Path) -> Result<String> {
         use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::process::CommandExt;
         use std::process::{Command, Stdio};
@@ -787,7 +795,6 @@ mod imp {
         }
         let _ = std::fs::remove_file(socket_path(&base)); // clear any stale socket
 
-        let exe = std::env::current_exe().context("locate svault binary")?;
         // Cap daemon.log growth (#17): rotate to .log.1 once it passes ~5 MB.
         let log_p = log_path(&base);
         if let Ok(meta) = std::fs::metadata(&log_p) {
@@ -1720,6 +1727,9 @@ mod imp {
     pub fn start_quiet() -> Result<String> {
         Ok(UNIX_ONLY.to_string())
     }
+    pub fn start_quiet_with_exe(_exe: &Path) -> Result<String> {
+        Ok(UNIX_ONLY.to_string())
+    }
     pub fn stop_quiet() -> Result<String> {
         Ok(UNIX_ONLY.to_string())
     }
@@ -1733,10 +1743,14 @@ mod imp {
 
 #[cfg(unix)]
 pub use imp::{
-    base_dir, doctor, is_running, run, send, start, start_quiet, status, stop, stop_quiet,
+    base_dir, doctor, is_running, run, send, start, start_quiet, start_quiet_with_exe, status,
+    stop, stop_quiet,
 };
 #[cfg(not(unix))]
-pub use imp::{base_dir, doctor, is_running, run, start, start_quiet, status, stop, stop_quiet};
+pub use imp::{
+    base_dir, doctor, is_running, run, start, start_quiet, start_quiet_with_exe, status, stop,
+    stop_quiet,
+};
 
 #[cfg(test)]
 mod proto_tests {

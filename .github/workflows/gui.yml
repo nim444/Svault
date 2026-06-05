@@ -1,0 +1,73 @@
+name: gui
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: gui-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (frontend + backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui-app/src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Tauri's Linux runtime/build dependencies.
+      - name: Install Tauri system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev pkg-config libudev-dev
+
+      - name: Frontend build
+        working-directory: gui-app
+        run: |
+          npm ci
+          npm run build
+
+      - name: Backend fmt
+        working-directory: gui-app/src-tauri
+        run: cargo fmt --all --check
+
+      - name: Backend clippy
+        working-directory: gui-app/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Backend build
+        working-directory: gui-app/src-tauri
+        run: cargo build
+
+  # Release bundles (.dmg / .msi / .AppImage) are produced by the standard
+  # tauri-action across the four targets. Kept commented until 2.0.0 tagging so
+  # CI stays fast on every push.
+  #
+  # bundle:
+  #   strategy:
+  #     matrix:
+  #       include:
+  #         - { os: macos-latest, target: aarch64-apple-darwin }
+  #         - { os: macos-latest, target: x86_64-apple-darwin }
+  #         - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+  #         - { os: windows-latest, target: x86_64-pc-windows-msvc }
+  #   runs-on: ${{ matrix.os }}
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - run: scripts/bundle-sidecar.sh        # stage the svault sidecar
+  #     - uses: tauri-apps/tauri-action@v0
+  #       with:
+  #         projectPath: gui-app

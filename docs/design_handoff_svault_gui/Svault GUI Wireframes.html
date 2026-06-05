@@ -1,0 +1,1343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Svault — Desktop GUI Wireframes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Kalam:wght@400;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="wf.css" />
+</head>
+<body data-annot="on">
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div>
+      <h1>Svault — Desktop GUI</h1>
+      <div class="sub">Low-fi wireframes for the cross-platform (Tauri) desktop frontend over the Rust core daemon. Structure &amp; flow first — not final visuals.</div>
+    </div>
+    <div class="meta">
+      v1 wireframes · Jun 2026<br />
+      left-sidebar shell + menu-bar tray<br />
+      <span class="muted">click tabs to switch screens</span>
+    </div>
+  </header>
+
+  <div class="legend">
+    <span class="k"><span class="dot ok"></span> unlocked / allow</span>
+    <span class="k"><span class="dot lock"></span> locked / deny</span>
+    <span class="k"><span class="dot warn"></span> pending / medium tier</span>
+    <span class="k"><span class="dot info"></span> AI judge</span>
+    <span class="k"><span class="dot hollow"></span> low tier</span>
+    <span class="k"><span class="info" style="cursor:default">?</span> hover fields for help</span>
+    <span class="k" style="margin-left:auto"><span class="annot" style="font-size:13px">hand notes = design intent</span></span>
+  </div>
+
+  <nav class="tabs" id="tabs" role="tablist">
+    <button class="tab" role="tab" data-screen="signin"><span class="n">01</span>Sign in</button>
+    <button class="tab" role="tab" data-screen="onboarding"><span class="n">02</span>Onboarding</button>
+    <button class="tab" role="tab" data-screen="vaults"><span class="n">03</span>Vault list</button>
+    <button class="tab" role="tab" data-screen="vaultcfg"><span class="n">04</span>Vault config</button>
+    <button class="tab" role="tab" data-screen="secrets"><span class="n">05</span>Secrets + add</button>
+    <button class="tab" role="tab" data-screen="judge"><span class="n">06</span>Judge &amp; Policy</button>
+    <button class="tab" role="tab" data-screen="mcp"><span class="n">07</span>MCP</button>
+    <button class="tab" role="tab" data-screen="audit"><span class="n">08</span>Audit</button>
+    <button class="tab" role="tab" data-screen="pending"><span class="n">09</span>Pending</button>
+    <button class="tab" role="tab" data-screen="backup"><span class="n">10</span>Backup</button>
+    <button class="tab" role="tab" data-screen="settings"><span class="n">11</span>Settings</button>
+    <button class="tab" role="tab" data-screen="tray"><span class="n">12</span>Tray popover</button>
+  </nav>
+
+  <!-- ============================ 01 ONBOARDING ============================ -->
+  <section class="screen" data-screen="onboarding">
+    <div class="screen-head">
+      <h2>First-run onboarding</h2>
+      <p>A linear, can't-skip-the-important-bits flow. Honest disclaimer → one master passphrase → one-time recovery code → optional hardware key. Lands the user in an empty vault list, ready to create their first vault.</p>
+    </div>
+    <p class="note-strip">4 steps, shown left → right. Same window, content swaps. Stepper always visible so the user knows where they are.</p>
+
+    <div class="flow">
+
+      <!-- step 1 -->
+      <div class="frame ostep">
+        <div class="stepper">
+          <span class="s on">1</span><span class="bar"></span>
+          <span class="s">2</span><span class="bar"></span>
+          <span class="s">3</span><span class="bar"></span>
+          <span class="s">4</span>
+        </div>
+        <div class="obody">
+          <h4>Terms &amp; the honest boundary</h4>
+          <div class="ohint">What Svault is — and is not.</div>
+          <div class="ph" style="flex:1; text-align:left; align-items:flex-start; justify-items:start; padding:14px">
+            Svault gates &amp; audits cooperative AI agents.<br /><br />
+            It is <b>not</b> a sandbox against a hostile process running as your own user — that process can read an unlocked session directly.<br /><br />
+            <span class="muted">[ scrollable disclaimer text ]</span>
+          </div>
+          <label class="inline" style="margin:14px 0 12px"><span class="chk on"></span> <span class="tiny">I understand the same-UID boundary.</span></label>
+          <button class="btn primary" style="width:100%">Agree &amp; continue</button>
+        </div>
+      </div>
+
+      <div class="arrow">→</div>
+
+      <!-- step 2 -->
+      <div class="frame ostep">
+        <div class="stepper">
+          <span class="s done">✓</span><span class="bar done"></span>
+          <span class="s on">2</span><span class="bar"></span>
+          <span class="s">3</span><span class="bar"></span>
+          <span class="s">4</span>
+        </div>
+        <div class="obody">
+          <h4>Set your master passphrase</h4>
+          <div class="ohint">One passphrase unlocks every vault. Argon2id, 64&nbsp;MB.</div>
+          <label class="lbl">Master passphrase</label>
+          <div class="field" style="margin-bottom:12px">•••••••••••••<span class="cursor"></span></div>
+          <label class="lbl">Confirm</label>
+          <div class="field" style="margin-bottom:10px">•••••••••••••</div>
+          <div class="inline tiny" style="gap:6px; margin-bottom:6px">strength
+            <span class="seg" style="border-radius:6px"><span class="on">▮</span><span class="on">▮</span><span class="on">▮</span><span>▮</span></span> strong
+          </div>
+          <div class="help">Cannot be recovered if lost — that's what step 3 is for.</div>
+          <div class="grow"></div>
+          <button class="btn primary" style="width:100%">Set passphrase</button>
+        </div>
+      </div>
+
+      <div class="arrow">→</div>
+
+      <!-- step 3 -->
+      <div class="frame ostep">
+        <div class="stepper">
+          <span class="s done">✓</span><span class="bar done"></span>
+          <span class="s done">✓</span><span class="bar done"></span>
+          <span class="s on">3</span><span class="bar"></span>
+          <span class="s">4</span>
+        </div>
+        <div class="obody">
+          <h4>Write down your recovery code</h4>
+          <div class="ohint">160-bit second keyslot. Shown once. Never stored in plaintext.</div>
+          <div class="field" style="flex-direction:column; align-items:flex-start; gap:6px; color:var(--ink); font-size:13px; letter-spacing:1px; margin-bottom:8px">
+            <span>SV4T-9KQ2-7HMX-3PWL</span>
+            <span>RZ8N-6CTD-J5VB-2FAY</span>
+          </div>
+          <div class="inline" style="gap:8px; margin-bottom:12px">
+            <button class="btn sm">⧉ Copy</button>
+            <button class="btn sm ghost">↧ Download .txt</button>
+          </div>
+          <label class="inline"><span class="chk on"></span> <span class="tiny">I've stored this somewhere safe.</span></label>
+          <div class="grow"></div>
+          <button class="btn primary" style="width:100%">Continue</button>
+        </div>
+      </div>
+
+      <div class="arrow">→</div>
+
+      <!-- step 4 -->
+      <div class="frame ostep">
+        <div class="stepper">
+          <span class="s done">✓</span><span class="bar done"></span>
+          <span class="s done">✓</span><span class="bar done"></span>
+          <span class="s done">✓</span><span class="bar done"></span>
+          <span class="s on">4</span>
+        </div>
+        <div class="obody">
+          <h4>Add a hardware key <span class="muted tiny">(optional)</span></h4>
+          <div class="ohint">YubiKey via FIDO2 hmac-secret — an alternate keyslot over the master.</div>
+          <div class="ph" style="flex:1; gap:8px">
+            <div style="font-size:30px; line-height:1">⛶</div>
+            <div>Insert your key and touch it to enrol</div>
+            <div class="muted tiny">waiting for device…</div>
+          </div>
+          <div class="grow"></div>
+          <div class="inline" style="gap:10px; margin-top:12px">
+            <button class="btn primary" style="flex:1">Enrol key</button>
+            <button class="btn ghost" style="flex:1">Skip for now</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="annot-row"><div class="annot">Recovery step gates on the checkbox — can't continue until they confirm. This is the one screen we never let people rush.</div></div>
+    <div class="annot-row"><div class="annot">Step 4 is genuinely optional &amp; clearly labelled — skipping drops them straight into the empty vault list (screen 03).</div></div>
+  </section>
+
+  <!-- ============================ 02 VAULT LIST ============================ -->
+  <section class="screen" data-screen="vaults">
+    <div class="screen-head">
+      <h2>Vault list — the home screen</h2>
+      <p>Where you land after unlock. Left sidebar is the persistent app shell (used by every screen). The daemon-status block lives bottom-left so the keys-in-memory / auto-lock state is always visible. Two layout directions for the main panel below.</p>
+    </div>
+
+    <div class="variant-label">Direction A — dense list / table</div>
+    <div class="frame">
+      <div class="chrome">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="title">Svault — <b>Vaults</b></span>
+        <span class="right"><span class="state ul"><span class="dot ok"></span> daemon up</span> · <span class="kbd">⌘L</span> lock all</span>
+      </div>
+      <div class="app">
+        <!-- SIDEBAR (shared shell) -->
+        <aside class="sidebar">
+          <div class="brand"><span class="mark">S</span><span class="name">Svault</span></div>
+          <div class="nav-item sel"><span class="ico"></span> Vaults <span class="ct">4</span></div>
+          <div class="nav-item"><span class="ico"></span> Judges &amp; Policy</div>
+          <div class="nav-item"><span class="ico"></span> MCP</div>
+          <div class="nav-item"><span class="ico"></span> Audit</div>
+          <div class="nav-item"><span class="ico"></span> Pending <span class="ct" style="border-color:var(--warn); color:var(--warn)">2</span></div>
+          <hr class="nav-sep" />
+          <div class="nav-item"><span class="ico"></span> Backup &amp; recovery</div>
+          <div class="nav-item"><span class="ico"></span> Settings</div>
+          <div class="daemon-box">
+            <div class="hd"><span class="dot ok"></span> Daemon · keys in memory</div>
+            <div class="big">3 of 4 unlocked</div>
+            <div class="muted">auto-lock in 4:58 · re-auth cap 5h 12m</div>
+            <div class="inline" style="margin-top:8px; gap:6px">
+              <button class="btn sm">Lock all</button>
+              <button class="btn sm ghost">Sign out</button>
+            </div>
+          </div>
+        </aside>
+        <!-- PANEL -->
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Vaults</h3>
+            <span class="badge scope">local only</span>
+            <span class="spacer"></span>
+            <div class="field" style="width:200px; padding:6px 10px">⌕ <span class="muted tiny">search vaults</span></div>
+            <button class="btn primary">+ Create vault</button>
+          </div>
+          <table class="tbl">
+            <thead><tr><th>Vault</th><th>State</th><th>Secrets</th><th>Default tier</th><th>Judge</th><th>Last activity</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td><span class="name">prod-infra</span> <span class="mut tiny">local:</span></td>
+                <td><span class="state ul"><span class="dot ok"></span> unlocked</span></td>
+                <td>12</td>
+                <td><span class="badge high"><span class="dot lock"></span> high</span></td>
+                <td>reviewer</td>
+                <td class="mut">2m ago</td>
+                <td class="act"><button class="btn sm">Open</button><button class="btn sm ghost" title="Vault settings">⚙</button><button class="btn sm danger" title="Lock">Lock</button><button class="btn sm danger" title="Delete vault">✕</button></td>
+              </tr>
+              <tr>
+                <td><span class="name">ci-tokens</span> <span class="mut tiny">local:</span></td>
+                <td><span class="state ul"><span class="dot ok"></span> unlocked</span></td>
+                <td>6</td>
+                <td><span class="badge low"><span class="dot ok"></span> low</span></td>
+                <td>fast-gate</td>
+                <td class="mut">18m ago</td>
+                <td class="act"><button class="btn sm">Open</button><button class="btn sm ghost" title="Vault settings">⚙</button><button class="btn sm danger" title="Lock">Lock</button><button class="btn sm danger" title="Delete vault">✕</button></td>
+              </tr>
+              <tr>
+                <td><span class="name">staging</span> <span class="mut tiny">local:</span></td>
+                <td><span class="state ul"><span class="dot ok"></span> unlocked</span></td>
+                <td>9</td>
+                <td><span class="badge med"><span class="dot warn"></span> medium</span></td>
+                <td>reviewer</td>
+                <td class="mut">1h ago</td>
+                <td class="act"><button class="btn sm">Open</button><button class="btn sm ghost" title="Vault settings">⚙</button><button class="btn sm danger" title="Lock">Lock</button><button class="btn sm danger" title="Delete vault">✕</button></td>
+              </tr>
+              <tr>
+                <td><span class="name">personal</span> <span class="mut tiny">local:</span></td>
+                <td><span class="state lk"><span class="dot lock"></span> locked</span></td>
+                <td>3</td>
+                <td><span class="badge med"><span class="dot warn"></span> medium</span></td>
+                <td class="mut">— default —</td>
+                <td class="mut">yesterday</td>
+                <td class="act"><button class="btn sm ok">Unlock</button><button class="btn sm ghost" title="Vault settings">⚙</button><button class="btn sm danger" title="Delete vault">✕</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="annot-row"><div class="annot">Per-row actions: <b>Open</b> the vault, <b>⚙</b> opens Vault config (screen 04), <b>Lock</b>/<b>Unlock</b> toggles the key, <b>✕</b> deletes the vault (asks to confirm). Live lock state mirrors the TUI.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="variant-label" style="margin-top:26px">Direction B — vault cards</div>
+    <div class="frame">
+      <div class="chrome">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="title">Svault — <b>Vaults</b></span>
+        <span class="right"><span class="state ul"><span class="dot ok"></span> daemon up</span></span>
+      </div>
+      <div class="app">
+        <aside class="sidebar">
+          <div class="brand"><span class="mark">S</span><span class="name">Svault</span></div>
+          <div class="nav-item sel"><span class="ico"></span> Vaults <span class="ct">4</span></div>
+          <div class="nav-item"><span class="ico"></span> Judges &amp; Policy</div>
+          <div class="nav-item"><span class="ico"></span> MCP</div>
+          <div class="nav-item"><span class="ico"></span> Audit</div>
+          <div class="nav-item"><span class="ico"></span> Pending <span class="ct" style="border-color:var(--warn); color:var(--warn)">2</span></div>
+          <hr class="nav-sep" />
+          <div class="nav-item"><span class="ico"></span> Backup &amp; recovery</div>
+          <div class="nav-item"><span class="ico"></span> Settings</div>
+          <div class="daemon-box">
+            <div class="hd"><span class="dot ok"></span> Daemon · keys in memory</div>
+            <div class="big">3 of 4 unlocked</div>
+            <div class="muted">auto-lock in 4:58</div>
+          </div>
+        </aside>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Vaults</h3><span class="spacer"></span>
+            <div class="seg"><span class="on">Cards</span><span>List</span></div>
+            <button class="btn primary">+ Create</button>
+          </div>
+          <div class="cardgrid">
+            <div class="vcard">
+              <div class="top"><span class="dot ok"></span> <span class="vname">prod-infra</span><span class="spacer" style="flex:1"></span><span class="prefix">local:</span></div>
+              <div class="state ul tiny">unlocked · 12 secrets</div>
+              <div class="meta"><span class="badge high"><span class="dot lock"></span> high</span><span class="badge scope">judge: reviewer</span></div>
+              <div class="ft"><button class="btn sm">Open</button><button class="btn sm ghost" title="Vault settings">⚙</button><button class="btn sm danger" title="Lock">Lock</button><button class="btn sm danger" title="Delete vault">✕</button></div>
+            </div>
+            <div class="vcard">
+              <div class="top"><span class="dot ok"></span> <span class="vname">ci-tokens</span><span class="spacer" style="flex:1"></span><span class="prefix">local:</span></div>
+              <div class="state ul tiny">unlocked · 6 secrets</div>
+              <div class="meta"><span class="badge low"><span class="dot ok"></span> low</span><span class="badge scope">judge: fast-gate</span></div>
+              <div class="ft"><button class="btn sm">Open</button><button class="btn sm ghost" title="Vault settings">⚙</button><button class="btn sm danger" title="Lock">Lock</button><button class="btn sm danger" title="Delete vault">✕</button></div>
+            </div>
+            <div class="vcard">
+              <div class="top"><span class="dot ok"></span> <span class="vname">staging</span><span class="spacer" style="flex:1"></span><span class="prefix">local:</span></div>
+              <div class="state ul tiny">unlocked · 9 secrets</div>
+              <div class="meta"><span class="badge med"><span class="dot warn"></span> medium</span><span class="badge scope">judge: reviewer</span></div>
+              <div class="ft"><button class="btn sm">Open</button><button class="btn sm ghost" title="Vault settings">⚙</button><button class="btn sm danger" title="Lock">Lock</button><button class="btn sm danger" title="Delete vault">✕</button></div>
+            </div>
+            <div class="vcard" style="opacity:.92">
+              <div class="top"><span class="dot lock"></span> <span class="vname">personal</span><span class="spacer" style="flex:1"></span><span class="prefix">local:</span></div>
+              <div class="state lk tiny">locked · 3 secrets</div>
+              <div class="meta"><span class="badge med"><span class="dot warn"></span> medium</span></div>
+              <div class="ft"><button class="btn sm ok">Unlock</button><button class="btn sm ghost" title="Vault settings">⚙</button><button class="btn sm danger" title="Delete vault">✕</button></div>
+            </div>
+          </div>
+          <div class="annot-row"><div class="annot">Cards read faster at a glance for a handful of vaults; the list scales better past ~10. Segmented toggle lets the user pick — default to list.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 03 SECRETS ============================ -->
+  <section class="screen" data-screen="secrets">
+    <div class="screen-head">
+      <h2>Vault detail — secrets &amp; add / classify</h2>
+      <p>Opening a vault shows its secrets with their inline classification (scope · tier · callers · time windows). Adding a secret is a slide-over that doubles as the classify form — name, value, then the gate metadata the policy engine reads.</p>
+    </div>
+
+    <div class="frame">
+      <div class="chrome">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="title">Svault — <b>prod-infra</b> / secrets</span>
+        <span class="right"><span class="state ul"><span class="dot ok"></span> unlocked</span></span>
+      </div>
+      <div class="app">
+        <aside class="sidebar">
+          <div class="brand"><span class="mark">S</span><span class="name">Svault</span></div>
+          <div class="nav-item sel"><span class="ico"></span> Vaults</div>
+          <div class="nav-item"><span class="ico"></span> Judges &amp; Policy</div>
+          <div class="nav-item"><span class="ico"></span> MCP</div>
+          <div class="nav-item"><span class="ico"></span> Audit</div>
+          <div class="nav-item"><span class="ico"></span> Pending</div>
+          <hr class="nav-sep" />
+          <div class="nav-item"><span class="ico"></span> Backup &amp; recovery</div>
+          <div class="nav-item"><span class="ico"></span> Settings</div>
+          <div class="daemon-box">
+            <div class="hd"><span class="dot ok"></span> prod-infra · unlocked</div>
+            <div class="muted">judge: reviewer · auto-lock 4:58</div>
+          </div>
+        </aside>
+        <div class="panel" style="display:grid; grid-template-columns: 1fr 320px; gap:0;">
+          <!-- secrets list -->
+          <div style="padding-right:18px; border-right:1.6px solid var(--line-soft)">
+            <div class="panel-head">
+              <button class="btn ghost sm">← Vaults</button>
+              <h3>prod-infra</h3>
+              <span class="badge high"><span class="dot lock"></span> default high</span>
+              <span class="spacer"></span>
+              <div class="field" style="width:160px; padding:6px 10px">⌕ <span class="muted tiny">filter</span></div>
+              <button class="btn primary sm">+ Add secret</button>
+            </div>
+            <table class="tbl">
+              <thead><tr><th>Secret</th><th>Scope</th><th>Tier</th><th>Callers</th><th>Window</th><th>Read</th><th>Actions</th></tr></thead>
+              <tbody>
+                <tr><td class="name">DB_URL</td><td><span class="badge scope">database</span></td><td><span class="badge med"><span class="dot warn"></span> medium</span></td><td class="mut">claude-code</td><td class="mut">any</td><td class="mut">2m</td><td class="act"><button class="btn sm ghost" title="Reveal value (human path)">◉</button><button class="btn sm ghost" title="Edit &amp; re-classify">✎</button><button class="btn sm danger" title="Delete secret">✕</button></td></tr>
+                <tr><td class="name">STRIPE_KEY</td><td><span class="badge scope">payments</span></td><td><span class="badge high"><span class="dot lock"></span> high</span></td><td class="mut"><span class="state lk"><span class="dot lock"></span> sealed</span></td><td class="mut">09–18</td><td class="mut">1d</td><td class="act"><button class="btn sm ghost" title="Reveal value (human path)">◉</button><button class="btn sm ghost" title="Edit &amp; re-classify">✎</button><button class="btn sm danger" title="Delete secret">✕</button></td></tr>
+                <tr><td class="name">API_KEY</td><td><span class="badge scope">api</span></td><td><span class="badge low"><span class="dot ok"></span> low</span></td><td class="mut">any</td><td class="mut">any</td><td class="mut">11m</td><td class="act"><button class="btn sm ghost" title="Reveal value (human path)">◉</button><button class="btn sm ghost" title="Edit &amp; re-classify">✎</button><button class="btn sm danger" title="Delete secret">✕</button></td></tr>
+                <tr><td class="name">SSH_DEPLOY</td><td><span class="badge scope">infra</span></td><td><span class="badge high"><span class="dot lock"></span> high</span></td><td class="mut">cursor</td><td class="mut">any</td><td class="mut">3h</td><td class="act"><button class="btn sm ghost" title="Reveal value (human path)">◉</button><button class="btn sm ghost" title="Edit &amp; re-classify">✎</button><button class="btn sm danger" title="Delete secret">✕</button></td></tr>
+                <tr><td class="name">SMTP_PASS</td><td><span class="badge scope">mail</span></td><td><span class="badge med"><span class="dot warn"></span> medium</span></td><td class="mut">any</td><td class="mut">any</td><td class="mut">—</td><td class="act"><button class="btn sm ghost" title="Reveal value (human path)">◉</button><button class="btn sm ghost" title="Edit &amp; re-classify">✎</button><button class="btn sm danger" title="Delete secret">✕</button></td></tr>
+              </tbody>
+            </table>
+            <div class="annot-row"><div class="annot">Each row carries inline actions: <b>◉ reveal</b> the value (human path, no judge), <b>✎ edit</b> opens the classify panel pre-filled, <b>✕ delete</b> asks to confirm. Tier &amp; scope are the same data the gate enforces; a <b>sealed</b> secret (escalation, screen 09) is flagged in the callers cell.</div></div>
+          </div>
+          <!-- add / classify slide-over -->
+          <div style="padding-left:18px">
+            <div class="row-between" style="margin-bottom:12px"><b style="font-size:13px">Add &amp; classify secret</b><button class="btn ghost sm">✕</button></div>
+            <div class="stack">
+              <div><div class="lbl-row"><span class="lbl">Name</span><span class="info">?<span class="tip">The secret's identifier, e.g. DATABASE_URL. Agents request it by this exact name.</span></span></div><div class="field">DATABASE_URL<span class="cursor"></span></div></div>
+              <div><div class="lbl-row"><span class="lbl">Value</span><span class="info">?<span class="tip">The secret itself. Encrypted into vault.enc with AES-256-GCM — never written to logs or meta.yaml.</span></span></div><div class="field">••••••••••••••••••••</div><div class="help">encrypted into vault.enc · never logged</div></div>
+              <div><div class="lbl-row"><span class="lbl">Scope</span><span class="info">?<span class="tip">The category a caller must hold to request this secret, e.g. database, payments. The agent's scope must match.</span></span></div><div class="field row-between">database <span class="muted">▾</span></div></div>
+              <div>
+                <div class="lbl-row"><span class="lbl">Sensitivity tier</span><span class="info">?<span class="tip">low = returned directly (audit only). medium / high = the request's reason is scored by the AI judge first. High is human-only when no judge is set.</span></span></div>
+                <div class="seg" style="width:100%"><span>low</span><span class="on">medium</span><span>high</span></div>
+                <div class="help">medium/high → request scored by the AI judge</div>
+              </div>
+              <div><div class="lbl-row"><span class="lbl">Description</span><span class="muted tiny">(judge weighs this)</span><span class="info">?<span class="tip">What the secret is for. The judge weighs this against each request's stated reason to decide if the ask is plausible.</span></span></div><div class="field tall">Primary Postgres DSN for migrations &amp; reads.</div></div>
+              <div class="grid2">
+                <div><div class="lbl-row"><span class="lbl">Allowed callers</span><span class="info">?<span class="tip">Restrict this secret to specific agent identities (the caller field / $SVAULT_CALLER). Leave as 'any' to allow all.</span></span></div><div class="field tiny">claude-code ▾</div></div>
+                <div><div class="lbl-row"><span class="lbl">Time window</span><span class="info">?<span class="tip">Only allow reads inside this local-time window, e.g. mon-fri 09:00-18:00. Outside it the request is denied and audited.</span></span></div><div class="field tiny">any ▾</div></div>
+              </div>
+              <button class="btn primary" style="width:100%">Add secret</button>
+            </div>
+            <div class="annot-row"><div class="annot">Add &amp; classify are one form — you can't add an unclassified secret. Tier picker tells you right there that medium/high invokes the judge.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 04 JUDGE & POLICY ============================ -->
+  <section class="screen" data-screen="judge">
+    <div class="screen-head">
+      <h2>Judges &amp; Policy</h2>
+      <p>The behavioural gate. A global on/off, an encrypted keyring holding multiple named judges (model · thresholds · free-text criteria · API key), a live test bench, and per-vault assignment. Below that, the static policy surface (scopes, tiers, rate limit, conditions).</p>
+    </div>
+
+    <div class="frame">
+      <div class="chrome">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="title">Svault — <b>Judges &amp; Policy</b></span>
+        <span class="right"><span class="state ul"><span class="dot ok"></span> keyring unlocked</span></span>
+      </div>
+      <div class="app">
+        <aside class="sidebar">
+          <div class="brand"><span class="mark">S</span><span class="name">Svault</span></div>
+          <div class="nav-item"><span class="ico"></span> Vaults</div>
+          <div class="nav-item sel"><span class="ico"></span> Judges &amp; Policy</div>
+          <div class="nav-item"><span class="ico"></span> MCP</div>
+          <div class="nav-item"><span class="ico"></span> Audit</div>
+          <div class="nav-item"><span class="ico"></span> Pending</div>
+          <hr class="nav-sep" />
+          <div class="nav-item"><span class="ico"></span> Backup &amp; recovery</div>
+          <div class="nav-item"><span class="ico"></span> Settings</div>
+          <div class="daemon-box">
+            <div class="hd"><span class="dot info"></span> Keyring · keyring.enc</div>
+            <div class="big">2 judges · unlocked</div>
+            <div class="muted">API keys encrypted at rest</div>
+          </div>
+        </aside>
+        <div class="panel">
+          <!-- global switch -->
+          <div class="row-between" style="border:1.6px solid var(--line); border-radius:11px; padding:12px 14px; margin-bottom:16px; background:var(--card-2)">
+            <div><b style="font-size:13px">AI judge — global</b><div class="muted tiny">When on, medium/high-tier reads are scored before any value is returned.</div></div>
+            <div class="inline"><span class="state ul tiny">ENABLED</span><span class="toggle on"></span></div>
+          </div>
+
+          <div class="subtabs">
+            <button class="subtab" aria-selected="true" data-subtab="judge-judges">Judges &amp; test</button>
+            <button class="subtab" data-subtab="judge-policy">Policy surface</button>
+            <button class="subtab" data-subtab="judge-caller">Caller access</button>
+          </div>
+
+          <div class="subpane active" data-subpane="judge-judges">
+          <div style="display:grid; grid-template-columns: 232px 1fr; gap:18px">
+            <!-- registry -->
+            <div>
+              <div class="row-between" style="margin-bottom:8px"><b class="tiny" style="text-transform:uppercase; letter-spacing:.4px; color:var(--ink-3)">Registry</b><button class="btn sm">+ Add</button></div>
+              <div class="stack" style="gap:8px">
+                <div class="vcard" style="padding:10px 11px; box-shadow:none; border-color:var(--line)">
+                  <div class="row-between"><b>reviewer ★</b><span class="dot info"></span></div>
+                  <div class="muted tiny">claude-3.5-haiku · default</div>
+                </div>
+                <div class="vcard" style="padding:10px 11px; box-shadow:none; border-style:dashed; border-color:var(--line-soft)">
+                  <div class="row-between"><b>fast-gate</b><span class="dot hollow"></span></div>
+                  <div class="muted tiny">llama-3.1-8b</div>
+                </div>
+              </div>
+              <div class="annot-row"><div class="annot">★ = default judge. Pick one, click to edit on the right.</div></div>
+            </div>
+
+            <!-- editor + test -->
+            <div>
+              <div class="row-between" style="margin-bottom:10px"><b style="font-size:13px">Edit judge · reviewer</b><span class="badge"><span class="dot info"></span> default</span></div>
+              <div class="grid2" style="margin-bottom:12px">
+                <div><label class="lbl">Name</label><div class="field">reviewer</div></div>
+                <div><div class="lbl-row"><span class="lbl">Model</span><span class="info">?<span class="tip">The LLM that scores requests, via OpenRouter. Faster/cheaper models suit low-latency gates; stronger ones judge nuance better.</span></span></div><div class="field row-between">claude-3.5-haiku <span class="muted">▾</span></div></div>
+              </div>
+              <div class="grid2" style="margin-bottom:12px">
+                <div><div class="lbl-row"><span class="lbl">Allow threshold</span><span class="info">?<span class="tip">A request scoring at or above this (0–1) is allowed. Raise it to be stricter.</span></span></div><div class="field row-between">0.70 <span class="muted">slider</span></div></div>
+                <div><div class="lbl-row"><span class="lbl">Deny threshold</span><span class="info">?<span class="tip">Below this score the request is denied outright. Scores between the two thresholds fall back to tier rules.</span></span></div><div class="field row-between">0.35 <span class="muted">slider</span></div></div>
+              </div>
+              <div style="margin-bottom:12px"><div class="lbl-row"><span class="lbl">Criteria</span><span class="muted tiny">(free text the model is given)</span><span class="info">?<span class="tip">Plain-language rules injected into this judge's prompt. Describe what makes a reason legitimate vs. suspicious for your vaults.</span></span></div>
+                <div class="field tall">Allow only if the reason names a concrete, time-bound task tied to the secret's scope. Deny vague, exploratory, or bulk-export reasons.</div>
+              </div>
+              <div class="grid2" style="margin-bottom:14px">
+                <div><div class="lbl-row"><span class="lbl">API key</span><span class="muted tiny">(OpenRouter)</span><span class="info">?<span class="tip">Stored encrypted in the keyring — never a plaintext file. Empty falls back to the $SVAULT_OPENROUTER_KEY env var.</span></span></div><div class="field row-between">sk-or-•••••••• <button class="btn sm ghost">Clear</button></div></div>
+                <div><div class="lbl-row"><span class="lbl">Assign to vaults</span><span class="info">?<span class="tip">Which vaults use this judge. Unassigned vaults fall back to the keyring's default judge (★).</span></span></div><div class="field tiny">prod-infra, staging ▾</div></div>
+              </div>
+
+              <!-- live test -->
+              <div style="border:1.6px dashed var(--line-soft); border-radius:11px; padding:12px 13px; background:var(--card-2)">
+                <div class="row-between" style="margin-bottom:8px"><b class="tiny" style="text-transform:uppercase; letter-spacing:.4px">Live test</b><span class="muted tiny">runs the real model</span></div>
+                <div class="grid2" style="gap:10px">
+                  <div class="field tiny">secret: STRIPE_KEY · tier high</div>
+                  <div class="field tiny">reason: "refund a charge for ticket #4821"</div>
+                </div>
+                <div class="inline" style="margin-top:10px; gap:10px">
+                  <button class="btn sm">▷ Test reason</button>
+                  <span class="badge low"><span class="dot ok"></span> ALLOW · score 0.82</span>
+                  <span class="muted tiny">"concrete, scoped, time-bound"</span>
+                </div>
+              </div>
+              <div class="annot-row"><div class="annot">Test bench mirrors a real request (secret + reason) so you can tune thresholds &amp; criteria before trusting the gate. Shows score + the model's short rationale.</div></div>
+            </div>
+          </div>
+          </div><!-- /judges subpane -->
+
+          <div class="subpane" data-subpane="judge-policy">
+          <div class="row-between" style="margin-bottom:10px"><b style="font-size:13px">Policy surface <span class="muted">· encrypted in vault.enc</span></b><span class="badge scope">per-vault</span></div>
+          <div class="grid2">
+            <div class="vcard" style="box-shadow:none">
+              <b class="tiny">Rate &amp; burst</b>
+              <div class="inline tiny" style="margin-top:8px; gap:14px"><span>rate: 30/min</span><span>burst: 5</span><span class="state lk">deny on exceed</span></div>
+            </div>
+            <div class="vcard" style="box-shadow:none">
+              <b class="tiny">Conditions</b>
+              <div class="inline tiny" style="margin-top:8px; gap:10px"><span class="badge scope">time-window 09–18</span><span class="badge scope">required caller</span></div>
+            </div>
+            <div class="vcard" style="box-shadow:none">
+              <b class="tiny">Tiers → gate</b>
+              <div class="inline tiny" style="margin-top:8px; gap:8px"><span class="badge low">low: audit only</span><span class="badge med">med: judge</span><span class="badge high">high: judge + window</span></div>
+            </div>
+            <div class="vcard" style="box-shadow:none">
+              <b class="tiny">Escalation</b>
+              <div class="muted tiny" style="margin-top:8px">3 repeated denials → seal secret → human approval (screen 09). Agents never self-clear.</div>
+            </div>
+          </div>
+          </div><!-- /policy subpane -->
+
+          <div class="subpane" data-subpane="judge-caller">
+            <div class="row-between" style="margin-bottom:12px">
+              <div class="inline" style="gap:10px"><b style="font-size:13px">What can a caller reach?</b><span class="muted tiny">svault policy check &lt;caller&gt;</span></div>
+              <div class="inline" style="gap:8px"><div class="field tiny" style="width:170px; justify-content:space-between">caller: claude-code <span class="muted">▾</span></div><button class="btn sm primary">Check</button></div>
+            </div>
+            <table class="tbl">
+              <thead><tr><th>Secret</th><th>Scope</th><th>Tier</th><th>Reachable?</th><th>Condition</th></tr></thead>
+              <tbody>
+                <tr><td class="name">DB_URL</td><td><span class="badge scope">database</span></td><td><span class="badge med"><span class="dot warn"></span> medium</span></td><td><span class="state ul"><span class="dot ok"></span> yes · judged</span></td><td class="mut">—</td></tr>
+                <tr><td class="name">API_KEY</td><td><span class="badge scope">api</span></td><td><span class="badge low"><span class="dot ok"></span> low</span></td><td><span class="state ul"><span class="dot ok"></span> yes</span></td><td class="mut">—</td></tr>
+                <tr><td class="name">STRIPE_KEY</td><td><span class="badge scope">payments</span></td><td><span class="badge high"><span class="dot lock"></span> high</span></td><td><span class="state lk"><span class="dot lock"></span> blocked · sealed</span></td><td class="mut">window 09–18</td></tr>
+                <tr><td class="name">SSH_DEPLOY</td><td><span class="badge scope">infra</span></td><td><span class="badge high"><span class="dot lock"></span> high</span></td><td><span class="state lk"><span class="dot lock"></span> no · scope not held</span></td><td class="mut">caller: cursor</td></tr>
+              </tbody>
+            </table>
+            <div class="grid2" style="margin-top:16px">
+              <div class="vcard" style="box-shadow:none">
+                <b class="tiny">Seals for this caller</b>
+                <div class="inline" style="margin-top:8px; gap:8px"><span class="badge high"><span class="dot lock"></span> STRIPE_KEY</span><button class="btn sm">Review in Pending →</button></div>
+              </div>
+              <div class="vcard" style="box-shadow:none">
+                <b class="tiny">Recent activity</b>
+                <div class="muted tiny" style="margin-top:8px; line-height:1.7">14:02 DENY STRIPE_KEY · 14:01 ALLOW DB_URL · 13:58 ALLOW API_KEY</div>
+              </div>
+            </div>
+            <div class="annot-row"><div class="annot">The <span class="kbd">policy check</span> view answers "if this agent asked right now, what would it get?" — capabilities, conditions, active seals, and recent decisions in one place. Unlocks the vault to read the encrypted policy.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 05 AUDIT ============================ -->
+  <section class="screen" data-screen="audit">
+    <div class="screen-head">
+      <h2>Audit — activity timeline</h2>
+      <p>Every decision the daemon makes, stamped with the connecting process's real (un-forgeable) peer UID. Filterable by vault, result, and caller. This is the "when an agent doesn't play by the rules, you have the record" surface.</p>
+    </div>
+
+    <div class="frame">
+      <div class="chrome">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="title">Svault — <b>Audit</b></span>
+        <span class="right">peer-UID stamped</span>
+      </div>
+      <div class="app">
+        <aside class="sidebar">
+          <div class="brand"><span class="mark">S</span><span class="name">Svault</span></div>
+          <div class="nav-item"><span class="ico"></span> Vaults</div>
+          <div class="nav-item"><span class="ico"></span> Judges &amp; Policy</div>
+          <div class="nav-item"><span class="ico"></span> MCP</div>
+          <div class="nav-item sel"><span class="ico"></span> Audit</div>
+          <div class="nav-item"><span class="ico"></span> Pending</div>
+          <hr class="nav-sep" />
+          <div class="nav-item"><span class="ico"></span> Backup &amp; recovery</div>
+          <div class="nav-item"><span class="ico"></span> Settings</div>
+          <div class="daemon-box">
+            <div class="hd"><span class="dot ok"></span> 248 events today</div>
+            <div class="muted">12 denied · 4 judge calls</div>
+            <button class="btn sm" style="margin-top:8px; width:100%">↧ Export log</button>
+          </div>
+        </aside>
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Activity</h3><span class="spacer"></span>
+            <div class="seg"><span class="on">All</span><span>Allowed</span><span>Denied</span><span>Judge</span></div>
+            <div class="field" style="width:150px; padding:6px 10px">vault: all ▾</div>
+            <div class="field" style="width:160px; padding:6px 10px">caller: all ▾</div>
+          </div>
+          <div class="tl">
+            <div class="ev deny">
+              <div class="l1"><span class="badge high"><span class="dot lock"></span> DENY</span> <b>STRIPE_KEY</b> <span class="badge scope">payments · high</span><span class="spacer" style="flex:1"></span><span class="ts">14:02:11</span></div>
+              <div class="l2">caller <span class="uid">claude-code · uid 501</span> · reason "export all keys" · <b>judge denied 0.12</b> · 3rd denial → sealed</div>
+            </div>
+            <div class="ev judge">
+              <div class="l1"><span class="badge"><span class="dot info"></span> JUDGE</span> <b>DB_URL</b> <span class="badge scope">database · medium</span><span class="spacer" style="flex:1"></span><span class="ts">14:01:48</span></div>
+              <div class="l2">caller <span class="uid">claude-code · uid 501</span> · reason "run nightly migration" · scored 0.86 → allowed</div>
+            </div>
+            <div class="ev allow">
+              <div class="l1"><span class="badge low"><span class="dot ok"></span> ALLOW</span> <b>API_KEY</b> <span class="badge scope">api · low</span><span class="spacer" style="flex:1"></span><span class="ts">13:58:02</span></div>
+              <div class="l2">caller <span class="uid">cursor · uid 501</span> · low tier · audit only, no judge</div>
+            </div>
+            <div class="ev">
+              <div class="l1"><span class="badge"><span class="dot hollow"></span> UNLOCK</span> <b>prod-infra</b><span class="spacer" style="flex:1"></span><span class="ts">13:40:55</span></div>
+              <div class="l2">human · passphrase · session opened · auto-lock 30m</div>
+            </div>
+            <div class="ev deny">
+              <div class="l1"><span class="badge high"><span class="dot lock"></span> DENY</span> <b>SSH_DEPLOY</b> <span class="badge scope">infra · high</span><span class="spacer" style="flex:1"></span><span class="ts">13:38:20</span></div>
+              <div class="l2">caller <span class="uid">unknown · uid 1000</span> · rate limit exceeded (burst) · generic denial returned</div>
+            </div>
+            <div class="ev allow">
+              <div class="l1"><span class="badge low"><span class="dot ok"></span> ALLOW</span> <b>API_KEY</b><span class="spacer" style="flex:1"></span><span class="ts">13:31:09</span></div>
+              <div class="l2">caller <span class="uid">claude-code · uid 501</span> · within window · audit only</div>
+            </div>
+          </div>
+          <div class="annot-row"><div class="annot">UID is the trust anchor — it's the kernel-reported peer UID, not something the caller claims. Denials show the real reason here; the agent only ever got a generic "denied".</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 06 PENDING ============================ -->
+  <section class="screen" data-screen="pending">
+    <div class="screen-head">
+      <h2>Pending approvals — escalation</h2>
+      <p>When a secret hits repeated denials it's <b>sealed</b> and escalated to a human. Agents can never self-clear; only you approve or deny here. Mirrors <span class="kbd">svault pending</span> / <span class="kbd">approve</span> and the TUI's <span class="kbd">A</span>.</p>
+    </div>
+
+    <div class="frame">
+      <div class="chrome">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="title">Svault — <b>Pending</b></span>
+        <span class="right"><span class="state lk"><span class="dot warn"></span> 2 awaiting you</span></span>
+      </div>
+      <div class="app">
+        <aside class="sidebar">
+          <div class="brand"><span class="mark">S</span><span class="name">Svault</span></div>
+          <div class="nav-item"><span class="ico"></span> Vaults</div>
+          <div class="nav-item"><span class="ico"></span> Judges &amp; Policy</div>
+          <div class="nav-item"><span class="ico"></span> MCP</div>
+          <div class="nav-item"><span class="ico"></span> Audit</div>
+          <div class="nav-item sel"><span class="ico"></span> Pending <span class="ct" style="border-color:var(--warn); color:var(--warn)">2</span></div>
+          <hr class="nav-sep" />
+          <div class="nav-item"><span class="ico"></span> Backup &amp; recovery</div>
+          <div class="nav-item"><span class="ico"></span> Settings</div>
+          <div class="daemon-box">
+            <div class="hd"><span class="dot warn"></span> 2 sealed secrets</div>
+            <div class="muted">agents cannot self-clear</div>
+          </div>
+        </aside>
+        <div class="panel">
+          <div class="panel-head"><h3>Awaiting human approval</h3><span class="spacer"></span><span class="muted tiny">oldest first</span></div>
+          <div class="stack">
+            <div class="vcard" style="border-color:var(--lock)">
+              <div class="row-between">
+                <div class="inline"><span class="badge high"><span class="dot lock"></span> SEALED</span><b>STRIPE_KEY</b><span class="badge scope">prod-infra · payments · high</span></div>
+                <span class="muted tiny">sealed 14:02 · 4 min ago</span>
+              </div>
+              <div class="tiny" style="margin:10px 0; color:var(--ink-2)">
+                Caller <span class="annot" style="font-size:13px">claude-code · uid 501</span> · <b>3 denied attempts</b><br />
+                last reason: <i>"export all keys for backup"</i> · judge score 0.12
+              </div>
+              <div class="inline" style="gap:8px">
+                <button class="btn ok sm">Approve once</button>
+                <button class="btn sm">Approve &amp; unseal</button>
+                <button class="btn danger sm">Keep denied</button>
+                <button class="btn ghost sm">View in audit →</button>
+              </div>
+            </div>
+
+            <div class="vcard" style="border-color:var(--warn)">
+              <div class="row-between">
+                <div class="inline"><span class="badge med"><span class="dot warn"></span> SEALED</span><b>SMTP_PASS</b><span class="badge scope">staging · mail · medium</span></div>
+                <span class="muted tiny">sealed 11:20 · 2h 42m ago</span>
+              </div>
+              <div class="tiny" style="margin:10px 0; color:var(--ink-2)">
+                Caller <span class="annot" style="font-size:13px">cron-runner · uid 33</span> · <b>3 denied attempts</b><br />
+                last reason: <i>"resend campaign"</i> · outside time window 09–18
+              </div>
+              <div class="inline" style="gap:8px">
+                <button class="btn ok sm">Approve once</button>
+                <button class="btn sm">Approve &amp; unseal</button>
+                <button class="btn danger sm">Keep denied</button>
+                <button class="btn ghost sm">View in audit →</button>
+              </div>
+            </div>
+          </div>
+          <div class="annot-row"><div class="annot">Two grades of approval: "once" (single read, stays sealed) vs "unseal" (clears the seal). Every approval is itself written to the audit log.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 07 TRAY ============================ -->
+  <section class="screen" data-screen="tray">
+    <div class="screen-head">
+      <h2>Menu-bar / system-tray popover</h2>
+      <p>The quick-access companion. Lives in the OS tray; click the icon for a compact popover — daemon state, lock-all, the unlocked vaults, the freshest activity, and any pending approvals. Deep actions open the full window.</p>
+    </div>
+
+    <div class="inline" style="align-items:flex-start; gap:40px">
+      <div class="tray">
+        <div class="frame" style="position:relative">
+          <div class="caret"></div>
+          <div class="tray-row" style="background:var(--card-2)">
+            <span class="mark" style="width:22px; height:22px; border-radius:6px; display:grid; place-items:center; border:2px solid var(--ink); font-weight:700; font-size:12px">S</span>
+            <b>Svault</b>
+            <span class="spacer" style="flex:1"></span>
+            <span class="state ul tiny"><span class="dot ok"></span> daemon up</span>
+          </div>
+          <div class="tray-row">
+            <div><div>Keys in memory</div><div class="muted tiny">auto-lock in 4:58</div></div>
+            <span class="spacer" style="flex:1"></span>
+            <button class="btn sm danger">Lock all</button>
+          </div>
+          <div class="tray-row" style="font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--ink-3); padding-bottom:4px">Unlocked vaults</div>
+          <div class="tray-row"><span class="dot ok"></span> prod-infra <span class="spacer" style="flex:1"></span><span class="muted tiny">12</span><button class="btn sm ghost">lock</button></div>
+          <div class="tray-row"><span class="dot ok"></span> ci-tokens <span class="spacer" style="flex:1"></span><span class="muted tiny">6</span><button class="btn sm ghost">lock</button></div>
+          <div class="tray-row"><span class="dot lock"></span> personal <span class="spacer" style="flex:1"></span><span class="muted tiny">locked</span><button class="btn sm ok">unlock</button></div>
+          <div class="tray-row" style="background:#fbf3e0"><span class="dot warn"></span> 2 pending approvals <span class="spacer" style="flex:1"></span><button class="btn sm">Review →</button></div>
+          <div class="tray-row"><span class="dot info"></span> <span class="muted tiny">14:02 · DENY STRIPE_KEY · uid 501</span></div>
+          <div class="tray-row" style="background:var(--card-2)"><button class="btn sm" style="width:100%">Open Svault ⌘↩</button></div>
+        </div>
+        <div class="annot-row"><div class="annot">~340px wide. The 80% case — check state, lock everything, jump to a pending approval — without opening the full app.</div></div>
+      </div>
+
+      <div style="max-width:300px">
+        <div class="annot note">Tray icon itself encodes state: solid = unlocked / keys in memory, hollow = all locked, dot badge = pending approvals.</div>
+        <div class="annot note" style="margin-top:14px; transform:rotate(0.8deg)">macOS → menu-bar item (top right). Windows / Linux → system-tray icon (bottom). Same popover, same content — toggled in Settings.</div>
+        <div class="stack" style="margin-top:22px">
+          <div class="inline"><span class="mark" style="width:24px;height:24px;border:2px solid var(--ink);border-radius:5px;display:grid;place-items:center">●</span><span class="tiny">unlocked</span></div>
+          <div class="inline"><span class="mark" style="width:24px;height:24px;border:2px solid var(--ink);border-radius:5px;display:grid;place-items:center">○</span><span class="tiny">all locked</span></div>
+          <div class="inline"><span class="mark" style="width:24px;height:24px;border:2px solid var(--ink);border-radius:5px;display:grid;place-items:center;position:relative">●<span style="position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--warn);border:1.5px solid var(--ink)"></span></span><span class="tiny">pending approvals</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 01 SIGN IN ============================ -->
+  <section class="screen" data-screen="signin">
+    <div class="screen-head">
+      <h2>Sign in &amp; sign out — app-level auth</h2>
+      <p>The returning-user gate. The app opens locked: no vault is readable in the GUI until the master passphrase (or an enrolled YubiKey) unlocks the session. Signing out only ends the GUI session — the daemon, MCP server, and vault lock state are left untouched and are managed from the dashboard. A 6-hour re-auth cap applies to every unlock path.</p>
+    </div>
+
+    <div class="cols two">
+      <div>
+        <div class="variant-label">Sign in (locked launch)</div>
+        <div class="frame">
+          <div class="chrome">
+            <span class="lights"><i></i><i></i><i></i></span>
+            <span class="title">Svault</span>
+            <span class="right"><span class="state lk"><span class="dot lock"></span> locked</span></span>
+          </div>
+          <div style="padding:40px 44px; display:flex; flex-direction:column; align-items:center; text-align:center; min-height:430px; justify-content:center">
+            <span class="mark" style="width:46px; height:46px; font-size:22px; border-width:2.5px; margin-bottom:14px">S</span>
+            <h4 style="margin:0 0 2px; font-size:18px">Welcome back</h4>
+            <div class="muted tiny" style="margin-bottom:22px">Unlock to open your vaults</div>
+
+            <div style="width:300px; text-align:left">
+              <label class="lbl">Master passphrase</label>
+              <div class="field" style="margin-bottom:12px">•••••••••••••<span class="cursor"></span></div>
+              <button class="btn primary" style="width:100%; margin-bottom:16px">Unlock</button>
+
+              <div class="inline" style="gap:10px; margin:4px 0 16px; color:var(--ink-3); font-size:11px"><span style="flex:1; height:1.4px; background:var(--line-soft)"></span> or <span style="flex:1; height:1.4px; background:var(--line-soft)"></span></div>
+
+              <button class="btn" style="width:100%; display:flex; align-items:center; justify-content:center; gap:9px"><span style="font-size:16px">⛶</span> Touch your YubiKey</button>
+              <div class="help" style="text-align:center; margin-top:7px">FIDO2 hmac-secret · alternate keyslot</div>
+
+              <hr class="hr" />
+              <div class="row-between tiny">
+                <span class="muted">Lost your passphrase?</span>
+                <span class="annot" style="font-size:13px">Use recovery code →</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="annot-row"><div class="annot">No passphrase = no readable state, period. "Use recovery code" jumps to Backup &amp; recovery (screen 10).</div></div>
+      </div>
+
+      <div>
+        <div class="variant-label">Sign out</div>
+        <div class="frame">
+          <div class="chrome">
+            <span class="lights"><i></i><i></i><i></i></span>
+            <span class="title">Svault — <b>Sign out</b></span>
+          </div>
+          <div style="padding:34px 30px; min-height:430px; display:flex; flex-direction:column">
+            <div style="border:1.7px solid var(--line); border-radius:12px; padding:18px 18px; background:var(--card-2)">
+              <b style="font-size:14px">Sign out of the app?</b>
+              <div class="tiny" style="color:var(--ink-2); margin-top:10px; line-height:1.6">
+                You'll be returned to the sign-in screen and must re-enter your master passphrase to use the GUI again. Nothing else changes.
+              </div>
+              <div class="inline" style="gap:10px; margin-top:16px">
+                <button class="btn primary" style="flex:1">Sign out of GUI</button>
+                <button class="btn ghost" style="flex:1">Cancel</button>
+              </div>
+            </div>
+
+            <div style="border:1.6px dashed var(--ok); border-radius:11px; padding:13px 14px; background:#f0f4ee; margin-top:14px">
+              <div class="hd inline" style="gap:8px; margin-bottom:8px"><span class="dot ok"></span> <b class="tiny">Sign out does NOT</b></div>
+              <ul class="muted tiny" style="margin:0; padding-left:18px; line-height:1.7">
+                <li>lock your vaults</li>
+                <li>stop the daemon — keys stay in memory</li>
+                <li>stop the MCP server — agents keep working</li>
+              </ul>
+            </div>
+
+            <div class="grow" style="flex:1"></div>
+
+            <div style="border:1.6px dashed var(--line-soft); border-radius:11px; padding:13px 14px; background:var(--card-2)">
+              <div class="hd inline" style="gap:8px; margin-bottom:6px"><span class="dot info"></span> <b class="tiny">Manage those from the dashboard</b></div>
+              <div class="muted tiny">Lock vaults from <b>Vaults</b> or the daemon box (<span class="kbd">Lock all</span>), and start/stop the daemon &amp; MCP server in <b>Settings</b> &amp; <b>MCP</b>.</div>
+            </div>
+          </div>
+        </div>
+        <div class="annot-row"><div class="annot">Sign out is a <b>GUI session</b> action only — re-sign-in to use the app again. It deliberately leaves the daemon, MCP, and unlocked vaults running so agents aren't interrupted. Locking &amp; stopping services are separate, explicit dashboard actions.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 06 MCP ============================ -->
+  <section class="screen" data-screen="mcp">
+    <div class="screen-head">
+      <h2>MCP — the agent door</h2>
+      <p>The supported way agents reach secrets: a local stdio JSON-RPC server (<span class="kbd">svault mcp</span>). It never sees the passphrase, serves only unlocked state, and runs every request through the same policy + judge gate. This screen is status + wiring, not a new trust model.</p>
+    </div>
+
+    <div class="frame">
+      <div class="chrome">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="title">Svault — <b>MCP</b></span>
+        <span class="right"><span class="state ul"><span class="dot ok"></span> server running</span> · source=mcp</span>
+      </div>
+      <div class="app">
+        <aside class="sidebar">
+          <div class="brand"><span class="mark">S</span><span class="name">Svault</span></div>
+          <div class="nav-item"><span class="ico"></span> Vaults</div>
+          <div class="nav-item"><span class="ico"></span> Judges &amp; Policy</div>
+          <div class="nav-item sel"><span class="ico"></span> MCP</div>
+          <div class="nav-item"><span class="ico"></span> Audit</div>
+          <div class="nav-item"><span class="ico"></span> Pending</div>
+          <hr class="nav-sep" />
+          <div class="nav-item"><span class="ico"></span> Backup &amp; recovery</div>
+          <div class="nav-item"><span class="ico"></span> Settings</div>
+          <div class="daemon-box">
+            <div class="hd"><span class="dot ok"></span> stdio · JSON-RPC 2.0</div>
+            <div class="big">2 agents connected</div>
+            <div class="muted">store: ~/.svault</div>
+          </div>
+        </aside>
+        <div class="panel">
+          <!-- server switch (master control, always visible) -->
+          <div class="row-between" style="border:1.6px solid var(--line); border-radius:11px; padding:12px 14px; margin-bottom:16px; background:var(--card-2)">
+            <div><b style="font-size:13px">MCP server</b><div class="muted tiny">Exposes gated <span class="kbd">svault_get_secret</span> / <span class="kbd">svault_list_vaults</span> to MCP-aware agents. Unlocking stays human-only.</div></div>
+            <div class="inline"><span class="state ul tiny">RUNNING</span><span class="toggle on"></span></div>
+          </div>
+
+          <div class="subtabs">
+            <button class="subtab" aria-selected="true" data-subtab="mcp-conn">Connection &amp; tools</button>
+            <button class="subtab" data-subtab="mcp-wire">Wiring</button>
+            <button class="subtab" data-subtab="mcp-log">Live log <span class="ct">●</span></button>
+          </div>
+
+          <!-- pane: connection -->
+          <div class="subpane active" data-subpane="mcp-conn">
+            <b class="tiny" style="text-transform:uppercase; letter-spacing:.4px; color:var(--ink-3)">Connected agents</b>
+            <table class="tbl" style="margin:8px 0 20px">
+              <thead><tr><th>Caller</th><th>Client</th><th>Last call</th><th>Calls today</th></tr></thead>
+              <tbody>
+                <tr><td class="name">claude-code</td><td class="mut">Claude Code</td><td><span class="state ul"><span class="dot ok"></span> 2m ago · allow</span></td><td class="mut">38</td></tr>
+                <tr><td class="name">cursor</td><td class="mut">Cursor</td><td><span class="state lk"><span class="dot lock"></span> 22m ago · deny</span></td><td class="mut">11</td></tr>
+              </tbody>
+            </table>
+            <b class="tiny" style="text-transform:uppercase; letter-spacing:.4px; color:var(--ink-3)">Exposed tools</b>
+            <div class="grid2" style="margin-top:8px">
+              <div class="vcard" style="box-shadow:none; padding:11px 12px">
+                <div class="row-between"><b>svault_get_secret</b><span class="badge scope">gated</span></div>
+                <div class="muted tiny" style="margin-top:6px">req: name · scope · reason <span class="muted">(≥10 chars)</span><br />opt: vault · caller</div>
+              </div>
+              <div class="vcard" style="box-shadow:none; padding:11px 12px">
+                <div class="row-between"><b>svault_list_vaults</b><span class="badge low">safe</span></div>
+                <div class="muted tiny" style="margin-top:6px">no args · returns { name, unlocked }<br />needs no keys</div>
+              </div>
+            </div>
+            <div class="annot-row"><div class="annot">Capability descriptor advertises the interface (which fields to send) — never the policy (tiers, thresholds, judge prompts). Agents can't study it to game the gate.</div></div>
+          </div>
+
+          <!-- pane: wiring -->
+          <div class="subpane" data-subpane="mcp-wire">
+            <div class="row-between" style="margin-bottom:8px"><b class="tiny" style="text-transform:uppercase; letter-spacing:.4px; color:var(--ink-3)">Wire into an agent</b><div class="seg"><span class="on">Claude Code</span><span>Cursor</span><span>VS Code</span></div></div>
+            <pre class="code">{
+  "mcpServers": {
+    "svault": {
+      "command": "svault",
+      "args": ["mcp"],
+      "env": { "SVAULT_CALLER": "claude-code" }
+    }
+  }
+}</pre>
+            <div class="inline" style="gap:8px; margin-top:10px">
+              <button class="btn sm">⧉ Copy</button>
+              <button class="btn sm primary">Write to ./.mcp.json</button>
+              <span class="muted tiny">merges, doesn't clobber</span>
+            </div>
+            <hr class="hr" />
+            <div class="grid2">
+              <div><label class="lbl">Store path</label><div class="field tiny">~/.svault</div><div class="help">override with SVAULT_HOME</div></div>
+              <div><label class="lbl">Transport</label><div class="field tiny">stdio · JSON-RPC 2.0</div></div>
+            </div>
+            <div style="border:1.6px dashed var(--line-soft); border-radius:11px; padding:12px 13px; background:var(--card-2); margin-top:14px">
+              <div class="inline tiny" style="gap:8px; margin-bottom:6px"><span class="dot info"></span> <b>How the door behaves</b></div>
+              <ul class="muted tiny" style="margin:0; padding-left:18px; line-height:1.7">
+                <li>No passphrase ever reaches the server</li>
+                <li>Locked vault → agent gets <span class="state lk">"run svault unlock"</span>, can't unlock itself</li>
+                <li>Denials are generic; the real reason lands in Audit</li>
+                <li>Sealed secrets stay sealed for the agent</li>
+              </ul>
+            </div>
+            <div class="annot-row"><div class="annot">Mirrors the TUI's <span class="kbd">m</span> screen + <span class="kbd">w</span> to write .mcp.json — but in a form you can read at a glance.</div></div>
+          </div>
+
+          <!-- pane: live log -->
+          <div class="subpane" data-subpane="mcp-log">
+            <div class="row-between" style="margin-bottom:9px">
+              <div class="inline" style="gap:9px"><span class="state ul tiny"><span class="logdot"></span> streaming</span><span class="muted tiny">source=mcp · stdio JSON-RPC</span></div>
+              <div class="inline" style="gap:7px">
+                <div class="seg"><span class="on">All</span><span>Allow</span><span>Deny</span></div>
+                <button class="btn sm ghost">⏸ Pause</button>
+                <button class="btn sm ghost">Clear</button>
+              </div>
+            </div>
+            <div class="logbox" style="max-height:300px">
+              <div class="logline allow"><span class="lt">14:02:48</span><span class="lm">tools/call <span class="hl">svault_get_secret</span> name=API_KEY scope=api caller=claude-code</span><span class="lv">→ ALLOW · low</span></div>
+              <div class="logline deny"><span class="lt">14:02:11</span><span class="lm">tools/call <span class="hl">svault_get_secret</span> name=STRIPE_KEY scope=payments caller=claude-code</span><span class="lv">→ DENY · generic</span></div>
+              <div class="logline judge"><span class="lt">14:02:10</span><span class="lm">judge <span class="hl">reviewer</span> STRIPE_KEY · reason "export all keys"</span><span class="lv">→ score 0.12</span></div>
+              <div class="logline allow"><span class="lt">14:01:48</span><span class="lm">tools/call <span class="hl">svault_get_secret</span> name=DB_URL scope=database caller=claude-code</span><span class="lv">→ ALLOW · 0.86</span></div>
+              <div class="logline judge"><span class="lt">14:01:47</span><span class="lm">judge <span class="hl">reviewer</span> DB_URL · reason "run nightly migration"</span><span class="lv">→ score 0.86</span></div>
+              <div class="logline"><span class="lt">13:58:30</span><span class="lm">tools/list <span class="hl">cursor</span></span><span class="lv">→ 2 tools</span></div>
+              <div class="logline deny"><span class="lt">13:57:02</span><span class="lm">tools/call <span class="hl">svault_get_secret</span> name=SSH_DEPLOY caller=cursor</span><span class="lv">→ DENY · scope mismatch</span></div>
+              <div class="logline"><span class="lt">13:56:55</span><span class="lm">initialize protocol=2024-11-05 client=<span class="hl">Cursor</span></span><span class="lv">→ ok</span></div>
+              <div class="logline"><span class="lt">13:40:12</span><span class="lm">initialize protocol=2024-11-05 client=<span class="hl">Claude Code</span></span><span class="lv">→ ok</span></div>
+            </div>
+            <div class="annot-row"><div class="annot">Live tail of every JSON-RPC exchange the server handles — handshakes, tool calls, judge scores, allow/deny. Same events as Audit, but real-time &amp; scoped to the MCP door, so you can watch an agent work (and catch a misbehaving one) as it happens. Values are never logged — only metadata &amp; the verdict.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 09 BACKUP & RECOVERY ============================ -->
+  <section class="screen" data-screen="backup">
+    <div class="screen-head">
+      <h2>Backup &amp; recovery</h2>
+      <p>Portability and the lost-passphrase path. Export a vault to a checksummed, fully-encrypted bundle; import one on another machine; or re-attach a vault with its one-time recovery code if the master passphrase is lost.</p>
+    </div>
+
+    <div class="frame">
+      <div class="chrome">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="title">Svault — <b>Backup &amp; recovery</b></span>
+      </div>
+      <div class="app">
+        <aside class="sidebar">
+          <div class="brand"><span class="mark">S</span><span class="name">Svault</span></div>
+          <div class="nav-item"><span class="ico"></span> Vaults</div>
+          <div class="nav-item"><span class="ico"></span> Judges &amp; Policy</div>
+          <div class="nav-item"><span class="ico"></span> MCP</div>
+          <div class="nav-item"><span class="ico"></span> Audit</div>
+          <div class="nav-item"><span class="ico"></span> Pending</div>
+          <hr class="nav-sep" />
+          <div class="nav-item sel"><span class="ico"></span> Backup &amp; recovery</div>
+          <div class="nav-item"><span class="ico"></span> Settings</div>
+          <div class="daemon-box">
+            <div class="hd"><span class="dot ok"></span> 4 vaults · local</div>
+            <div class="muted">bundles are encrypted &amp; checksummed</div>
+          </div>
+        </aside>
+        <div class="panel">
+          <div class="subtabs">
+            <button class="subtab" aria-selected="true" data-subtab="bk-port">Export &amp; import</button>
+            <button class="subtab" data-subtab="bk-recover">Recovery code</button>
+          </div>
+
+          <div class="subpane active" data-subpane="bk-port">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:18px">
+            <!-- export -->
+            <div class="vcard" style="box-shadow:none">
+              <div class="row-between" style="margin-bottom:12px"><b style="font-size:13px">↥ Export vault</b><span class="badge scope">.json bundle</span></div>
+              <label class="lbl">Vault</label>
+              <div class="field row-between" style="margin-bottom:12px">prod-infra <span class="muted">▾</span></div>
+              <div class="lbl-row"><span class="lbl">Output file</span><span class="info">?<span class="tip">Where the encrypted bundle is written, e.g. prod-infra.svault-export.json. Every byte is encrypted or signed.</span></span></div>
+              <div class="field tiny" style="margin-bottom:12px">~/Backups/prod-infra.json</div>
+              <button class="btn primary" style="width:100%">Export bundle</button>
+              <div class="help" style="margin-top:9px">Every byte encrypted or signed · no machine-specific state · safe to move between machines (same major version).</div>
+            </div>
+            <!-- import -->
+            <div class="vcard" style="box-shadow:none">
+              <div class="row-between" style="margin-bottom:12px"><b style="font-size:13px">↧ Import vault</b><span class="badge scope">verify checksum</span></div>
+              <div class="ph" style="padding:24px 16px; margin-bottom:12px">drop a <b>.json</b> bundle here<br /><span class="muted">or click to browse</span></div>
+              <div class="inline tiny" style="gap:8px; margin-bottom:12px"><span class="dot ok"></span> <span class="muted">vault.json · staging · checksum OK · v1.x</span></div>
+              <button class="btn primary" style="width:100%">Import &amp; attach</button>
+            </div>
+          </div>
+          <div class="annot-row"><div class="annot">Export/import is the portability story — a single encrypted, checksummed bundle moves a vault between machines, and the same master passphrase still opens it.</div></div>
+          </div><!-- /bk-port -->
+
+          <div class="subpane" data-subpane="bk-recover">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:18px">
+            <div class="vcard" style="box-shadow:none; border-color:var(--warn)">
+              <div class="row-between" style="margin-bottom:10px"><b style="font-size:13px">⟳ Recover with code</b><span class="badge med"><span class="dot warn"></span> lost passphrase</span></div>
+              <div class="muted tiny" style="margin-bottom:12px">The recovery code is a second keyslot. Enter it to re-attach this vault to your (new) master passphrase.</div>
+              <div class="lbl-row"><span class="lbl">Recovery code</span><span class="info">?<span class="tip">The one-time 160-bit code shown at vault creation. It's a second keyslot — paste it to re-attach the vault to a new master passphrase.</span></span></div>
+              <div class="field" style="margin-bottom:10px; letter-spacing:1px">SV4T-9KQ2-7HMX-3PWL<span class="cursor"></span></div>
+              <div class="grid2" style="margin-bottom:12px">
+                <div><label class="lbl">New master</label><div class="field">••••••••••</div></div>
+                <div><label class="lbl">Confirm</label><div class="field">••••••••••</div></div>
+              </div>
+              <button class="btn primary" style="width:100%">Re-attach vault</button>
+            </div>
+
+            <div class="vcard" style="box-shadow:none">
+              <div class="row-between" style="margin-bottom:10px"><b style="font-size:13px">Recovery code status</b></div>
+              <table class="tbl">
+                <tbody>
+                  <tr><td class="name">prod-infra</td><td><span class="badge low"><span class="dot ok"></span> code saved</span></td><td class="act"><button class="btn sm ghost">Rotate</button></td></tr>
+                  <tr><td class="name">ci-tokens</td><td><span class="badge low"><span class="dot ok"></span> code saved</span></td><td class="act"><button class="btn sm ghost">Rotate</button></td></tr>
+                  <tr><td class="name">personal</td><td><span class="badge med"><span class="dot warn"></span> never viewed</span></td><td class="act"><button class="btn sm">Reveal once</button></td></tr>
+                </tbody>
+              </table>
+              <div class="help" style="margin-top:10px">Codes are shown once and never stored in plaintext. "Rotate" issues a fresh one &amp; invalidates the old.</div>
+            </div>
+          </div>
+          <div class="annot-row"><div class="annot">Recovery code is the safety net — a second keyslot per vault. Rotating issues a fresh one and invalidates the old; codes are shown once and never stored in plaintext.</div></div>
+          </div><!-- /bk-recover -->
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 10 SETTINGS ============================ -->
+  <section class="screen" data-screen="settings">
+    <div class="screen-head">
+      <h2>Settings</h2>
+      <p>App-wide preferences: appearance, how Svault lives in the OS (menu bar on macOS, system tray on Windows), session &amp; master-key security, the Unix daemon, and a debug / diagnostics drawer for support.</p>
+    </div>
+
+    <div class="frame">
+      <div class="chrome">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="title">Svault — <b>Settings</b></span>
+        <span class="right">v1.0.0 · ~/.svault</span>
+      </div>
+      <div class="app">
+        <aside class="sidebar">
+          <div class="brand"><span class="mark">S</span><span class="name">Svault</span></div>
+          <div class="nav-item"><span class="ico"></span> Vaults</div>
+          <div class="nav-item"><span class="ico"></span> Judges &amp; Policy</div>
+          <div class="nav-item"><span class="ico"></span> MCP</div>
+          <div class="nav-item"><span class="ico"></span> Audit</div>
+          <div class="nav-item"><span class="ico"></span> Pending</div>
+          <hr class="nav-sep" />
+          <div class="nav-item"><span class="ico"></span> Backup &amp; recovery</div>
+          <div class="nav-item sel"><span class="ico"></span> Settings</div>
+          <div class="daemon-box">
+            <div class="hd"><span class="dot ok"></span> Daemon · keys in memory</div>
+            <div class="muted">macOS · menu-bar enabled</div>
+          </div>
+        </aside>
+        <div class="panel">
+          <div class="subtabs">
+            <button class="subtab" aria-selected="true" data-subtab="set-appear">Appearance &amp; startup</button>
+            <button class="subtab" data-subtab="set-sec">Security &amp; daemon</button>
+            <button class="subtab" data-subtab="set-diag">Diagnostics</button>
+          </div>
+
+          <div class="subpane active" data-subpane="set-appear">
+          <div class="setgrid">
+
+            <!-- APPEARANCE -->
+            <div class="setgrp">
+              <div class="gh">◐ Appearance</div>
+              <div class="gb">
+                <div class="setrow" style="display:block; border-bottom:1.4px dashed var(--line-soft)">
+                  <div class="t" style="margin-bottom:2px"><b>Theme</b><div class="d">Applies to the whole app</div></div>
+                  <div class="themeopts">
+                    <div class="themeopt"><div class="sw" style="grid-template-rows:1fr"><div style="background:linear-gradient(90deg,#ece9e1 50%,#23211d 50%)"></div></div><div class="cap">System</div></div>
+                    <div class="themeopt sel"><div class="sw"><div style="background:#ece9e1"></div><div style="background:#faf8f2; border-top:1.5px solid var(--line-soft)"></div></div><div class="cap">Light</div></div>
+                    <div class="themeopt"><div class="sw"><div style="background:#23211d"></div><div style="background:#2f2c27; border-top:1.5px solid #4a463e"></div></div><div class="cap">Dark</div></div>
+                    <div class="themeopt"><div class="sw" style="background:#000"><div style="background:#000"></div><div style="background:#000; border-top:1.5px solid #fff"></div></div><div class="cap">Hi-contrast</div></div>
+                  </div>
+                </div>
+                <div class="setrow"><div class="t"><b>Accent</b><div class="d">State &amp; highlight colour</div></div>
+                  <div class="inline" style="gap:6px"><span class="dot info"></span><span class="dot" style="background:#4f7a4a;border-color:#4f7a4a"></span><span class="dot" style="background:#7a5a8f;border-color:#7a5a8f"></span></div>
+                </div>
+                <div class="setrow"><div class="t"><b>Reduce motion</b><div class="d">Disable transitions &amp; animations</div></div><span class="toggle"></span></div>
+              </div>
+            </div>
+
+            <!-- TRAY / STARTUP -->
+            <div class="setgrp">
+              <div class="gh">▣ Menu bar &amp; startup</div>
+              <div class="gb">
+                <div class="setrow"><div class="t"><b>Show in menu bar</b> <span class="badge scope">macOS</span><div class="d">Quick-access popover (screen 12)</div></div><span class="toggle on"></span></div>
+                <div class="setrow"><div class="t"><b>Show in system tray</b> <span class="badge scope">Windows / Linux</span><div class="d">Same popover from the tray icon</div></div><span class="toggle on"></span></div>
+                <div class="setrow"><div class="t"><b>Launch at login</b><div class="d">Start the daemon &amp; tray on boot</div></div><span class="toggle on"></span></div>
+                <div class="setrow"><div class="t"><b>Close to tray</b><div class="d">Closing the window keeps it running</div></div><span class="toggle"></span></div>
+                <div class="setrow"><div class="t"><b>Tray icon shows</b><div class="d">What the badge encodes</div></div><div class="seg"><span class="on">Lock state</span><span>+ Pending</span></div></div>
+              </div>
+            </div>
+          </div>
+          </div><!-- /set-appear -->
+
+          <div class="subpane" data-subpane="set-sec">
+          <div class="setgrid">
+
+            <!-- SECURITY -->
+            <div class="setgrp">
+              <div class="gh">🔒 Security &amp; session</div>
+              <div class="gb">
+                <div class="setrow"><div class="t"><b>Auto-lock after idle</b><div class="d">Clears cached keys from memory</div></div><div class="field tiny" style="width:120px; justify-content:space-between">15 min <span class="muted">▾</span></div></div>
+                <div class="setrow"><div class="t"><b>Re-auth cap</b><div class="d">Hard ceiling on any unlock · fixed by core</div></div><span class="badge"><span class="dot info"></span> 6 hours</span></div>
+                <div class="setrow"><div class="t"><b>Master passphrase</b><div class="d">Rekey — no vault is re-encrypted</div></div><button class="btn sm">Change…</button></div>
+                <div class="setrow"><div class="t"><b>YubiKey</b><div class="d">FIDO2 hmac-secret keyslot</div></div><div class="inline" style="gap:7px"><span class="badge low"><span class="dot ok"></span> enrolled</span><button class="btn sm ghost">Manage</button></div></div>
+                <div class="setrow"><div class="t"><b>Lock everything now</b><div class="d">All vaults + master session</div></div><button class="btn sm danger">Lock all</button></div>
+              </div>
+            </div>
+
+            <!-- DAEMON -->
+            <div class="setgrp">
+              <div class="gh">⚙ Daemon <span class="muted tiny" style="font-weight:400">· Unix</span></div>
+              <div class="gb">
+                <div class="setrow"><div class="t"><b>Run background daemon</b><div class="d">Holds keys in memory, no .session file</div></div><span class="toggle on"></span></div>
+                <div class="setrow"><div class="t"><b>Status</b><div class="d">pid 44714 · idle 14m52s · hard 7h59m</div></div><span class="state ul tiny"><span class="dot ok"></span> running</span></div>
+                <div class="setrow"><div class="t"><b>Max connections</b><div class="d">Concurrent gate clients</div></div><div class="field tiny" style="width:80px">16</div></div>
+                <div class="setrow"><div class="t"><b>Health</b><div class="d">doctor — cleans stale socket / pid</div></div><div class="inline" style="gap:7px"><button class="btn sm">Run doctor</button><button class="btn sm ghost">Restart</button></div></div>
+                <div class="setrow"><div class="t muted tiny" style="line-height:1.5">On Windows there is no daemon — Svault falls back to a <span class="kbd">0600</span> session key, same as the CLI.</div></div>
+              </div>
+            </div>
+          </div>
+          </div><!-- /set-sec -->
+
+          <div class="subpane" data-subpane="set-diag">
+          <div class="stack" style="gap:16px">
+
+            <!-- DEBUG -->
+            <div class="setgrp" style="border-color:var(--warn)">
+              <div class="gh" style="background:#fbf3e0">🐞 Debug &amp; diagnostics <span class="muted tiny" style="font-weight:400">· for support / development</span></div>
+              <div class="gb">
+                <div class="setgrid" style="gap:0 24px">
+                  <div>
+                    <div class="setrow"><div class="t"><b>Log level</b><div class="d">Verbosity of the daemon &amp; UI logs</div></div><div class="seg"><span>error</span><span class="on">info</span><span>debug</span><span>trace</span></div></div>
+                    <div class="setrow"><div class="t"><b>Audit source labels</b><div class="d">Show cli / tui / mcp / gui on events</div></div><span class="toggle on"></span></div>
+                    <div class="setrow"><div class="t"><b>Run daemon in foreground</b><div class="d">svault daemon run — live log stream</div></div><button class="btn sm">Open console</button></div>
+                  </div>
+                  <div>
+                    <div class="setrow"><div class="t"><b>Store path</b><div class="d">SVAULT_HOME override</div></div><div class="field tiny" style="width:150px">~/.svault</div></div>
+                    <div class="setrow"><div class="t"><b>Open log folder</b><div class="d">Reveal logs in the file manager</div></div><button class="btn sm ghost">Reveal</button></div>
+                    <div class="setrow"><div class="t"><b>Copy diagnostics</b><div class="d">Versions, platform, daemon state — no secrets</div></div><button class="btn sm">⧉ Copy</button></div>
+                  </div>
+                </div>
+                <div class="annot-row"><div class="annot">Debug never exposes secret values or keys — only versions, paths, and daemon health. "Copy diagnostics" is the one-click bug-report payload.</div></div>
+              </div>
+            </div>
+
+            <!-- ABOUT -->
+            <div class="setgrp">
+              <div class="gh">ⓘ About</div>
+              <div class="gb">
+                <div class="inline" style="gap:22px; padding:6px 0">
+                  <div><div class="muted tiny">Version</div><b>Svault 1.0.0</b></div>
+                  <div><div class="muted tiny">Core</div><b>rust · AES-256-GCM · Argon2id</b></div>
+                  <div><div class="muted tiny">Store</div><b>~/.svault · local</b></div>
+                  <span class="spacer" style="flex:1"></span>
+                  <button class="btn sm ghost">Check for updates</button>
+                  <button class="btn sm ghost">Docs ↗</button>
+                </div>
+              </div>
+            </div>
+          </div><!-- /stack -->
+          </div><!-- /set-diag -->
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 04 VAULT CONFIG ============================ -->
+  <section class="screen" data-screen="vaultcfg">
+    <div class="screen-head">
+      <h2>Vault config — create &amp; settings</h2>
+      <p>The forms behind <span class="kbd">svault create</span> and <span class="kbd">svault settings &lt;vault&gt;</span>. Same fields: the agents allowed, rate limit, auto-lock, login method, default tier, and the AI-judge assignment — all written into the vault's encrypted policy. Reached from the vault list's <b>+ Create</b> and a row's <b>⚙ settings</b>.</p>
+    </div>
+
+    <div class="frame">
+      <div class="chrome">
+        <span class="lights"><i></i><i></i><i></i></span>
+        <span class="title">Svault — <b>Vault config</b></span>
+        <span class="right">policy encrypted in vault.enc</span>
+      </div>
+      <div class="app">
+        <aside class="sidebar">
+          <div class="brand"><span class="mark">S</span><span class="name">Svault</span></div>
+          <div class="nav-item sel"><span class="ico"></span> Vaults</div>
+          <div class="nav-item"><span class="ico"></span> Judges &amp; Policy</div>
+          <div class="nav-item"><span class="ico"></span> MCP</div>
+          <div class="nav-item"><span class="ico"></span> Audit</div>
+          <div class="nav-item"><span class="ico"></span> Pending</div>
+          <hr class="nav-sep" />
+          <div class="nav-item"><span class="ico"></span> Backup &amp; recovery</div>
+          <div class="nav-item"><span class="ico"></span> Settings</div>
+          <div class="daemon-box">
+            <div class="hd"><span class="dot ok"></span> master · unlocked</div>
+            <div class="muted">new vaults wrap under the master key</div>
+          </div>
+        </aside>
+        <div class="panel">
+          <div class="subtabs">
+            <button class="subtab" aria-selected="true" data-subtab="vc-create">Create vault</button>
+            <button class="subtab" data-subtab="vc-edit">Edit settings</button>
+          </div>
+
+          <!-- pane: create -->
+          <div class="subpane active" data-subpane="vc-create">
+            <div style="max-width:680px">
+              <div class="grid2">
+                <div><div class="lbl-row"><span class="lbl">Vault name</span><span class="info">?<span class="tip">Stored locally at .svault/&lt;name&gt;. Must be unique. Defaults to the current directory name.</span></span></div><div class="field">billing-api<span class="cursor"></span></div></div>
+                <div><label class="lbl">Description</label><div class="field">production billing service</div></div>
+              </div>
+              <div class="grid2" style="margin-top:12px">
+                <div><div class="lbl-row"><span class="lbl">Allow agent</span><span class="info">?<span class="tip">Which agents may reach this vault: none, a named list, or all. "list" lets you enter caller identities.</span></span></div>
+                  <div class="seg" style="width:100%"><span>none</span><span class="on">list</span><span>all</span></div>
+                  <div class="field tiny" style="margin-top:8px">claude-code, cursor</div>
+                </div>
+                <div><div class="lbl-row"><span class="lbl">Rate limit</span><span class="info">?<span class="tip">Caps how often agents may request secrets, e.g. 10/hour or 30/min. Exceeding it is denied &amp; audited.</span></span></div><div class="field">10/hour</div></div>
+              </div>
+              <div class="grid2" style="margin-top:12px">
+                <div><div class="lbl-row"><span class="lbl">Auto-lock when idle</span><span class="info">?<span class="tip">Clears this vault's cached key after the idle timer, so a walk-away doesn't leave it open.</span></span></div>
+                  <div class="inline" style="gap:10px"><span class="toggle on"></span><div class="field tiny" style="flex:1; justify-content:space-between">1d <span class="muted">▾ 12h · 30m</span></div></div>
+                </div>
+                <div><div class="lbl-row"><span class="lbl">Login method</span><span class="info">?<span class="tip">How this vault is unlocked: the master passphrase, or a YubiKey touch (if enrolled).</span></span></div>
+                  <div class="seg" style="width:100%"><span class="on">passphrase</span><span>yubikey</span></div>
+                </div>
+              </div>
+              <div class="grid2" style="margin-top:12px">
+                <div><div class="lbl-row"><span class="lbl">Default tier</span><span class="info">?<span class="tip">Sensitivity applied to new secrets unless overridden. medium/high get judged.</span></span></div>
+                  <div class="seg" style="width:100%"><span>low</span><span class="on">medium</span><span>high</span></div>
+                </div>
+                <div><div class="lbl-row"><span class="lbl">AI judge</span><span class="info">?<span class="tip">Gate this vault's medium/high reads with the judge. Needs an enabled judge + key in the keyring to act.</span></span></div>
+                  <div class="inline" style="gap:10px"><span class="toggle on"></span><div class="field tiny" style="flex:1; justify-content:space-between">judge: reviewer <span class="muted">▾</span></div></div>
+                </div>
+              </div>
+
+              <div style="border:1.6px dashed var(--warn); padding:12px 13px; background:#fbf3e0; margin-top:16px">
+                <div class="inline tiny" style="gap:8px; margin-bottom:6px"><span class="dot warn"></span> <b>On create</b></div>
+                <div class="muted tiny">On first run you'll set the <b>master passphrase</b>. After creation a one-time <b>recovery code</b> is shown — you must confirm you saved it (see Onboarding, screen 02). The vault's data key is wrapped under the master; no per-vault passphrase.</div>
+              </div>
+              <div class="inline" style="gap:10px; margin-top:14px"><button class="btn primary">Create vault</button><button class="btn ghost">Cancel</button></div>
+              <div class="annot-row"><div class="annot">Mirrors the <span class="kbd">svault create</span> prompts exactly — agents, rate limit, auto-lock, login method, default tier, judge — so the GUI and CLI produce identical vaults.</div></div>
+            </div>
+          </div>
+
+          <!-- pane: edit settings -->
+          <div class="subpane" data-subpane="vc-edit">
+            <div class="panel-head" style="margin-bottom:14px">
+              <button class="btn ghost sm">← Vaults</button>
+              <h3>prod-infra</h3>
+              <span class="badge scope">local</span>
+              <span class="spacer"></span>
+              <div class="field" style="width:180px; padding:6px 10px">⌕ <span class="muted tiny">switch vault</span></div>
+            </div>
+            <div style="max-width:680px">
+              <div><label class="lbl">Description</label><div class="field">production infra secrets</div></div>
+              <div class="grid2" style="margin-top:12px">
+                <div><label class="lbl">Allow agent</label><div class="seg" style="width:100%"><span>none</span><span class="on">list</span><span>all</span></div><div class="field tiny" style="margin-top:8px">claude-code</div></div>
+                <div><label class="lbl">Rate limit</label><div class="field">5/hour</div></div>
+              </div>
+              <div class="grid2" style="margin-top:12px">
+                <div><label class="lbl">Auto-lock when idle</label><div class="inline" style="gap:10px"><span class="toggle on"></span><div class="field tiny" style="flex:1; justify-content:space-between">12h <span class="muted">▾</span></div></div></div>
+                <div><label class="lbl">Login method</label><div class="seg" style="width:100%"><span>passphrase</span><span class="on">yubikey</span></div></div>
+              </div>
+              <div class="grid2" style="margin-top:12px">
+                <div><label class="lbl">AI judge</label><div class="inline" style="gap:10px"><span class="toggle on"></span><span class="state ul tiny">on</span></div></div>
+                <div><label class="lbl">Assigned judge</label><div class="field row-between">reviewer <span class="muted">▾</span></div><div class="help">unassigned → keyring default ★</div></div>
+              </div>
+              <div class="inline" style="gap:10px; margin-top:16px"><button class="btn primary">Save changes</button><button class="btn ghost">Discard</button></div>
+              <div class="annot-row"><div class="annot">Saving re-signs <span class="kbd">meta.yaml</span> and re-encrypts the policy in <span class="kbd">vault.enc</span>. Per-secret tier/scope is edited on the secret itself (screen 05), not here.</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- screens injected below -->
+  <!-- @@SCREENS@@ -->
+
+</div>
+
+<div class="toolbar">
+  <label><span class="chk on" id="annotChk"></span> annotations</label>
+</div>
+
+<script>
+  // tab switching + persistence
+  (function(){
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+    var screens = Array.prototype.slice.call(document.querySelectorAll('.screen'));
+    function show(name){
+      tabs.forEach(function(t){ t.setAttribute('aria-selected', t.dataset.screen===name ? 'true':'false'); });
+      screens.forEach(function(s){ s.classList.toggle('active', s.dataset.screen===name); });
+      try { localStorage.setItem('svault_wf_tab', name); } catch(e){}
+      window.scrollTo({ top: 0 });
+    }
+    tabs.forEach(function(t){ t.addEventListener('click', function(){ show(t.dataset.screen); }); });
+    var saved = 'signin';
+    try { saved = localStorage.getItem('svault_wf_tab') || 'signin'; } catch(e){}
+    if(!document.querySelector('.tab[data-screen="'+saved+'"]')) saved = 'signin';
+    show(saved);
+
+    // annotations toggle
+    var chk = document.getElementById('annotChk');
+    chk.parentElement.addEventListener('click', function(){
+      var on = document.body.getAttribute('data-annot')==='on';
+      document.body.setAttribute('data-annot', on ? 'off':'on');
+      chk.classList.toggle('on', !on);
+    });
+
+    // in-panel sub-tabs
+    document.querySelectorAll('.subtabs').forEach(function(bar){
+      var group = bar.closest('.panel') || bar.parentElement;
+      var btns = bar.querySelectorAll('.subtab');
+      btns.forEach(function(b){
+        b.addEventListener('click', function(){
+          btns.forEach(function(x){ x.setAttribute('aria-selected', x===b ? 'true':'false'); });
+          group.querySelectorAll(':scope > .subpane, .subpanes > .subpane').forEach(function(p){
+            p.classList.toggle('active', p.dataset.subpane===b.dataset.subtab);
+          });
+        });
+      });
+    });
+  })();
+</script>
+
+</body>
+</html>
