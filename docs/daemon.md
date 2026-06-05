@@ -37,6 +37,8 @@ If no daemon is running, every command behaves exactly as before (file session).
 
 You can also control it from the [interactive TUI](tui.md): the header shows a `daemon running` / `daemon off` indicator, and pressing `d` on the vault list starts it if it's off or stops it if it's running.
 
+The [desktop GUI](gui.md) goes a step further: on supported platforms it **auto-starts the daemon on launch** (if it isn't already running) so the app behaves like a running service. It starts the daemon from the bundled `svault` binary — the GUI's own executable can't run the daemon — via `daemon::start_quiet_with_exe`. On Windows this is a no-op (the file-session fallback applies).
+
 > **Note:** the daemon accelerates the **read** path (`unlock`, `get`, `secret get`, `lock`, `status`). Other secret operations — `secret add`, `secret list`, `secret remove` — still prompt for the master passphrase (to unwrap the vault's data key), because the daemon serves only the single-secret gated `get` over the socket and deliberately holds the key, not the passphrase.
 
 ## Auto-lock

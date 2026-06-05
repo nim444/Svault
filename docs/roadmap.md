@@ -23,7 +23,7 @@ For per-release detail, see [CHANGELOG.md](../CHANGELOG.md). For the build plan
 | Conditional access + escalation (0.9.9) | Shipped | Time-window / caller conditions in the encrypted policy; repeated denials seal a secret and escalate to a human (`svault pending` / `approve`, TUI `A`); agents never self-clear |
 | Independent security review | Shipped | Three independent external-model reviews of the full 0.9.9 surface (no Critical/High); the actionable findings fixed before 1.0 (`docs/security-review/`) |
 | Stable release (1.0.0) | In review | The agent-ready layer consolidated, independently reviewed, and stabilized — the first stable release. Distribution channels (install script, Homebrew, Docker) follow post-1.0 |
-| Desktop GUI (2.0.0) | Planned | Tauri vault manager + system tray |
+| Desktop GUI (2.0.0) | In progress | Tauri vault manager + system tray — all 12 handoff screens built over the existing core/daemon (`gui-app/`, `docs/gui.md`) |
 
 The agent-ready surface is complete and independently reviewed. **1.0.0 is the
 consolidation of that work into the first stable release** — it is in a final
@@ -232,15 +232,37 @@ shipped channel today.
 A small backlog of accepted, non-blocking items remains for later: a Windows
 owner-only DACL, a tamper-evident audit sink, and tunable Argon2id parameters.
 
-## Planned (post-1.0)
+## In progress (post-1.0)
 
 ### 2.0.0 — Desktop GUI (Tauri)
 
-- Vault dashboard with lock/unlock, auto-lock controls, and a session monitor.
-- Secret management (names only, never values), a policy viewer, and an audit
-  log viewer.
-- System tray icon and notifications; a lightweight single binary that works
-  offline.
+A cross-platform Tauri app in `gui-app/` that drives the **same** `core`/`daemon`
+as the CLI/TUI/MCP (no reimplemented crypto or policy). All 12 screens from the
+design handoff are built: sign-in/onboarding, vault list, vault config, secrets +
+classification, judges & policy (with a live judge test), MCP wiring, audit
+timeline, pending approvals, backup/recovery, settings, and a menu-bar/tray
+popover. See [gui.md](gui.md) for architecture and how to run.
+
+- Vault dashboard with lock/unlock, a live auto-lock countdown, and a daemon
+  session monitor.
+- Secret management with inline classification, a policy/judge surface, and an
+  audit log viewer that shows the real peer UID and real denial reason.
+- System-tray icon + popover; the bundled `svault` sidecar (and an "Install CLI
+  to PATH" action) means one install delivers GUI + CLI + TUI + MCP.
+
+Remaining before tagging 2.0.0: release bundling across the four targets
+(`tauri-action`), the sidecar wiring (`scripts/bundle-sidecar.sh`), icon-state
+assets for the tray, design/UX polish, and a manual QA pass over every screen.
+
+**Versioning plan.** The crate version is now **1.1.0** (bumped in `Cargo.toml`,
+the GUI crate, `tauri.conf.json`, and `package.json`). This is the development
+line carrying the GUI plus the small enabling core additions (the keyring
+`mcp_enabled` switch enforced by the MCP server, `daemon::client::vault_status`
+for the auto-lock countdown). **1.1.0 is not published or git-tagged on its own**
+— do not run `cargo publish` or cut a tag for it. The next public release is
+**2.0.0**, which ships the desktop GUI together with these additions once the
+"remaining" items above are done. So `1.0.0` (released) → `2.0.0` (the GUI
+release), with `1.1.0` being the in-progress development line in between.
 
 ## Distribution
 
