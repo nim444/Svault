@@ -10,8 +10,9 @@
 //! - [`cli`] — the `svault` command-line interface (entry point: [`cli::run`]).
 //! - [`mcp`] — the local Model Context Protocol server (`svault mcp`), a stdio
 //!   JSON-RPC frontend that exposes gated secret access to AI agents.
-//! - [`gui`] — stub; the desktop GUI is the separate `gui-app/` Tauri crate
-//!   (`svault-gui`), which drives this library. See `docs/gui.md`.
+//!
+//! The desktop GUI is the separate `gui/` Tauri crate (`svault-gui`), which
+//! drives this library — see `docs/gui.md`.
 //!
 //! The `svault` binary ([`main`](../main/index.html)) is a thin wrapper over
 //! [`cli::run`]. Each frontend reuses [`core`] without touching the others.
@@ -23,6 +24,5 @@
 pub mod cli;
 pub mod core;
 pub mod daemon;
-pub mod gui;
 pub mod mcp;
 pub mod tui;

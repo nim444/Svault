@@ -168,7 +168,7 @@ with a thin `svault` bin over `cli::run()`, split into a frontend-agnostic
 **`core`** (crypto, vault, policy, judge, keyring, master, recovery, …) and the
 frontends that drive it: `daemon/`, `tui/`, `cli/`, plus `mcp/` (then a
 placeholder, now the shipped MCP server) and a `gui/` slot (the GUI later landed
-as the separate `gui-app/` Tauri crate). Lets each new surface reuse `core`
+as the separate `gui/` Tauri crate). Lets each new surface reuse `core`
 without touching the CLI or TUI. (The YubiKey keyslot that previously held the 0.9.6 slot is
 postponed to post-1.0 — see [Deferred / not planned](#deferred--not-planned).)
 
@@ -288,7 +288,7 @@ These are deliberately sequenced after a stable, audited CLI.
 
 `svault-gui`, a cross-platform desktop app (macOS, Linux, Windows) built with
 Tauri — React + TypeScript over the same `svault-cli` core and daemon (no
-reimplemented crypto, policy, or judge). It lives in the `gui-app/` crate so
+reimplemented crypto, policy, or judge). It lives in the `gui/` crate so
 `tauri` never becomes a dependency of the published library. Develops on the
 1.1.0 line; ships as 2.0.0. All 12 design-handoff screens are built:
 

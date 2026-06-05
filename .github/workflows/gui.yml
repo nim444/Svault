@@ -23,7 +23,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: gui-app/src-tauri
+          workspaces: gui/src-tauri
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -35,21 +35,21 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev pkg-config libudev-dev
 
       - name: Frontend build
-        working-directory: gui-app
+        working-directory: gui
         run: |
           bun install --frozen-lockfile
           bun run build
 
       - name: Backend fmt
-        working-directory: gui-app/src-tauri
+        working-directory: gui/src-tauri
         run: cargo fmt --all --check
 
       - name: Backend clippy
-        working-directory: gui-app/src-tauri
+        working-directory: gui/src-tauri
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Backend build
-        working-directory: gui-app/src-tauri
+        working-directory: gui/src-tauri
         run: cargo build
 
   # Release bundles (.dmg / .msi / .AppImage) are produced by the standard
@@ -70,4 +70,4 @@ jobs:
   #     - run: scripts/bundle-sidecar.sh        # stage the svault sidecar
   #     - uses: tauri-apps/tauri-action@v0
   #       with:
-  #         projectPath: gui-app
+  #         projectPath: gui
