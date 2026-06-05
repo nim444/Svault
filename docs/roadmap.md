@@ -226,7 +226,7 @@ the consolidation, not new scope:
   adding scope.
 
 **Distribution channels** (an install script, a Homebrew tap, cargo-binstall, and a
-Docker image — see below) follow *after* 1.0.0; `cargo install svault-ai` is the
+Docker image — see below) follow *after* 1.0.0; `cargo install svault-cli` is the
 shipped channel today.
 
 A small backlog of accepted, non-blocking items remains for later: a Windows
@@ -272,7 +272,7 @@ once wired.
 
 **Shipped:**
 
-- **crates.io** — `cargo install svault-ai` (builds from source).
+- **crates.io** — `cargo install svault-cli` (builds from source).
 
 **Next (one pass — covers Mac/Linux/Rust users and agents):**
 
@@ -282,7 +282,7 @@ once wired.
 - **Homebrew tap** — `brew install nim444/tap/svault` from a `nim444/homebrew-tap`
   repo (own tap, not homebrew-core); CI bumps the formula on each `v*` tag.
 - **cargo-binstall** — `[package.metadata.binstall]` in `Cargo.toml` so
-  `cargo binstall svault-ai` pulls a prebuilt binary instead of compiling.
+  `cargo binstall svault-cli` pulls a prebuilt binary instead of compiling.
 - **Docker image** — `ghcr.io/nim444/svault`, pushed on each tag; this matters
   for the AI-agent and CI use case, where agents run in containers.
 

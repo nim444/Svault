@@ -5,11 +5,17 @@ Svault ships as a single native binary with no runtime dependencies.
 ## From crates.io (recommended)
 
 ```bash
-cargo install svault-ai
+cargo install svault-cli
 svault --version
 ```
 
-The crate is published as [`svault-ai`](https://crates.io/crates/svault-ai); the installed binary is named `svault`.
+The crate is published as [`svault-cli`](https://crates.io/crates/svault-cli); the installed binary is named `svault`.
+
+> **Naming note:** versions up to **1.0.0** were published as
+> [`svault-ai`](https://crates.io/crates/svault-ai) — `cargo install svault-ai`
+> still installs 1.0.0. From **2.0.0** the crate is `svault-cli` (the plain
+> `svault` and `svault-core` names are taken on crates.io by an unrelated
+> project). The binary has always been `svault`.
 
 ## From source
 
@@ -65,10 +71,10 @@ in-app *Install CLI to PATH*). Until then, run it from source — see
 
 ### Optional: YubiKey unlock
 
-[YubiKey unlock](architecture.md#authentication-the-keyslot-model) is an **opt-in build feature** (`yubikey`), off by default — the default build and `cargo install svault-ai` have **no system dependencies** and no YubiKey code. The **prebuilt release binaries** (GitHub Releases) already include it. To get it from source / crates.io:
+[YubiKey unlock](architecture.md#authentication-the-keyslot-model) is an **opt-in build feature** (`yubikey`), off by default — the default build and `cargo install svault-cli` have **no system dependencies** and no YubiKey code. The **prebuilt release binaries** (GitHub Releases) already include it. To get it from source / crates.io:
 
 ```bash
-cargo install svault-ai --features yubikey
+cargo install svault-cli --features yubikey
 ```
 
 It talks to the key over USB-HID (FIDO2):

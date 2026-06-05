@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::commands::common::leaf;
 use crate::error::{emsg, CmdResult};
 
-use svault_ai::core::meta::VaultMeta;
-use svault_ai::core::{audit, vault};
+use svault_cli::core::meta::VaultMeta;
+use svault_cli::core::{audit, vault};
 
 #[derive(Serialize)]
 pub struct AuditEvent {

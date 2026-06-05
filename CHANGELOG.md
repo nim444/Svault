@@ -12,9 +12,18 @@ it is the in-progress line carrying the GUI plus a few small enabling core
 additions; the GUI ships to the public as **2.0.0**. See [roadmap](docs/roadmap.md)
 and [docs/gui.md](docs/gui.md).
 
+### Changed
+- **Crate renamed `svault-ai` → `svault-cli`** (first published under the new
+  name with 2.0.0). crates.io names can't be renamed in place, and both `svault`
+  and `svault-core` are taken by an unrelated project — `svault-cli` says what
+  the crate delivers: the `svault` binary (CLI + TUI + MCP server + daemon).
+  Versions up to 1.0.0 remain installable as `svault-ai`. The library ident is
+  now `svault_cli`; the installed binary is `svault`, unchanged. The desktop app
+  crate stays `svault-gui` (never published; ships as Tauri bundles).
+
 ### Added
 - **Desktop GUI (Tauri + React)** in `gui-app/` — a cross-platform vault manager
-  that drives the same `svault-ai` core and daemon as the CLI/TUI/MCP (no
+  that drives the same `svault-cli` core and daemon as the CLI/TUI/MCP (no
   reimplemented crypto, policy, or judge). All 12 design-handoff screens are
   built: sign-in, first-run onboarding (with a splash), vault list/config,
   secrets, judges & policy, MCP wiring, audit, pending approvals, backup &
@@ -34,8 +43,11 @@ and [docs/gui.md](docs/gui.md).
 
 ### Notes
 - The GUI is delivered as a separate Tauri app crate (`gui-app/`); `tauri` is
-  **not** a dependency of the published `svault-ai` library, so
-  `cargo install svault-ai` stays lean. The `src/gui/` module remains a stub.
+  **not** a dependency of the published `svault-cli` library, so
+  `cargo install svault-cli` stays lean. The `src/gui/` module remains a stub.
+- The GUI frontend uses **Bun** as its package manager / script runner
+  (`bun install`, `bun run tauri dev`); `package-lock.json` was replaced by
+  `bun.lock`.
 
 ## [1.0.0] - 2026-06-03
 

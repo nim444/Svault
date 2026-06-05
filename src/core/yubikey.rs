@@ -131,7 +131,7 @@ mod imp {
 
     fn unsupported<T>() -> Result<T> {
         Err(anyhow!(
-            "this build has no YubiKey support — reinstall with `cargo install svault-ai --features yubikey` (Linux also needs libudev-dev)"
+            "this build has no YubiKey support — reinstall with `cargo install svault-cli --features yubikey` (Linux also needs libudev-dev)"
         ))
     }
 

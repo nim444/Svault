@@ -1,7 +1,7 @@
 //! Svault desktop GUI — Tauri backend.
 //!
 //! This crate is the `gui` frontend from the Svault roadmap. It links the
-//! `svault-ai` library and drives the exact same `core` + `daemon` code paths
+//! `svault-cli` library and drives the exact same `core` + `daemon` code paths
 //! the CLI uses, so there is one trust model and one policy engine. All
 //! secret-handling stays in Rust; the React frontend only sends structured
 //! commands and renders the results.
@@ -17,7 +17,7 @@ mod tests;
 /// Configure the process the way every Svault frontend does at its entry point:
 ///
 /// 1. Default `SVAULT_HOME` to the user's home so the desktop app manages one
-///    global store at `~/.svault` (mirrors `svault_ai::cli::run`). An explicit
+///    global store at `~/.svault` (mirrors `svault_cli::cli::run`). An explicit
 ///    `SVAULT_HOME` is always honoured.
 /// 2. Stamp this process's audit source as `gui`.
 fn init_process() {
@@ -26,11 +26,11 @@ fn init_process() {
         None => true,
     };
     if unset {
-        if let Some(home) = svault_ai::core::vault::user_home() {
+        if let Some(home) = svault_cli::core::vault::user_home() {
             std::env::set_var("SVAULT_HOME", home);
         }
     }
-    svault_ai::core::usage::set_source(svault_ai::core::usage::Source::Gui);
+    svault_cli::core::usage::set_source(svault_cli::core::usage::Source::Gui);
 }
 
 /// Start the Svault daemon if the platform supports it and it isn't already
@@ -43,7 +43,7 @@ fn autostart_daemon() {
     if !cfg!(unix) {
         return;
     }
-    if svault_ai::daemon::is_running(&svault_ai::daemon::base_dir()) {
+    if svault_cli::daemon::is_running(&svault_cli::daemon::base_dir()) {
         return;
     }
     let bin = commands::settings::locate_svault_bin();
@@ -59,7 +59,7 @@ fn autostart_daemon() {
             return;
         }
     }
-    match svault_ai::daemon::start_quiet_with_exe(&bin) {
+    match svault_cli::daemon::start_quiet_with_exe(&bin) {
         Ok(msg) => eprintln!("svault daemon: {msg}"),
         Err(e) => eprintln!("svault daemon autostart skipped: {e}"),
     }

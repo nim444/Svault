@@ -7,8 +7,8 @@ use serde::Serialize;
 use crate::commands::common::{leaf, open_vault};
 use crate::error::{emsg, CmdResult};
 
-use svault_ai::core::meta::VaultMeta;
-use svault_ai::core::{master, usage, vault};
+use svault_cli::core::meta::VaultMeta;
+use svault_cli::core::{master, usage, vault};
 
 #[derive(Serialize)]
 pub struct PendingItem {

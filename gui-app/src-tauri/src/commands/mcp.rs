@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::commands::common::open_or_init_keyring;
 use crate::error::{emsg, CmdResult};
 
-use svault_ai::core::{audit, keyring, vault};
+use svault_cli::core::{audit, keyring, vault};
 
 #[derive(Serialize)]
 pub struct ConnectedAgent {

@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::CmdResult;
-use svault_ai::core::policy::Tier;
-use svault_ai::core::{keyring, master, vault, vault::Vault};
+use svault_cli::core::policy::Tier;
+use svault_cli::core::{keyring, master, vault, vault::Vault};
 
 /// Directory leaf (the vault's id) for a path.
 pub fn leaf(dir: &Path) -> String {

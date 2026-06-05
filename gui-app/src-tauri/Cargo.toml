@@ -1,9 +1,12 @@
 [package]
 name = "svault-gui"
 version = "1.1.0"
-description = "Svault desktop GUI — a Tauri frontend over the svault-ai core/daemon"
+description = "Svault desktop GUI — a Tauri frontend over the svault-cli core/daemon"
 authors = ["Nima Karimi <nima.karimi@live.com>"]
 edition = "2021"
+# Never published to crates.io — the GUI ships as desktop bundles (Tauri), with
+# the svault binary as a sidecar. Only svault-cli is published.
+publish = false
 
 [lib]
 # The `_lib` suffix keeps the lib name distinct from the bin name (a Windows
@@ -26,7 +29,7 @@ tauri-build = { version = "2", features = [] }
 # The `yubikey` feature enables real FIDO2 hmac-secret detection/enrollment (the
 # desktop app always wants it; macOS/Windows need no extra system deps, Linux
 # needs libudev-dev).
-svault-ai = { path = "../..", features = ["yubikey"] }
+svault-cli = { path = "../..", features = ["yubikey"] }
 
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"

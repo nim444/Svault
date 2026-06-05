@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use crate::commands::common::{leaf, open_vault, parse_tier};
 use crate::error::{emsg, CmdResult};
 
-use svault_ai::core::policy::{AccessWindow, SecretRule};
-use svault_ai::core::{audit, usage};
-use svault_ai::daemon::client;
+use svault_cli::core::policy::{AccessWindow, SecretRule};
+use svault_cli::core::{audit, usage};
+use svault_cli::daemon::client;
 
 #[derive(Serialize)]
 pub struct SecretSummary {
