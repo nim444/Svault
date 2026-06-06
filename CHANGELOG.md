@@ -21,7 +21,36 @@ and [docs/gui.md](docs/gui.md).
   now `svault_cli`; the installed binary is `svault`, unchanged. The desktop app
   crate stays `svault-gui` (never published; ships as Tauri bundles).
 
+### Fixed
+- **Local AI judges (LM Studio / Ollama) no longer time out or mis-parse.**
+  Judges on a local provider get a 120s default timeout instead of the
+  cloud-sized 6s (an explicit per-judge timeout still wins); the judge request's
+  `max_tokens` grew 300 → 2000 so reasoning models (e.g. Gemma) can finish their
+  thinking trace and still emit the verdict — non-reasoning models stop at the
+  JSON regardless. A reply whose `content` is empty but carries a
+  `reasoning_content` trace now fails with a clear "only a reasoning trace, no
+  final answer" error; the trace itself is **never** parsed for the verdict (a
+  thinking model can mention a hypothetical allow-JSON mid-reasoning, and this
+  is a security gate). Transport errors now say "judge request failed" instead
+  of naming OpenRouter for every provider.
+
 ### Added
+- **Touch ID in the GUI** — sign-in gains an "Unlock with Touch ID" button
+  (shown only when enrolled and available); onboarding step 4 became **Unlock
+  methods** with a Touch ID card next to the YubiKey one; Settings → Security
+  can enroll/remove Touch ID. Commands: `unlock_touchid`, `enroll_touchid`,
+  `remove_touchid`, `touchid_status`.
+- **Touch ID unlock (macOS)** — `svault master touchid enroll | remove | status`
+  adds the Mac's fingerprint reader as another keyslot over the master key
+  (passphrase *or* touch, never 2FA), and `svault unlock` offers it first when
+  enrolled. A random wrapping key lives in the **login keychain** and is used
+  only after the system Touch ID sheet (LocalAuthentication) succeeds; it
+  unwraps the master from `.svault/master.touchid.enc`. New core module
+  `core::touchid` (macOS-only; stubs elsewhere — the Linux/Windows build gains
+  no dependencies). Honest boundary, documented: the biometric check is enforced
+  in-process — Apple's entitlement-gated biometry keychain ACL is unavailable to
+  a cargo-installed CLI — so this is a convenience slot within the same
+  same-UID-cooperative trust model as the rest of Svault.
 - **Desktop GUI (Tauri + React)** in `gui/` — a cross-platform vault manager
   that drives the same `svault-cli` core and daemon as the CLI/TUI/MCP (no
   reimplemented crypto, policy, or judge). All 12 design-handoff screens are
