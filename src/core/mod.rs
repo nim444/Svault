@@ -20,6 +20,7 @@ pub mod portable;
 pub mod recovery;
 pub mod secfile;
 pub mod session;
+pub mod touchid;
 pub mod usage;
 pub mod vault;
 pub mod yubikey;

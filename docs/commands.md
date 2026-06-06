@@ -18,6 +18,9 @@ svault master status               # is the master set / unlocked, how many vaul
 svault master yubikey enroll       # add a YubiKey (FIDO2 hmac-secret) keyslot — touch unlocks the master
 svault master yubikey status       # is a YubiKey enrolled / is a device present
 svault master yubikey remove       # remove the YubiKey keyslot
+svault master touchid enroll       # add a Touch ID keyslot (macOS) — a fingerprint unlocks the master
+svault master touchid status       # is Touch ID enrolled / available on this machine
+svault master touchid remove       # remove the Touch ID keyslot (also clears its keychain item)
 svault create [--force]            # create an encrypted vault (name, description, agents, rate limit, auto-lock, AI judge + assigned judge)
 svault settings [VAULT]            # view or change a vault's settings (incl. AI judge on/off + assigned judge)
 svault unlock   [VAULT]            # unlock — no VAULT opens every vault via the master; VAULT opens just one
@@ -36,7 +39,8 @@ for the keyring), and the master key itself is wrapped under your passphrase in
 `.svault/master.enc`. So **unlock once and everything opens**. `master rekey`
 rewrites only the small master slot — no ciphertext is touched. This is the
 keyslot model (LUKS / 1Password style): additional unlock methods — a YubiKey
-touch, the recovery code — are just more slots over the same key.
+touch, Touch ID on macOS, the recovery code — are just more slots over the same
+key.
 
 When you first set the master passphrase, Svault prints a **one-time master
 recovery code** and writes it (wrapped around the master key) to
@@ -60,6 +64,18 @@ fallback — it's *passphrase or touch*, never a two-step 2FA. `svault master
 yubikey status` shows whether one is enrolled and connected; `svault master
 yubikey remove` deletes the slot (the passphrase and recovery code still open
 everything). Lose the key and you are never locked out.
+
+**Touch ID unlock (macOS).** `svault master touchid enroll` adds your Mac's
+fingerprint reader as another slot over the master key: a random wrapping key is
+stored in your **login keychain** and released only after the system Touch ID
+sheet succeeds, then it unwraps the master from `.svault/master.touchid.enc`.
+Afterwards `svault unlock` offers Touch ID first, with the master passphrase
+always available as a fallback — again *passphrase or touch*, never 2FA.
+Honest boundary: the biometric check is enforced by svault in-process (a
+cargo-installed CLI cannot use Apple's entitlement-gated biometry keychain ACL),
+so this is a convenience slot within the same same-UID-cooperative trust model
+as the rest of Svault. `svault master touchid status` / `remove` manage the slot;
+removing it also deletes the keychain item.
 
 **Re-auth cap.** Every unlock — passphrase or YubiKey, CLI, TUI, or the daemon
 behind MCP — stays valid for at most **6 hours**, after which the master must be

@@ -78,5 +78,15 @@ yubikey = ["dep:ctap-hid-fido2"]
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Touch ID unlock — LocalAuthentication (biometric prompt) + the login keychain
+# (KEK storage). macOS only; on other targets src/core/touchid.rs is a stub, so
+# these never enter the Linux/Windows build. See src/core/touchid.rs.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-local-authentication = "0.3"
+block2 = "0.6"
+
 [dev-dependencies]
 tempfile = "3"

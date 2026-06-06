@@ -47,6 +47,10 @@ const MASTER_YUBIKEY: &str = "master.yubikey.enc";
 /// Non-secret companion to the YubiKey slot: the FIDO2 credential id and the
 /// hmac-secret salt needed to re-derive that KEK. JSON, owner-only.
 const MASTER_YUBIKEY_META: &str = "master.yubikey.meta";
+/// Touch ID keyslot (macOS): the master key wrapped under a random KEK that
+/// lives in the login keychain, released only after a successful Touch ID
+/// check — the same shape as the YubiKey and recovery slots.
+const MASTER_TOUCHID: &str = "master.touchid.enc";
 
 fn master_path() -> PathBuf {
     svault_dir().join(MASTER_FILE)
@@ -76,6 +80,10 @@ fn yubikey_meta_path() -> PathBuf {
     svault_dir().join(MASTER_YUBIKEY_META)
 }
 
+fn touchid_path() -> PathBuf {
+    svault_dir().join(MASTER_TOUCHID)
+}
+
 /// True if a master recovery code has been written for this machine.
 pub fn master_recovery_exists() -> bool {
     master_recovery_path().exists()
@@ -84,6 +92,11 @@ pub fn master_recovery_exists() -> bool {
 /// True if a YubiKey is enrolled as a master keyslot on this machine.
 pub fn yubikey_enrolled() -> bool {
     yubikey_path().exists() && yubikey_meta_path().exists()
+}
+
+/// True if Touch ID is enrolled as a master keyslot on this machine.
+pub fn touchid_enrolled() -> bool {
+    touchid_path().exists()
 }
 
 /// True once a master passphrase has been set on this machine.
@@ -204,6 +217,30 @@ impl Master {
         Ok(())
     }
 
+    /// Enroll Touch ID as an alternative master keyslot (macOS). Verifies a
+    /// touch first, then generates a random KEK, stores it in the login
+    /// keychain, and wraps MK under it in `master.touchid.enc`. Needs an open
+    /// master (MK in hand). Like the YubiKey slot, this wraps MK directly —
+    /// touch *or* passphrase, never a 2FA requirement.
+    pub fn enroll_touchid(&self) -> Result<()> {
+        // Authenticate up front so a slot is never written for a finger that
+        // can't actually unlock it.
+        crate::core::touchid::authenticate("enroll Touch ID as a Svault unlock method")?;
+
+        let mut kek_bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut kek_bytes);
+        crate::core::touchid::store_kek(&kek_bytes)?;
+
+        // The KEK is 32 high-entropy random bytes, so it is the AES key
+        // directly (no Argon2) — same reasoning as the YubiKey slot.
+        let kek = VaultKey::from_bytes(kek_bytes);
+        let mut aes_salt = [0u8; SALT_SIZE];
+        rand::thread_rng().fill_bytes(&mut aes_salt);
+        let blob = crypto::encrypt(&kek, &aes_salt, self.mk.bytes())?;
+        crate::core::secfile::write_owner_only(&touchid_path(), &blob)?;
+        Ok(())
+    }
+
     /// Wrap a vault's data key under MK and write `<vault_dir>/keyslot.enc`.
     pub fn wrap_dek(&self, vault_dir: &Path, dek: &VaultKey) -> Result<()> {
         self.wrap_dek_at(&keyslot_path(vault_dir), dek)
@@ -315,6 +352,38 @@ pub fn open_with_yubikey(pin: Option<&str>) -> Result<Master> {
 pub fn remove_yubikey() -> Result<()> {
     crate::core::session::secure_remove(&yubikey_path())?;
     crate::core::session::secure_remove(&yubikey_meta_path())?;
+    Ok(())
+}
+
+/// Open the master via Touch ID (macOS): authenticate with the system biometric
+/// sheet, read the KEK from the login keychain, and unwrap MK from
+/// `master.touchid.enc`. MK never changes, so every store stays accessible —
+/// an alternative to typing the master passphrase, not a second factor.
+pub fn open_with_touchid() -> Result<Master> {
+    if !touchid_enrolled() {
+        return Err(anyhow!(
+            "Touch ID is not enrolled on this machine (run 'svault master touchid enroll')"
+        ));
+    }
+    crate::core::touchid::authenticate("unlock Svault")?;
+    let kek = VaultKey::from_bytes(crate::core::touchid::load_kek()?);
+    let blob = std::fs::read(touchid_path())?;
+    let mk_bytes = crypto::decrypt(&kek, &blob)
+        .map_err(|_| anyhow!("the keychain Touch ID key did not unwrap the master key — re-enroll with 'svault master touchid enroll'"))?;
+    let mk_bytes: [u8; 32] = mk_bytes
+        .try_into()
+        .map_err(|_| anyhow!("master.touchid.enc holds an unexpected key length"))?;
+    Ok(Master {
+        mk: VaultKey::from_bytes(mk_bytes),
+    })
+}
+
+/// Remove the Touch ID keyslot: the slot file is securely removed and the KEK
+/// is deleted from the login keychain. The master passphrase and recovery code
+/// still open everything.
+pub fn remove_touchid() -> Result<()> {
+    crate::core::session::secure_remove(&touchid_path())?;
+    crate::core::touchid::delete_kek()?;
     Ok(())
 }
 

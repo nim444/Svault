@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use crate::core::{
     audit, gate, judge, keyring, master, passphrase, policy, portable, recovery, secfile, session,
-    usage, yubikey,
+    touchid, usage, yubikey,
 };
 use crate::daemon::{self, client};
 use crate::tui;
@@ -229,12 +229,13 @@ enum Commands {
     /// Set it once (`init`); thereafter `svault unlock` opens all vaults with it
     /// and `svault create` wraps each new vault under it (no per-vault
     /// passphrase). Actions: `init`, `rekey` (change it), `recover` (reset a
-    /// forgotten one with the recovery code), `status`, and `yubikey
-    /// <enroll|remove|status>` to manage a hardware-key slot.
+    /// forgotten one with the recovery code), `status`, `yubikey
+    /// <enroll|remove|status>` to manage a hardware-key slot, and `touchid
+    /// <enroll|remove|status>` for Touch ID unlock (macOS).
     Master {
-        /// init | rekey | recover | status | yubikey
+        /// init | rekey | recover | status | yubikey | touchid
         action: String,
-        /// Sub-action for `yubikey`: enroll | remove | status
+        /// Sub-action for `yubikey` / `touchid`: enroll | remove | status
         sub: Option<String>,
         /// Skip the passphrase strength floor (for non-interactive / scripted use)
         #[arg(long)]
@@ -2131,6 +2132,25 @@ fn ensure_master_unlocked_inner(force: bool, fresh: bool) -> Result<master::Mast
         }
     }
     if master::exists() {
+        // Offer Touch ID when enrolled and available (macOS). It's an
+        // alternative slot, so the master passphrase is always the fallback.
+        if master::touchid_enrolled() && touchid::is_supported() {
+            let use_tid = Confirm::new()
+                .with_prompt("  Touch ID is enrolled — unlock with it?")
+                .default(true)
+                .interact()
+                .unwrap_or(false);
+            if use_tid {
+                match try_touchid_unlock() {
+                    Ok(m) => return Ok(m),
+                    Err(e) => eprintln!(
+                        "{} {} — falling back to the master passphrase",
+                        style("touchid:").yellow(),
+                        e
+                    ),
+                }
+            }
+        }
         // Offer the YubiKey when one is enrolled and plugged in. It's an
         // alternative slot, so the master passphrase is always the fallback.
         if master::yubikey_enrolled() && yubikey::is_present() {
@@ -2190,6 +2210,103 @@ fn try_yubikey_unlock() -> Result<master::Master> {
     let m = master::open_with_yubikey(Some(&pin))?;
     master::unlock_session(m.key_bytes())?;
     Ok(m)
+}
+
+/// Unlock the master via Touch ID (system biometric sheet) and cache the
+/// master session, mirroring the passphrase path.
+fn try_touchid_unlock() -> Result<master::Master> {
+    println!("{}", style("  Touch the Touch ID sensor...").dim());
+    let m = master::open_with_touchid()?;
+    master::unlock_session(m.key_bytes())?;
+    Ok(m)
+}
+
+/// `svault master touchid <enroll|remove|status>` — manage the Touch ID keyslot
+/// (macOS only).
+fn cmd_master_touchid(sub: Option<&str>, force: bool) -> Result<()> {
+    match sub {
+        Some("enroll") => {
+            if !touchid::is_supported() {
+                eprintln!(
+                    "{} Touch ID is not available on this machine (macOS with enrolled fingerprints required)",
+                    style("error:").red()
+                );
+                std::process::exit(1);
+            }
+            if master::touchid_enrolled() {
+                eprintln!(
+                    "{} Touch ID is already enrolled — remove it first with 'svault master touchid remove'",
+                    style("error:").red()
+                );
+                std::process::exit(1);
+            }
+            // Need the master key in hand to wrap it under the new slot.
+            let m = ensure_master_unlocked(force)?;
+            println!(
+                "{}",
+                style("  Touch the Touch ID sensor to enroll...").dim()
+            );
+            m.enroll_touchid().map_err(|e| {
+                eprintln!("{} {}", style("error:").red(), e);
+                std::process::exit(1);
+                #[allow(unreachable_code)]
+                e
+            })?;
+            println!(
+                "{} Touch ID enrolled. 'svault unlock' now offers it, and your master passphrase still works.",
+                style("ok:").green().bold()
+            );
+            println!(
+                "{}",
+                style("  The wrapping key lives in your login keychain; the master passphrase or recovery code always works as a fallback.")
+                    .dim()
+            );
+            Ok(())
+        }
+        Some("remove") => {
+            if !master::touchid_enrolled() {
+                println!("{} Touch ID is not enrolled", style("ok:").green());
+                return Ok(());
+            }
+            master::remove_touchid()?;
+            println!(
+                "{} Touch ID keyslot removed. The master passphrase and recovery code still open everything.",
+                style("ok:").green().bold()
+            );
+            Ok(())
+        }
+        Some("status") | None => {
+            let enrolled = master::touchid_enrolled();
+            let supported = touchid::is_supported();
+            println!(
+                "  {:<14} {}",
+                style("Enrolled").dim(),
+                if enrolled {
+                    style("yes").green()
+                } else {
+                    style("no").dim()
+                }
+            );
+            println!(
+                "  {:<14} {}",
+                style("Touch ID").dim(),
+                if supported {
+                    style("available").green()
+                } else {
+                    style("not available").dim()
+                }
+            );
+            Ok(())
+        }
+        Some(other) => {
+            eprintln!(
+                "{} unknown touchid action '{}' — use enroll | remove | status",
+                style("error:").red(),
+                other
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 /// `svault master yubikey <enroll|remove|status>` — manage the YubiKey keyslot.
@@ -2311,9 +2428,10 @@ fn cmd_master(action: &str, sub: Option<&str>, force: bool) -> Result<()> {
         "recover" => cmd_master_recover(force),
         "status" => cmd_master_status(),
         "yubikey" => cmd_master_yubikey(sub, force),
+        "touchid" => cmd_master_touchid(sub, force),
         other => {
             eprintln!(
-                "{} unknown master action '{}' — use init | rekey | recover | status | yubikey",
+                "{} unknown master action '{}' — use init | rekey | recover | status | yubikey | touchid",
                 style("error:").red(),
                 other
             );
