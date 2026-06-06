@@ -79,8 +79,8 @@ All 12 screens from `docs/design_handoff_svault_gui/` are implemented, plus a
 |---|--------|-------------------------------|
 | — | Getting started (home) | composes `keyring_state`, `list_vaults`, `provider_save`, `judge_save` |
 | — | AI providers | `judge::provider_*` (list, save, toggle, set_default, remove, kinds, models) |
-| 01 | Sign in / out | `session` (`unlock`, `unlock_yubikey`, `lock_all`, `session_status`) |
-| 02 | Onboarding | `onboarding` (`init_master`, `enroll_yubikey`) |
+| 01 | Sign in / out | `session` (`unlock`, `unlock_yubikey`, `unlock_touchid`, `lock_all`, `session_status`) |
+| 02 | Onboarding | `onboarding` (`init_master`, `enroll_yubikey`, `enroll_touchid`) |
 | 03 | Vault list | `vaults::list_vaults`, `lock_vault`/`unlock_vault`, `delete_vault` |
 | 04 | Vault config | `vaults::create_vault` / `vault_settings` / `save_settings` |
 | 05 | Secrets | `secrets` (`list_secrets`, `add`/`edit`/`remove`, `reveal_secret`) |
@@ -89,7 +89,7 @@ All 12 screens from `docs/design_handoff_svault_gui/` are implemented, plus a
 | 08 | Audit | `audit::audit_events` (gate decisions: real peer UID + denial reason) + `audit::activity_events` (usage timeline incl. global provider/judge/MCP config changes) |
 | 09 | Pending | `pending` (`pending`, `approve_unseal`) |
 | 10 | Backup & recovery | `backup` (export/import, recover_master, rotate_code) |
-| 11 | Settings | `settings` (prefs, rekey, daemon, diagnostics, install_cli) |
+| 11 | Settings | `settings` (prefs, rekey, daemon, diagnostics, install_cli, `yubikey_status`/`touchid_status` + enroll/remove) |
 | 12 | Tray popover | `tray` (`open_main`, `hide_popover`) |
 
 ### Getting started (home)
