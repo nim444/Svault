@@ -83,6 +83,213 @@ const AGENT_MODE_HELP: Record<VaultForm["allow_agent_mode"], string> = {
   all: "Any caller may ask — every request still passes the full gate (scope, tier, rate limit, judge).",
 };
 
+// Structured rate-limit control: a count plus a window — no free text, so the
+// stored value always parses (`N/minute|hour|day`).
+function RateLimitInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [countStr, unitRaw] = value.split("/");
+  const count = Math.max(1, parseInt(countStr, 10) || 10);
+  const unit = ["minute", "hour", "day"].includes(unitRaw) ? unitRaw : "hour";
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        type="number"
+        min={1}
+        max={10000}
+        className="w-24"
+        value={count}
+        onChange={(e) => {
+          const n = Math.max(1, Math.min(10000, Number(e.target.value) || 1));
+          onChange(`${n}/${unit}`);
+        }}
+      />
+      <span className="text-sm text-content-muted">requests per</span>
+      <Select
+        className="w-32"
+        value={unit}
+        onChange={(e) => onChange(`${count}/${e.target.value}`)}
+      >
+        <option value="minute">minute</option>
+        <option value="hour">hour</option>
+        <option value="day">day</option>
+      </Select>
+    </div>
+  );
+}
+
+// Tier selection as labeled radio cards — what each tier means, not just a word.
+const TIERS: { value: VaultForm["default_tier"]; title: string; desc: string }[] = [
+  {
+    value: "low",
+    title: "Low",
+    desc: "Released on request. Non-sensitive values: public URLs, ids, feature flags.",
+  },
+  {
+    value: "medium",
+    title: "Medium",
+    desc: "The AI judge must accept the caller's reason first. Good default for API keys.",
+  },
+  {
+    value: "high",
+    title: "High",
+    desc: "Judged strictly; human-only while no judge is active. Production credentials.",
+  },
+];
+
+function TierPicker({
+  value,
+  onChange,
+  judgeActive,
+}: {
+  value: VaultForm["default_tier"];
+  onChange: (v: VaultForm["default_tier"]) => void;
+  judgeActive: boolean;
+}) {
+  return (
+    <div role="radiogroup" className="flex flex-col gap-2">
+      {TIERS.map((t) => (
+        <button
+          key={t.value}
+          type="button"
+          role="radio"
+          aria-checked={value === t.value}
+          onClick={() => onChange(t.value)}
+          className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
+            value === t.value
+              ? "border-primary bg-surface-raised"
+              : "border-border-subtle hover:bg-surface-raised/50"
+          }`}
+        >
+          <RadioDot on={value === t.value} />
+          <span>
+            <span className="block text-sm font-medium">{t.title}</span>
+            <span className="block text-xs text-content-muted">
+              {t.value !== "low" && !judgeActive
+                ? `${t.desc} No judge is active yet, so this is human-only for now.`
+                : t.desc}
+            </span>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function RadioDot({ on }: { on: boolean }) {
+  return (
+    <span
+      className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border ${
+        on ? "border-primary" : "border-border-subtle"
+      }`}
+    >
+      {on && <span className="size-2 rounded-full bg-primary" />}
+    </span>
+  );
+}
+
+// The vault's judge choice: a clear two-way radio when a judge exists, and an
+// honest recommendation (not silence) when none does.
+function JudgeChoice({
+  judgeActive,
+  enabled,
+  assigned,
+  judges,
+  onEnabled,
+  onAssigned,
+}: {
+  judgeActive: boolean;
+  enabled: boolean;
+  assigned: string | null;
+  judges: string[];
+  onEnabled: (v: boolean) => void;
+  onAssigned: (v: string | null) => void;
+}) {
+  const navigate = useNavigate();
+  if (!judgeActive) {
+    return (
+      <div className="rounded-lg border border-state-pending/40 bg-state-pending/10 p-3 text-sm">
+        <p className="font-medium">No AI judge available.</p>
+        <p className="mt-1 text-content-muted">
+          This vault will be protected by static policies only — medium/high
+          secrets stay <strong>human-only</strong>. We highly recommend adding a
+          judge so agents can be reviewed instead of refused.
+        </p>
+        <Button
+          variant="secondary"
+          className="mt-2 px-3 py-1.5 text-xs"
+          onClick={() => navigate("/judges")}
+        >
+          Add a judge
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <div role="radiogroup" className="flex flex-col gap-2">
+      <button
+        type="button"
+        role="radio"
+        aria-checked={enabled}
+        onClick={() => onEnabled(true)}
+        className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
+          enabled
+            ? "border-primary bg-surface-raised"
+            : "border-border-subtle hover:bg-surface-raised/50"
+        }`}
+      >
+        <RadioDot on={enabled} />
+        <span>
+          <span className="block text-sm font-medium">
+            AI judge reviews requests <span className="text-content-muted">(recommended)</span>
+          </span>
+          <span className="block text-xs text-content-muted">
+            Medium/high secrets are released only when the judge accepts the
+            caller's reason.
+          </span>
+        </span>
+      </button>
+      {enabled && (
+        <Select
+          className="ml-7 w-64"
+          value={assigned ?? ""}
+          onChange={(e) => onAssigned(e.target.value || null)}
+        >
+          <option value="">default judge</option>
+          {judges.map((j) => (
+            <option key={j} value={j}>
+              {j}
+            </option>
+          ))}
+        </Select>
+      )}
+      <button
+        type="button"
+        role="radio"
+        aria-checked={!enabled}
+        onClick={() => onEnabled(false)}
+        className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
+          !enabled
+            ? "border-primary bg-surface-raised"
+            : "border-border-subtle hover:bg-surface-raised/50"
+        }`}
+      >
+        <RadioDot on={!enabled} />
+        <span>
+          <span className="block text-sm font-medium">Policies only</span>
+          <span className="block text-xs text-content-muted">
+            No AI review for this vault — medium/high secrets become human-only.
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
 // ── Create wizard ────────────────────────────────────────────────────────────
 
 function CreateWizard() {
@@ -105,7 +312,7 @@ function CreateWizard() {
     onError: (e) => setError(String(e)),
   });
 
-  const steps = ["Basics", "Agent access", "Protection"];
+  const steps = ["Basics", "Agent access", "Protection", "Locking"];
 
   return (
     <Page title="Create vault">
@@ -208,13 +415,11 @@ function CreateWizard() {
             </Field>
             <Field
               label="Rate limit"
-              hint="Caps how fast any one caller can pull secrets — e.g. 10/hour or 100/day. A runaway agent hits the ceiling instead of draining the vault."
+              hint="Caps how fast any one caller can pull secrets — a runaway agent hits the ceiling instead of draining the vault."
             >
-              <Input
-                className="w-40"
+              <RateLimitInput
                 value={form.rate_limit}
-                onChange={(e) => set("rate_limit", e.target.value)}
-                placeholder="10/hour"
+                onChange={(v) => set("rate_limit", v)}
               />
             </Field>
             <div className="flex justify-between gap-2 border-t border-border-subtle pt-4">
@@ -229,55 +434,47 @@ function CreateWizard() {
         {step === 2 && (
           <div className="flex flex-col gap-4">
             <Explainer>
-              Each secret gets a sensitivity tier (you can override per secret
-              later): <strong>low</strong> is released on request,{" "}
-              <strong>medium</strong> needs the AI judge to accept the reason,{" "}
-              <strong>high</strong> is judged strictly
-              {judgeActive ? "" : " — and human-only while no judge is active"}
-              . New secrets start at the default you pick here.
+              Every secret carries a sensitivity tier (you can override it per
+              secret later). New secrets start at the default you pick here.
             </Explainer>
             <Field label="Default tier">
-              <Segmented
+              <TierPicker
                 value={form.default_tier}
                 onChange={(v) => set("default_tier", v)}
-                options={[
-                  { value: "low", label: "Low" },
-                  { value: "medium", label: "Medium" },
-                  { value: "high", label: "High" },
-                ]}
+                judgeActive={judgeActive}
               />
             </Field>
 
-            {judgeActive && (
-              <Field label="AI judge">
-                <div className="flex flex-col gap-2">
-                  <Checkbox
-                    checked={form.judge_enabled}
-                    onChange={(v) => set("judge_enabled", v)}
-                  >
-                    Use the AI judge for this vault's medium/high secrets
-                  </Checkbox>
-                  {form.judge_enabled && (
-                    <Select
-                      className="w-64"
-                      value={form.assigned_judge ?? ""}
-                      onChange={(e) => set("assigned_judge", e.target.value || null)}
-                    >
-                      <option value="">default judge</option>
-                      {(judges.data ?? []).map((j) => (
-                        <option key={j} value={j}>
-                          {j}
-                        </option>
-                      ))}
-                    </Select>
-                  )}
-                </div>
-              </Field>
-            )}
+            <Field label="AI judge">
+              <JudgeChoice
+                judgeActive={judgeActive}
+                enabled={form.judge_enabled}
+                assigned={form.assigned_judge}
+                judges={judges.data ?? []}
+                onEnabled={(v) => set("judge_enabled", v)}
+                onAssigned={(v) => set("assigned_judge", v)}
+              />
+            </Field>
 
+            <div className="flex justify-between gap-2 border-t border-border-subtle pt-4">
+              <Button variant="ghost" onClick={() => setStep(1)}>
+                Back
+              </Button>
+              <Button onClick={() => setStep(3)}>Next</Button>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="flex flex-col gap-4">
+            <Explainer>
+              An unlocked vault holds its key in the daemon's memory. Locking
+              clears it; a human unlocks again with the master passphrase or a
+              YubiKey — agents never can.
+            </Explainer>
             <Field
               label="Auto-lock"
-              hint="Re-locks the vault after this long without use; unlocking again takes your passphrase (or YubiKey)."
+              hint="Re-locks the vault after this long without use; a forgotten unlock doesn't stay open forever."
             >
               <div className="flex items-center gap-4">
                 <Toggle
@@ -317,7 +514,7 @@ function CreateWizard() {
 
             {error && <p className="text-sm text-state-deny">{error}</p>}
             <div className="flex justify-between gap-2 border-t border-border-subtle pt-4">
-              <Button variant="ghost" onClick={() => setStep(1)}>
+              <Button variant="ghost" onClick={() => setStep(2)}>
                 Back
               </Button>
               <Button onClick={() => createM.mutate()} disabled={createM.isPending}>
@@ -374,6 +571,13 @@ function EditForm({ leaf }: { leaf: string }) {
       <Card className="max-w-2xl p-6">
         <div className="flex flex-col gap-5">
           <Field
+            label="Name"
+            hint="The name is this vault's identity — its folder, its audit trail, and how agents address it. It can't be changed."
+          >
+            <Input value={form.name} disabled />
+          </Field>
+
+          <Field
             label="Description"
             hint="The vault's stated purpose — the AI judge reads it with every request."
           >
@@ -407,36 +611,23 @@ function EditForm({ leaf }: { leaf: string }) {
             </div>
           </Field>
 
-          <div className="grid grid-cols-2 gap-4">
-            <Field
-              label="Rate limit"
-              hint="Caps how fast any one caller can pull secrets, e.g. 10/hour."
-            >
-              <Input
-                value={form.rate_limit}
-                onChange={(e) => set("rate_limit", e.target.value)}
-                placeholder="10/hour"
-              />
-            </Field>
-            <Field
-              label="Default tier"
-              hint={
-                judgeActive
-                  ? "low released on request · medium judge-gated · high judged strictly."
-                  : "medium/high are human-only until an AI judge is active."
-              }
-            >
-              <Segmented
-                value={form.default_tier}
-                onChange={(v) => set("default_tier", v)}
-                options={[
-                  { value: "low", label: "Low" },
-                  { value: "medium", label: "Medium" },
-                  { value: "high", label: "High" },
-                ]}
-              />
-            </Field>
-          </div>
+          <Field
+            label="Rate limit"
+            hint="Caps how fast any one caller can pull secrets."
+          >
+            <RateLimitInput
+              value={form.rate_limit}
+              onChange={(v) => set("rate_limit", v)}
+            />
+          </Field>
+
+          <Field label="Default tier" hint="New secrets start here; override per secret.">
+            <TierPicker
+              value={form.default_tier}
+              onChange={(v) => set("default_tier", v)}
+              judgeActive={judgeActive}
+            />
+          </Field>
 
           <Field
             label="Auto-lock"
@@ -475,32 +666,16 @@ function EditForm({ leaf }: { leaf: string }) {
             </Select>
           </Field>
 
-          {judgeActive && (
-            <Field label="AI judge">
-              <div className="flex flex-col gap-2">
-                <Checkbox
-                  checked={form.judge_enabled}
-                  onChange={(v) => set("judge_enabled", v)}
-                >
-                  Use the AI judge for this vault's medium/high secrets
-                </Checkbox>
-                {form.judge_enabled && (
-                  <Select
-                    className="w-64"
-                    value={form.assigned_judge ?? ""}
-                    onChange={(e) => set("assigned_judge", e.target.value || null)}
-                  >
-                    <option value="">default judge</option>
-                    {(judges.data ?? []).map((j) => (
-                      <option key={j} value={j}>
-                        {j}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </div>
-            </Field>
-          )}
+          <Field label="AI judge">
+            <JudgeChoice
+              judgeActive={judgeActive}
+              enabled={form.judge_enabled}
+              assigned={form.assigned_judge}
+              judges={judges.data ?? []}
+              onEnabled={(v) => set("judge_enabled", v)}
+              onAssigned={(v) => set("assigned_judge", v)}
+            />
+          </Field>
 
           {error && <p className="text-sm text-state-deny">{error}</p>}
 

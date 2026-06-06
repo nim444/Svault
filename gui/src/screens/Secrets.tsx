@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { Eye, Pencil, Trash2 } from "lucide-react";
 import {
   addSecret,
   editSecret,
@@ -24,41 +25,17 @@ import {
   Field,
   Input,
   Modal,
-  Segmented,
   TierBadge,
 } from "../components/ui";
 
-interface PanelState {
-  editingName: string | null;
-  name: string;
-  value: string;
-  scope: string;
-  tier: "low" | "medium" | "high";
-  require_reason: boolean;
-  description: string;
-  windowsText: string;
-  callersText: string;
-}
-
-const blankPanel: PanelState = {
-  editingName: null,
-  name: "",
-  value: "",
-  scope: "misc",
-  tier: "low",
-  require_reason: false,
-  description: "",
-  windowsText: "",
-  callersText: "",
-};
-
-// Screen 05 — a vault's secrets with inline classification + add/classify panel.
+// Screen 05 — a vault's secrets. Card grid + a two-step add/edit wizard in a
+// modal (Secret → Access rules), consistent with vaults/providers/judges.
 export default function Secrets() {
   const { leaf } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const judgeActive = useJudgeActive();
-  const [panel, setPanel] = useState<PanelState>(blankPanel);
+  const [wizard, setWizard] = useState<SecretSummary | null | "new">(null);
   const [toDelete, setToDelete] = useState<SecretSummary | null>(null);
   const [revealed, setRevealed] = useState<{ name: string; value: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -74,32 +51,6 @@ export default function Secrets() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["secrets", leaf] });
 
-  function toForm(p: PanelState): SecretForm {
-    return {
-      name: p.name,
-      value: p.value || null,
-      scope: p.scope,
-      tier: p.tier,
-      require_reason: p.require_reason,
-      description: p.description,
-      windows: p.windowsText.split(",").map((s) => s.trim()).filter(Boolean),
-      require_callers: p.callersText.split(",").map((s) => s.trim()).filter(Boolean),
-    };
-  }
-
-  const saveM = useMutation({
-    mutationFn: () =>
-      panel.editingName
-        ? editSecret(leaf!, toForm(panel))
-        : addSecret(leaf!, toForm(panel)),
-    onSuccess: () => {
-      setPanel(blankPanel);
-      setError(null);
-      refresh();
-    },
-    onError: (e) => setError(String(e)),
-  });
-
   const deleteM = useMutation({
     mutationFn: (name: string) => removeSecret(leaf!, name),
     onSuccess: () => {
@@ -114,208 +65,116 @@ export default function Secrets() {
     onError: (e) => setError(String(e)),
   });
 
-  function startEdit(s: SecretSummary) {
-    setPanel({
-      editingName: s.name,
-      name: s.name,
-      value: "",
-      scope: s.scope,
-      tier: (s.tier as PanelState["tier"]) || "low",
-      require_reason: s.require_reason,
-      description: s.description,
-      windowsText: s.windows.join(", "),
-      callersText: s.callers.join(", "),
-    });
-  }
-
   const rows = secrets.data ?? [];
 
   return (
     <Page
       title={`Secrets · ${meta.data?.name ?? leaf}`}
       actions={
-        <Button variant="secondary" onClick={() => navigate("/vaults")}>
-          ← Vaults
-        </Button>
+        <>
+          <Button variant="secondary" onClick={() => navigate("/vaults")}>
+            ← Vaults
+          </Button>
+          <Button onClick={() => setWizard("new")}>+ Add secret</Button>
+        </>
       }
     >
-      <div className="flex gap-6">
-        {/* Secrets table */}
-        <div className="min-w-0 flex-1">
-          {secrets.isLoading && <p className="text-content-muted">Loading…</p>}
-          {secrets.error && <p className="text-state-deny">{String(secrets.error)}</p>}
-          {rows.length === 0 && !secrets.isLoading && (
-            <div className="rounded-xl border border-dashed border-border-subtle p-10 text-center text-content-muted">
-              No secrets yet. Add one on the right.
-            </div>
-          )}
-          {rows.length > 0 && (
-            <div className="overflow-hidden rounded-xl border border-border-subtle">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-sunken text-left text-xs uppercase text-content-muted">
-                  <tr>
-                    <Th>Secret</Th>
-                    <Th>Scope</Th>
-                    <Th>Tier</Th>
-                    <Th>Callers</Th>
-                    <Th>Window</Th>
-                    <Th>Read</Th>
-                    <Th>Actions</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((s) => (
-                    <tr key={s.name} className="border-t border-border-subtle">
-                      <Td className="font-medium text-content">{s.name}</Td>
-                      <Td>
-                        <Badge tone="neutral">{s.scope || "—"}</Badge>
-                      </Td>
-                      <Td>
-                        <TierBadge tier={s.tier} />
-                      </Td>
-                      <Td>
-                        {s.sealed ? (
-                          <Badge tone="deny">sealed</Badge>
-                        ) : s.callers.length ? (
-                          s.callers.join(", ")
-                        ) : (
-                          <span className="text-content-muted">any</span>
-                        )}
-                      </Td>
-                      <Td className="text-content-muted">
-                        {s.windows.length ? s.windows.join("; ") : "any"}
-                      </Td>
-                      <Td className="text-content-muted">{shortTime(s.last_read)}</Td>
-                      <Td>
-                        <div className="flex gap-1">
-                          <IconBtn title="Reveal" onClick={() => revealM.mutate(s.name)}>
-                            ◉
-                          </IconBtn>
-                          <IconBtn title="Edit" onClick={() => startEdit(s)}>
-                            ✎
-                          </IconBtn>
-                          <IconBtn title="Delete" danger onClick={() => setToDelete(s)}>
-                            ✕
-                          </IconBtn>
-                        </div>
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      {secrets.isLoading && <p className="text-content-muted">Loading…</p>}
+      {secrets.error && <p className="text-state-deny">{String(secrets.error)}</p>}
+      {error && <p className="mb-3 text-sm text-state-deny">{error}</p>}
+
+      {rows.length === 0 && !secrets.isLoading && (
+        <div className="rounded-xl border border-dashed border-border-subtle p-10 text-center text-content-muted">
+          No secrets yet. Add the first one — it's stored AES-256-GCM encrypted
+          and released only through the gate.
         </div>
+      )}
 
-        {/* Add / classify panel */}
-        <Card className="h-fit w-80 shrink-0 p-5">
-          <h2 className="mb-4 text-sm font-semibold">
-            {panel.editingName ? `Edit · ${panel.editingName}` : "Add & classify"}
-          </h2>
-          <div className="flex flex-col gap-3">
-            <Field label="Name">
-              <Input
-                value={panel.name}
-                disabled={!!panel.editingName}
-                onChange={(e) => setPanel({ ...panel, name: e.target.value })}
-              />
-            </Field>
-            <Field
-              label="Value"
-              hint="Encrypted into vault.enc, never logged."
-            >
-              <Input
-                type="password"
-                placeholder={panel.editingName ? "unchanged" : ""}
-                value={panel.value}
-                onChange={(e) => setPanel({ ...panel, value: e.target.value })}
-              />
-            </Field>
-            <Field label="Scope">
-              <Input
-                value={panel.scope}
-                onChange={(e) => setPanel({ ...panel, scope: e.target.value })}
-              />
-            </Field>
-            <Field
-              label="Sensitivity tier"
-              hint={
-                judgeActive
-                  ? "medium/high invoke the AI judge."
-                  : "medium/high are human-only until an AI judge is active."
-              }
-            >
-              <Segmented
-                value={panel.tier}
-                onChange={(v) => setPanel({ ...panel, tier: v })}
-                options={[
-                  { value: "low", label: "Low" },
-                  { value: "medium", label: "Med" },
-                  { value: "high", label: "High" },
-                ]}
-              />
-            </Field>
-            {judgeActive && (
-              <Checkbox
-                checked={panel.require_reason}
-                onChange={(v) => setPanel({ ...panel, require_reason: v })}
-              >
-                Always judge (even at low tier)
-              </Checkbox>
-            )}
-            <Field
-              label="Description"
-              hint={
-                judgeActive
-                  ? "The judge weighs this against each request's reason."
-                  : "Shown alongside the secret; the AI judge uses it once one is active."
-              }
-            >
-              <Input
-                value={panel.description}
-                onChange={(e) => setPanel({ ...panel, description: e.target.value })}
-              />
-            </Field>
-            <Field label="Allowed callers" hint="Comma-separated. Blank = any.">
-              <Input
-                value={panel.callersText}
-                onChange={(e) => setPanel({ ...panel, callersText: e.target.value })}
-              />
-            </Field>
-            <Field label="Time window" hint="e.g. mon-fri 09:00-18:00. Comma-separated.">
-              <Input
-                value={panel.windowsText}
-                onChange={(e) => setPanel({ ...panel, windowsText: e.target.value })}
-              />
-            </Field>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {rows.map((s) => (
+          <Card key={s.name} className="flex flex-col p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate font-mono text-sm font-medium">
+                    {s.name}
+                  </span>
+                  <Badge tone="neutral">{s.scope || "misc"}</Badge>
+                  <TierBadge tier={s.tier} />
+                  {s.sealed && <Badge tone="deny">sealed</Badge>}
+                  {s.require_reason && <Badge tone="judge">always judged</Badge>}
+                </div>
+                <p className="mt-1 truncate text-xs text-content-muted">
+                  {s.description || "no description"}
+                </p>
+              </div>
+            </div>
 
-            {error && <p className="text-sm text-state-deny">{error}</p>}
+            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-content-muted">
+              <span>
+                callers: {s.callers.length ? s.callers.join(", ") : "any"}
+              </span>
+              <span>·</span>
+              <span>window: {s.windows.length ? s.windows.join("; ") : "any"}</span>
+              <span className="ml-auto">read {shortTime(s.last_read)}</span>
+            </div>
 
-            <div className="flex gap-2 pt-1">
-              {panel.editingName && (
-                <Button variant="ghost" className="flex-1" onClick={() => setPanel(blankPanel)}>
-                  Cancel
-                </Button>
-              )}
+            <div className="mt-3 flex items-center gap-1 border-t border-border-subtle pt-3">
               <Button
-                className="flex-1"
-                disabled={saveM.isPending || !panel.name.trim()}
-                onClick={() => saveM.mutate()}
+                variant="secondary"
+                className="gap-1.5 px-3 py-1 text-xs"
+                onClick={() => revealM.mutate(s.name)}
               >
-                {panel.editingName ? "Save" : "Add secret"}
+                <Eye className="size-3.5" />
+                Reveal
+              </Button>
+              <Button
+                variant="ghost"
+                className="gap-1.5 px-2 py-1 text-xs"
+                onClick={() => setWizard(s)}
+              >
+                <Pencil className="size-3.5" />
+                Edit
+              </Button>
+              <Button
+                variant="ghost"
+                className="ml-auto px-2 py-1 text-xs text-state-deny"
+                title="Delete secret"
+                onClick={() => setToDelete(s)}
+              >
+                <Trash2 className="size-3.5" />
               </Button>
             </div>
-          </div>
-        </Card>
+          </Card>
+        ))}
       </div>
+
+      {wizard !== null && (
+        <SecretWizard
+          leaf={leaf!}
+          existing={wizard === "new" ? null : wizard}
+          judgeActive={judgeActive}
+          onClose={() => setWizard(null)}
+          onSaved={() => {
+            setWizard(null);
+            refresh();
+          }}
+        />
+      )}
 
       {toDelete && (
         <ConfirmDialog
           title={`Delete secret "${toDelete.name}"?`}
           danger
-          confirmLabel="Delete"
+          confirmLabel="Delete secret"
           busy={deleteM.isPending}
-          message="This permanently removes the secret value and its classification."
+          message={
+            <>
+              The value and its classification are destroyed.{" "}
+              <strong>This cannot be undone</strong> — a vault export is the
+              only way back.
+            </>
+          }
           onCancel={() => setToDelete(null)}
           onConfirm={() => deleteM.mutate(toDelete.name)}
         />
@@ -326,6 +185,9 @@ export default function Secrets() {
           <div className="rounded-lg border border-border-subtle bg-surface-sunken p-3 font-mono text-sm break-all">
             {revealed.value}
           </div>
+          <p className="mt-2 text-xs text-content-muted">
+            This read is recorded in the activity timeline.
+          </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" onClick={() => writeText(revealed.value)}>
               Copy
@@ -338,38 +200,252 @@ export default function Secrets() {
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="px-3 py-2.5 font-medium">{children}</th>;
-}
-function Td({
-  children,
-  className,
+// ── Add/edit wizard ──────────────────────────────────────────────────────────
+// Two steps: the secret itself, then who gets it and when.
+
+const TIERS: { value: SecretForm["tier"]; title: string; desc: string }[] = [
+  {
+    value: "low",
+    title: "Low",
+    desc: "Released on request. Non-sensitive values: public URLs, ids, feature flags.",
+  },
+  {
+    value: "medium",
+    title: "Medium",
+    desc: "The AI judge must accept the caller's reason first. Good default for API keys.",
+  },
+  {
+    value: "high",
+    title: "High",
+    desc: "Judged strictly; human-only while no judge is active. Production credentials.",
+  },
+];
+
+function SecretWizard({
+  leaf,
+  existing,
+  judgeActive,
+  onClose,
+  onSaved,
 }: {
-  children: React.ReactNode;
-  className?: string;
+  leaf: string;
+  existing: SecretSummary | null;
+  judgeActive: boolean;
+  onClose: () => void;
+  onSaved: () => void;
 }) {
-  return <td className={`px-3 py-3 align-top ${className ?? ""}`}>{children}</td>;
-}
-function IconBtn({
-  children,
-  title,
-  danger,
-  onClick,
-}: {
-  children: React.ReactNode;
-  title: string;
-  danger?: boolean;
-  onClick: () => void;
-}) {
+  const [step, setStep] = useState(0);
+  const [name, setName] = useState(existing?.name ?? "");
+  const [value, setValue] = useState("");
+  const [scope, setScope] = useState(existing?.scope || "misc");
+  const [tier, setTier] = useState<SecretForm["tier"]>(
+    (existing?.tier as SecretForm["tier"]) || "low",
+  );
+  const [requireReason, setRequireReason] = useState(
+    existing?.require_reason ?? false,
+  );
+  const [description, setDescription] = useState(existing?.description ?? "");
+  const [callersText, setCallersText] = useState(existing?.callers.join(", ") ?? "");
+  const [windowsText, setWindowsText] = useState(existing?.windows.join(", ") ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  const saveM = useMutation({
+    mutationFn: () => {
+      const form: SecretForm = {
+        name: name.trim(),
+        value: value || null,
+        scope: scope.trim() || "misc",
+        tier,
+        require_reason: requireReason,
+        description,
+        windows: windowsText.split(",").map((s) => s.trim()).filter(Boolean),
+        require_callers: callersText.split(",").map((s) => s.trim()).filter(Boolean),
+      };
+      return existing ? editSecret(leaf, form) : addSecret(leaf, form);
+    },
+    onSuccess: onSaved,
+    onError: (e) => setError(String(e)),
+  });
+
+  const steps = ["Secret", "Access rules"];
+
   return (
-    <button
-      title={title}
-      onClick={onClick}
-      className={`rounded-md px-2 py-1 text-sm transition-colors hover:bg-surface-sunken ${
-        danger ? "text-state-deny" : "text-content-muted hover:text-content"
-      }`}
+    <Modal
+      title={existing ? `Edit secret · ${existing.name}` : "Add secret"}
+      onClose={onClose}
+      width="max-w-lg"
     >
-      {children}
-    </button>
+      <div className="mb-4 flex items-center gap-2 text-xs">
+        {steps.map((s, i) => (
+          <div key={s} className="flex items-center gap-2">
+            {i > 0 && <span className="text-content-muted">—</span>}
+            <span
+              className={`flex items-center gap-1.5 ${
+                i === step ? "font-semibold text-content" : "text-content-muted"
+              }`}
+            >
+              <span
+                className={`flex size-4.5 items-center justify-center rounded-full border text-[10px] ${
+                  i < step
+                    ? "border-state-allow/50 text-state-allow"
+                    : i === step
+                      ? "border-content"
+                      : "border-border-subtle"
+                }`}
+              >
+                {i < step ? "✓" : i + 1}
+              </span>
+              {s}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {step === 0 && (
+        <div className="flex flex-col gap-3">
+          <Field
+            label="Name"
+            hint={
+              existing
+                ? "The name identifies the secret — it can't be changed."
+                : "How callers ask for it — usually the env-var name (e.g. DATABASE_URL)."
+            }
+          >
+            <Input
+              autoFocus={!existing}
+              className="font-mono"
+              value={name}
+              disabled={!!existing}
+              placeholder="DATABASE_URL"
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Value"
+            hint="AES-256-GCM encrypted into vault.enc; never logged, shown only on explicit reveal."
+          >
+            <Input
+              type="password"
+              placeholder={existing ? "unchanged" : ""}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Scope"
+            hint="The secret's category. A request must state the matching scope — an agent asking for 'database' never sees 'payments'."
+          >
+            <Input
+              value={scope}
+              placeholder="e.g. database, api, payments"
+              onChange={(e) => setScope(e.target.value)}
+            />
+          </Field>
+          <div className="flex justify-end gap-2 border-t border-border-subtle pt-4">
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!name.trim() || (!existing && !value)}
+              onClick={() => setStep(1)}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {step === 1 && (
+        <div className="flex flex-col gap-3">
+          <Field label="Sensitivity tier">
+            <div role="radiogroup" className="flex flex-col gap-2">
+              {TIERS.map((t) => (
+                <button
+                  key={t.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={tier === t.value}
+                  onClick={() => setTier(t.value)}
+                  className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${
+                    tier === t.value
+                      ? "border-primary bg-surface-raised"
+                      : "border-border-subtle hover:bg-surface-raised/50"
+                  }`}
+                >
+                  <span
+                    className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border ${
+                      tier === t.value ? "border-primary" : "border-border-subtle"
+                    }`}
+                  >
+                    {tier === t.value && (
+                      <span className="size-2 rounded-full bg-primary" />
+                    )}
+                  </span>
+                  <span>
+                    <span className="block text-sm font-medium">{t.title}</span>
+                    <span className="block text-xs text-content-muted">
+                      {t.value !== "low" && !judgeActive
+                        ? `${t.desc} No judge is active yet, so this is human-only for now.`
+                        : t.desc}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          {judgeActive && (
+            <Checkbox checked={requireReason} onChange={setRequireReason}>
+              Always ask the judge — even at low tier
+            </Checkbox>
+          )}
+
+          <Field
+            label="Description"
+            hint="What this secret is for. The judge weighs it against each request's reason — 'production Postgres connection string' beats silence."
+          >
+            <Input
+              value={description}
+              placeholder="e.g. production Postgres connection string"
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Allowed callers"
+            hint="Restrict to specific agent identities, comma-separated (e.g. claude-code, ci-bot). Blank = any caller the vault allows."
+          >
+            <Input
+              value={callersText}
+              placeholder="blank = any"
+              onChange={(e) => setCallersText(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Time window"
+            hint="Only release during these times, comma-separated — e.g. mon-fri 09:00-18:00. Blank = any time."
+          >
+            <Input
+              value={windowsText}
+              placeholder="blank = any time"
+              onChange={(e) => setWindowsText(e.target.value)}
+            />
+          </Field>
+
+          {error && <p className="text-sm text-state-deny">{error}</p>}
+          <div className="flex justify-between gap-2 border-t border-border-subtle pt-4">
+            <Button variant="ghost" onClick={() => setStep(0)}>
+              Back
+            </Button>
+            <Button disabled={saveM.isPending} onClick={() => saveM.mutate()}>
+              {saveM.isPending
+                ? "Saving…"
+                : existing
+                  ? "Save changes"
+                  : "Add secret"}
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }

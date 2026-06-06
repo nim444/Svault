@@ -118,9 +118,10 @@ Functionality is considered correct across the board; this pass is purely UX.
 - Sidebar nav order: AI providers → Guardian → Vaults → MCP → Audit → Pending.
 
 ### Create vault wizard — WIP
-- Vault creation is a **three-step wizard** (Basics → Agent access →
-  Protection) with the same step indicator as the judge wizard; edit keeps the
-  flat form.
+- Vault creation is a **four-step wizard** (Basics → Agent access →
+  Protection → Locking) with the same step indicator as the judge wizard; edit
+  keeps the flat form. Locking gets its own step with an explainer (key in
+  daemon memory; locking clears it; humans unlock, agents never can).
 - Every step opens with a plain-words explainer: what a vault is; that agents
   come through the gate and every allowed request still runs the full check;
   what the tiers mean (low released on request, medium judge-gated, high
@@ -134,6 +135,48 @@ Functionality is considered correct across the board; this pass is purely UX.
   instead of a free-text name, in both wizard and edit.
 - Recovery-code dialog matches the approved onboarding style: red warning,
   green code box, bold confirm checkbox, Done fully dimmed until checked.
+- **Rate limit is structured** — a count input + per minute/hour/day select
+  composing `N/unit`; free text (and the garbage it allowed) is gone.
+- **Tier picker is radio cards** with plain-words descriptions per tier
+  (low: released on request / medium: judge must accept the reason / high:
+  strict, human-only without a judge); the no-judge caveat is appended to
+  medium/high when none is active.
+- **AI judge is a two-way radio** ("AI judge reviews requests (recommended)"
+  vs "Policies only") with the judge dropdown under the first option. With no
+  judge configured the section no longer hides — it warns that only static
+  policies apply and highly recommends adding a judge, with an Add-a-judge
+  button.
+- **Edit shows the name locked** with a hint explaining the name is the
+  vault's identity and can't be changed.
+- **Delete is GitHub-style**: the dialog states it cannot be restored (not
+  even with the master passphrase or recovery code), offers "Export a backup
+  first" (jumps to Backup & recovery), and requires typing the vault's exact
+  name before the danger button arms.
+
+### Vault list redesign — WIP
+- The dense table with emoji icon buttons is gone. Vaults are now a
+  **responsive card grid** (1/2/3 columns) in the same visual language as
+  providers and judges: lock-state dot + `local:name` + locked/unlocked badge,
+  description line, a stats row (N secrets · tier badge · judge badge ·
+  sealed count when present · last activity), and a bottom action row with
+  proper lucide icons — Open, Lock/Unlock, Settings, and a red trash that
+  opens the type-the-name delete dialog.
+- Judge column/badge still hides entirely until a judge is active.
+
+### Secrets redesign — WIP
+- The table + permanent side panel is gone. Secrets are a **card grid**
+  (mono name, scope/tier/sealed/always-judged badges, description, callers ·
+  window · last-read line) with lucide-icon actions: Reveal, Edit, red Delete.
+- Add/Edit is a **two-step modal wizard** ("Secret" → "Access rules"):
+  - Step 1: name (mono, locked on edit with a why), value (encryption note),
+    scope with a real explanation ("an agent asking for 'database' never sees
+    'payments'") and examples. Next requires name + value (value optional on
+    edit = unchanged).
+  - Step 2: tier as the same radio cards as vault create (with the no-judge
+    caveat), "Always ask the judge — even at low tier", description /
+    callers / time-window fields all with concrete example hints.
+- Delete confirm states it cannot be undone (vault export is the only way
+  back); reveal modal notes the read lands in the activity timeline.
 
 ### Audit: Activity view + config-change events — WIP
 - Provider/judge/MCP config changes now land in the audit trail: every GUI

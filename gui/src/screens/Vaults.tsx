@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Lock, LockOpen, Settings2, Trash2 } from "lucide-react";
 import {
   deleteVault,
   listVaults,
@@ -14,13 +15,15 @@ import { Page } from "../components/shell";
 import {
   Badge,
   Button,
-  ConfirmDialog,
+  Card,
+  Field,
   Input,
+  Modal,
   StateDot,
   TierBadge,
 } from "../components/ui";
 
-// Screen 03 — vault list (home). Dense-table direction.
+// Screen 03 — vault list (home). Card grid, consistent with providers/judges.
 export default function Vaults() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -79,104 +82,107 @@ export default function Vaults() {
         </div>
       )}
 
-      {vaults.length > 0 && (
-        <div className="overflow-hidden rounded-xl border border-border-subtle">
-          <table className="w-full text-sm">
-            <thead className="bg-surface-sunken text-left text-xs uppercase text-content-muted">
-              <tr>
-                <Th>Vault</Th>
-                <Th>State</Th>
-                <Th>Secrets</Th>
-                <Th>Default tier</Th>
-                {judgeActive && <Th>Judge</Th>}
-                <Th>Last activity</Th>
-                <Th>Actions</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {vaults.map((v) => (
-                <tr
-                  key={v.leaf}
-                  className="border-t border-border-subtle hover:bg-surface-raised/40"
-                >
-                  <Td>
-                    <div className="font-medium text-content">
-                      <span className="text-content-muted">local:</span>
-                      {v.name}
-                    </div>
-                    {v.description && (
-                      <div className="text-xs text-content-muted">{v.description}</div>
-                    )}
-                  </Td>
-                  <Td>
-                    <span className="inline-flex items-center gap-2">
-                      <StateDot tone={v.unlocked ? "allow" : "deny"} />
-                      {v.unlocked ? "unlocked" : "locked"}
-                    </span>
-                  </Td>
-                  <Td>{v.secret_count}</Td>
-                  <Td>
-                    <TierBadge tier={v.default_tier} />
-                  </Td>
-                  {judgeActive && (
-                    <Td>
-                      {v.judge_enabled ? (
-                        <Badge tone="judge">{v.assigned_judge ?? "default"}</Badge>
-                      ) : (
-                        <span className="text-content-muted">off</span>
-                      )}
-                    </Td>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {vaults.map((v) => (
+          <Card key={v.leaf} className="flex flex-col p-4">
+            {/* Identity + lock state */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <StateDot tone={v.unlocked ? "allow" : "deny"} />
+                  <span className="truncate font-medium">
+                    <span className="text-content-muted">local:</span>
+                    {v.name}
+                  </span>
+                </div>
+                <p className="mt-1 truncate text-xs text-content-muted">
+                  {v.description || "no description"}
+                </p>
+              </div>
+              <Badge tone={v.unlocked ? "allow" : "deny"}>
+                {v.unlocked ? "unlocked" : "locked"}
+              </Badge>
+            </div>
+
+            {/* Stats */}
+            <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-content-muted">
+              <span>
+                {v.secret_count} secret{v.secret_count === 1 ? "" : "s"}
+              </span>
+              <span>·</span>
+              <TierBadge tier={v.default_tier} />
+              {judgeActive && (
+                <>
+                  <span>·</span>
+                  {v.judge_enabled ? (
+                    <Badge tone="judge">{v.assigned_judge ?? "default"}</Badge>
+                  ) : (
+                    <span>judge off</span>
                   )}
-                  <Td className="text-content-muted">{shortTime(v.last_activity)}</Td>
-                  <Td>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="secondary"
-                        className="px-2 py-1 text-xs"
-                        onClick={() => navigate(`/vaults/${v.leaf}`)}
-                      >
-                        Open
-                      </Button>
-                      <IconBtn
-                        title="Settings"
-                        onClick={() => navigate(`/vaults/${v.leaf}/settings`)}
-                      >
-                        ⚙
-                      </IconBtn>
-                      {v.unlocked ? (
-                        <IconBtn title="Lock" onClick={() => lockM.mutate(v.leaf)}>
-                          🔒
-                        </IconBtn>
-                      ) : (
-                        <IconBtn title="Unlock" onClick={() => unlockM.mutate(v.leaf)}>
-                          🔓
-                        </IconBtn>
-                      )}
-                      <IconBtn title="Delete" danger onClick={() => setToDelete(v)}>
-                        ✕
-                      </IconBtn>
-                    </div>
-                  </Td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                </>
+              )}
+              {v.sealed_count > 0 && (
+                <>
+                  <span>·</span>
+                  <Badge tone="pending">{v.sealed_count} sealed</Badge>
+                </>
+              )}
+              <span className="ml-auto">{shortTime(v.last_activity)}</span>
+            </div>
+
+            {/* Actions */}
+            <div className="mt-3 flex items-center gap-1 border-t border-border-subtle pt-3">
+              <Button
+                variant="secondary"
+                className="px-3 py-1 text-xs"
+                onClick={() => navigate(`/vaults/${v.leaf}`)}
+              >
+                Open
+              </Button>
+              {v.unlocked ? (
+                <Button
+                  variant="ghost"
+                  className="gap-1.5 px-2 py-1 text-xs"
+                  onClick={() => lockM.mutate(v.leaf)}
+                >
+                  <Lock className="size-3.5" />
+                  Lock
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  className="gap-1.5 px-2 py-1 text-xs"
+                  onClick={() => unlockM.mutate(v.leaf)}
+                >
+                  <LockOpen className="size-3.5" />
+                  Unlock
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                className="gap-1.5 px-2 py-1 text-xs"
+                onClick={() => navigate(`/vaults/${v.leaf}/settings`)}
+              >
+                <Settings2 className="size-3.5" />
+                Settings
+              </Button>
+              <Button
+                variant="ghost"
+                className="ml-auto px-2 py-1 text-xs text-state-deny"
+                title="Delete vault"
+                onClick={() => setToDelete(v)}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </div>
+          </Card>
+        ))}
+      </div>
 
       {toDelete && (
-        <ConfirmDialog
-          title={`Delete vault "${toDelete.name}"?`}
-          danger
-          confirmLabel="Delete vault"
+        <DeleteVaultModal
+          vault={toDelete}
           busy={deleteM.isPending}
-          message={
-            <>
-              This permanently removes the vault and all{" "}
-              <strong>{toDelete.secret_count}</strong> of its secrets. This cannot
-              be undone.
-            </>
-          }
           onCancel={() => setToDelete(null)}
           onConfirm={() => deleteM.mutate(toDelete.leaf)}
         />
@@ -185,38 +191,68 @@ export default function Vaults() {
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="px-4 py-2.5 font-medium">{children}</th>;
-}
-function Td({
-  children,
-  className,
+// GitHub-style destructive confirmation: spell out the consequences, offer the
+// export ramp first, and require typing the vault's name before Delete arms.
+function DeleteVaultModal({
+  vault,
+  busy,
+  onCancel,
+  onConfirm,
 }: {
-  children: React.ReactNode;
-  className?: string;
+  vault: VaultSummary;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
 }) {
-  return <td className={`px-4 py-3 align-top ${className ?? ""}`}>{children}</td>;
-}
-function IconBtn({
-  children,
-  title,
-  danger,
-  onClick,
-}: {
-  children: React.ReactNode;
-  title: string;
-  danger?: boolean;
-  onClick: () => void;
-}) {
+  const navigate = useNavigate();
+  const [typed, setTyped] = useState("");
+  const armed = typed === vault.name;
   return (
-    <button
-      title={title}
-      onClick={onClick}
-      className={`rounded-md px-2 py-1 text-sm transition-colors hover:bg-surface-sunken ${
-        danger ? "text-state-deny" : "text-content-muted hover:text-content"
-      }`}
-    >
-      {children}
-    </button>
+    <Modal title={`Delete vault "${vault.name}"`} onClose={onCancel}>
+      <div className="flex flex-col gap-3 text-sm">
+        <p className="text-state-deny">
+          This permanently destroys the vault, its{" "}
+          <strong>{vault.secret_count}</strong> secret
+          {vault.secret_count === 1 ? "" : "s"}, its policy, and its recovery
+          code. <strong>It cannot be restored</strong> — not even with your
+          master passphrase or the recovery code.
+        </p>
+        <div className="rounded-lg border border-border-subtle bg-surface-sunken p-3 text-xs text-content-muted">
+          Want a way back? Export an encrypted backup first — it can be
+          re-imported later with this vault's recovery code.
+          <Button
+            variant="secondary"
+            className="mt-2 block px-3 py-1.5 text-xs"
+            onClick={() => navigate("/backup")}
+          >
+            Export a backup first
+          </Button>
+        </div>
+        <Field
+          label={`Type "${vault.name}" to confirm`}
+          hint="Nothing happens until the name matches exactly."
+        >
+          <Input
+            autoFocus
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            placeholder={vault.name}
+          />
+        </Field>
+        <div className="mt-1 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={!armed || busy}
+            className="disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100"
+            onClick={onConfirm}
+          >
+            {busy ? "Deleting…" : "I understand — delete this vault"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
