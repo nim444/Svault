@@ -1,8 +1,15 @@
 import { useState } from "react";
+import { Fingerprint } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { enrollYubikey, initMaster, yubikeyPresent } from "../lib/api";
+import {
+  enrollTouchid,
+  enrollYubikey,
+  initMaster,
+  touchidStatus,
+  yubikeyPresent,
+} from "../lib/api";
 import { useSession } from "../store/session";
 import { Button, Card, Checkbox, Field, Input } from "../components/ui";
 
@@ -48,7 +55,7 @@ export default function Onboarding() {
         {step === 3 && (
           <StepRecovery code={recoveryCode} onNext={() => setStep(4)} />
         )}
-        {step === 4 && <StepYubikey onDone={finish} />}
+        {step === 4 && <StepExtraUnlock onDone={finish} />}
       </Card>
     </div>
   );
@@ -70,7 +77,7 @@ function Splash({ onStart }: { onStart: () => void }) {
   );
 }
 
-const STEP_LABELS = ["Terms", "Passphrase", "Recovery", "YubiKey"];
+const STEP_LABELS = ["Terms", "Passphrase", "Recovery", "Unlock methods"];
 
 function Stepper({ step }: { step: Step }) {
   return (
@@ -212,7 +219,15 @@ function StepRecovery({ code, onNext }: { code: string; onNext: () => void }) {
   );
 }
 
-function StepYubikey({ onDone }: { onDone: () => void }) {
+function StepExtraUnlock({ onDone }: { onDone: () => void }) {
+  // Touch ID (macOS) — offered first on supported machines; YubiKey below.
+  const { data: tid, refetch: refetchTid } = useQuery({
+    queryKey: ["touchid"],
+    queryFn: touchidStatus,
+  });
+  const [tidBusy, setTidBusy] = useState(false);
+  const [tidError, setTidError] = useState<string | null>(null);
+
   const { data: present, refetch } = useQuery({
     queryKey: ["yubikey-present"],
     queryFn: yubikeyPresent,
@@ -222,17 +237,31 @@ function StepYubikey({ onDone }: { onDone: () => void }) {
   const [noPin, setNoPin] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ykEnrolled, setYkEnrolled] = useState(false);
 
   // Guard: most keys have a PIN. Require either a PIN, or an explicit "this key
   // has no PIN" acknowledgment, before we ask for a touch.
   const ready = pin.trim().length > 0 || noPin;
+
+  async function enrollTid() {
+    setTidBusy(true);
+    setTidError(null);
+    try {
+      await enrollTouchid();
+      await refetchTid();
+    } catch (err) {
+      setTidError(String(err));
+    } finally {
+      setTidBusy(false);
+    }
+  }
 
   async function enroll() {
     setBusy(true);
     setError(null);
     try {
       await enrollYubikey(pin.trim() ? pin : null);
-      onDone();
+      setYkEnrolled(true);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -240,17 +269,56 @@ function StepYubikey({ onDone }: { onDone: () => void }) {
     }
   }
 
+  const anyEnrolled = Boolean(tid?.enrolled) || ykEnrolled;
+
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h2 className="text-base font-semibold">Add a YubiKey</h2>
+        <h2 className="text-base font-semibold">Extra unlock methods</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Optional. Enroll a FIDO2 hmac-secret key as an extra unlock method —
-          your passphrase still works. You can also do this later in Settings.
+          Optional. Add Touch ID or a YubiKey as an alternative to typing the
+          master passphrase — it always keeps working. You can also do this
+          later in Settings.
         </p>
       </div>
 
-      {present ? (
+      {tid?.supported && (
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 p-4">
+          {tid.enrolled ? (
+            <div className="flex items-center gap-2 text-sm text-state-allow">
+              <span className="size-2 rounded-full bg-state-allow" />
+              Touch ID enrolled — a fingerprint now unlocks Svault
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Fingerprint className="size-4" />
+                Touch ID
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Unlock with your Mac's fingerprint reader. The wrapping key is
+                kept in your login keychain.
+              </p>
+              <Button
+                disabled={tidBusy}
+                onClick={enrollTid}
+                className="flex items-center justify-center gap-2"
+              >
+                <Fingerprint className="size-4" />
+                {tidBusy ? "Touch the sensor…" : "Enroll Touch ID"}
+              </Button>
+            </>
+          )}
+          {tidError && <p className="text-sm text-state-deny">{tidError}</p>}
+        </div>
+      )}
+
+      {ykEnrolled ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 p-4 text-sm text-state-allow">
+          <span className="size-2 rounded-full bg-state-allow" />
+          YubiKey enrolled — a touch now unlocks Svault
+        </div>
+      ) : present ? (
         <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 p-4">
           <div className="flex items-center gap-2 text-sm text-state-allow">
             <span className="size-2 rounded-full bg-state-allow" />
@@ -296,9 +364,15 @@ function StepYubikey({ onDone }: { onDone: () => void }) {
 
       {error && <p className="text-sm text-state-deny">{error}</p>}
 
-      <Button variant="ghost" className="self-center" onClick={onDone}>
-        Skip for now
-      </Button>
+      {anyEnrolled ? (
+        <Button className="self-stretch" onClick={onDone}>
+          Finish
+        </Button>
+      ) : (
+        <Button variant="ghost" className="self-center" onClick={onDone}>
+          Skip for now
+        </Button>
+      )}
     </div>
   );
 }

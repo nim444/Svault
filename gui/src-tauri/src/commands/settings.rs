@@ -7,7 +7,7 @@ use zeroize::Zeroizing;
 use crate::commands::common::{open_or_init_keyring, require_master};
 use crate::error::{emsg, CmdResult};
 
-use svault_cli::core::{master, vault, yubikey};
+use svault_cli::core::{master, touchid, vault, yubikey};
 use svault_cli::daemon;
 
 fn prefs_path() -> std::path::PathBuf {
@@ -52,6 +52,21 @@ pub fn yubikey_status() -> YubikeyStatus {
     YubikeyStatus {
         enrolled: master::yubikey_enrolled(),
         present: yubikey::is_present(),
+    }
+}
+
+#[derive(Serialize)]
+pub struct TouchidStatus {
+    pub enrolled: bool,
+    /// Touch ID is available on this machine (macOS, fingers enrolled).
+    pub supported: bool,
+}
+
+#[tauri::command]
+pub fn touchid_status() -> TouchidStatus {
+    TouchidStatus {
+        enrolled: master::touchid_enrolled(),
+        supported: touchid::is_supported(),
     }
 }
 

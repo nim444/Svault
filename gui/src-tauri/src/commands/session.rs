@@ -12,7 +12,7 @@ use crate::error::{emsg, CmdResult};
 use crate::state::GuiState;
 
 use svault_cli::core::session::MAX_SESSION_SECS;
-use svault_cli::core::{keyring, master, session, usage, vault, yubikey};
+use svault_cli::core::{keyring, master, session, touchid, usage, vault, yubikey};
 use svault_cli::daemon::{self, client};
 
 /// The leaf directory name a vault is keyed under in the daemon / session.
@@ -42,6 +42,10 @@ pub struct SessionStatus {
     pub master_unlocked: bool,
     pub daemon_up: bool,
     pub yubikey_enrolled: bool,
+    /// A Touch ID keyslot is enrolled (macOS).
+    pub touchid_enrolled: bool,
+    /// This machine can evaluate Touch ID right now (macOS, fingers enrolled).
+    pub touchid_supported: bool,
     /// Vault leaf names currently unlocked (daemon memory or file session).
     pub unlocked_vaults: Vec<String>,
     /// Unix seconds at which the GUI must re-authenticate (last unlock + 6h).
@@ -129,6 +133,8 @@ pub fn session_status(state: State<GuiState>) -> SessionStatus {
         master_unlocked: master::is_unlocked(),
         daemon_up: daemon_up(),
         yubikey_enrolled: master::yubikey_enrolled(),
+        touchid_enrolled: master::touchid_enrolled(),
+        touchid_supported: touchid::is_supported(),
         unlocked_vaults: unlocked_vault_names(),
         reauth_deadline: unlocked.map(|t| t + MAX_SESSION_SECS as i64),
         next_autolock_secs,
@@ -159,6 +165,18 @@ pub async fn unlock_yubikey(
 ) -> CmdResult<UnlockResult> {
     let pin = pin.map(Zeroizing::new);
     let m = master::open_with_yubikey(pin.as_deref().map(|p| p.as_str())).map_err(emsg)?;
+    master::unlock_session(m.key_bytes()).map_err(emsg)?;
+    let mut res = unlock_all_with_master(&m)?;
+    res.reauth_deadline = Some(stamp_unlock(&state));
+    Ok(res)
+}
+
+/// Sign in via Touch ID (macOS). Shows the system biometric sheet, unwraps the
+/// master from its Touch ID keyslot, and unlocks everything — same effect as
+/// the passphrase path. `async` so the sheet never blocks the main thread.
+#[tauri::command]
+pub async fn unlock_touchid(state: State<'_, GuiState>) -> CmdResult<UnlockResult> {
+    let m = master::open_with_touchid().map_err(emsg)?;
     master::unlock_session(m.key_bytes()).map_err(emsg)?;
     let mut res = unlock_all_with_master(&m)?;
     res.reauth_deadline = Some(stamp_unlock(&state));

@@ -17,6 +17,8 @@ export interface SessionStatus {
   master_unlocked: boolean;
   daemon_up: boolean;
   yubikey_enrolled: boolean;
+  touchid_enrolled: boolean;
+  touchid_supported: boolean;
   unlocked_vaults: string[];
   reauth_deadline: number | null;
   next_autolock_secs: number | null;
@@ -43,6 +45,7 @@ export const unlock = (passphrase: string) =>
   invoke<UnlockResult>("unlock", { passphrase });
 export const unlockYubikey = (pin: string | null) =>
   invoke<UnlockResult>("unlock_yubikey", { pin });
+export const unlockTouchid = () => invoke<UnlockResult>("unlock_touchid");
 export const yubikeyPresent = () => invoke<boolean>("yubikey_present");
 export const lockAll = () => invoke<number>("lock_all");
 
@@ -52,6 +55,8 @@ export const initMaster = (passphrase: string) =>
 export const enrollYubikey = (pin: string | null) =>
   invoke<void>("enroll_yubikey", { pin });
 export const removeYubikey = () => invoke<void>("remove_yubikey");
+export const enrollTouchid = () => invoke<void>("enroll_touchid");
+export const removeTouchid = () => invoke<void>("remove_touchid");
 
 // ── Vaults (screens 03–04) ─────────────────────────────────────────────────
 export interface VaultSummary {
@@ -389,12 +394,17 @@ export interface YubikeyStatus {
   enrolled: boolean;
   present: boolean;
 }
+export interface TouchidStatus {
+  enrolled: boolean;
+  supported: boolean;
+}
 export const getPrefs = () => invoke<Record<string, unknown>>("get_prefs");
 export const setPrefs = (prefs: Record<string, unknown>) =>
   invoke<void>("set_prefs", { prefs });
 export const changeMaster = (newPassphrase: string) =>
   invoke<void>("change_master", { newPassphrase });
 export const yubikeyStatus = () => invoke<YubikeyStatus>("yubikey_status");
+export const touchidStatus = () => invoke<TouchidStatus>("touchid_status");
 export const daemonInfo = () => invoke<DaemonInfo>("daemon_info");
 export const daemonStart = () => invoke<string>("daemon_start");
 export const daemonStop = () => invoke<string>("daemon_stop");

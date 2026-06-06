@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Fingerprint } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
@@ -8,13 +9,16 @@ import {
   daemonStart,
   daemonStop,
   diagnostics,
+  enrollTouchid,
   enrollYubikey,
   getPrefs,
   installCli,
   lockAll,
+  removeTouchid,
   removeYubikey,
   setDaemonLimits,
   setPrefs,
+  touchidStatus,
   yubikeyStatus,
 } from "../lib/api";
 import { Page } from "../components/shell";
@@ -157,6 +161,19 @@ function SecurityTab() {
     mutationFn: removeYubikey,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["yubikey"] }),
   });
+  const tid = useQuery({ queryKey: ["touchid"], queryFn: touchidStatus });
+  const enrollTidM = useMutation({
+    mutationFn: enrollTouchid,
+    onSuccess: () => {
+      setStatus("Touch ID enrolled.");
+      qc.invalidateQueries({ queryKey: ["touchid"] });
+    },
+    onError: (e) => setStatus(String(e)),
+  });
+  const removeTidM = useMutation({
+    mutationFn: removeTouchid,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["touchid"] }),
+  });
   const startM = useMutation({ mutationFn: daemonStart, onSuccess: () => daemon.refetch() });
   const stopM = useMutation({ mutationFn: daemonStop, onSuccess: () => daemon.refetch() });
   const doctorM = useMutation({ mutationFn: daemonDoctor, onSuccess: () => daemon.refetch() });
@@ -205,6 +222,28 @@ function SecurityTab() {
               </div>
             )}
           </div>
+          {tid.data?.supported && (
+            <div className="border-t border-border-subtle pt-3 text-sm">
+              <div className="mb-2 flex items-center gap-2 text-content-muted">
+                <Fingerprint className="size-4" />
+                Touch ID: {tid.data?.enrolled ? "enrolled" : "not enrolled"}
+              </div>
+              {tid.data?.enrolled ? (
+                <Button variant="secondary" onClick={() => removeTidM.mutate()}>
+                  Remove Touch ID
+                </Button>
+              ) : (
+                <Button
+                  disabled={enrollTidM.isPending}
+                  onClick={() => enrollTidM.mutate()}
+                  className="flex items-center justify-center gap-2"
+                >
+                  <Fingerprint className="size-4" />
+                  {enrollTidM.isPending ? "Touch the sensor…" : "Enroll Touch ID"}
+                </Button>
+              )}
+            </div>
+          )}
           <div className="border-t border-border-subtle pt-3">
             <Row k="Re-auth cap" v="6h (fixed)" />
             <Button variant="secondary" className="mt-2" onClick={() => lockAll()}>

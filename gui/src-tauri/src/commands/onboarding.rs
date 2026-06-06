@@ -57,3 +57,21 @@ pub fn enroll_yubikey(pin: Option<String>) -> CmdResult<()> {
 pub fn remove_yubikey() -> CmdResult<()> {
     master::remove_yubikey().map_err(emsg)
 }
+
+/// Enroll Touch ID (macOS) as an additional unlock slot over the master key.
+/// Shows the system biometric sheet to verify a touch before writing the slot.
+/// Requires the master to be unlocked. `async` so the sheet never blocks the
+/// main thread. Used by Settings (and available to onboarding later).
+#[tauri::command]
+pub async fn enroll_touchid() -> CmdResult<()> {
+    let m = master::open_from_session().ok_or("master is locked — sign in first")?;
+    m.enroll_touchid().map_err(emsg)?;
+    Ok(())
+}
+
+/// Remove the Touch ID slot (Settings): deletes the keyslot file and its login-
+/// keychain item. The passphrase and recovery code still open everything.
+#[tauri::command]
+pub fn remove_touchid() -> CmdResult<()> {
+    master::remove_touchid().map_err(emsg)
+}

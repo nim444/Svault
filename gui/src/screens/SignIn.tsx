@@ -1,7 +1,8 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { unlock, unlockYubikey, yubikeyPresent } from "../lib/api";
+import { Fingerprint } from "lucide-react";
+import { unlock, unlockTouchid, unlockYubikey, yubikeyPresent } from "../lib/api";
 import { useSessionStatus } from "../lib/hooks";
 import { useSession } from "../store/session";
 import { Button, Card, Input } from "../components/ui";
@@ -47,6 +48,19 @@ export default function SignIn() {
     }
   }
 
+  async function onTouchid() {
+    setBusy(true);
+    setError(null);
+    try {
+      await unlockTouchid();
+      await complete();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onYubikey() {
     setBusy(true);
     setError(null);
@@ -79,6 +93,21 @@ export default function SignIn() {
             {busy ? "Unlocking…" : "Unlock"}
           </Button>
         </form>
+
+        {status?.touchid_enrolled && status?.touchid_supported && (
+          <>
+            <Divider />
+            <Button
+              variant="secondary"
+              onClick={onTouchid}
+              disabled={busy}
+              className="flex items-center justify-center gap-2"
+            >
+              <Fingerprint className="size-4" />
+              Unlock with Touch ID
+            </Button>
+          </>
+        )}
 
         {status?.yubikey_enrolled && (
           <>
