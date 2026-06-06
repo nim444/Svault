@@ -85,10 +85,14 @@ impl OpenRouterTransport {
 impl JudgeTransport for OpenRouterTransport {
     fn chat(&self, model: &str, system: &str, user: &str) -> Result<String> {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        // The verdict itself is ~50 tokens, but reasoning models (Gemma, Qwen,
+        // o-series) burn output budget on a thinking trace before the answer —
+        // too small a cap and `content` comes back empty. Non-reasoning models
+        // stop at the JSON regardless, so the headroom costs nothing.
         let body = serde_json::json!({
             "model": model,
             "temperature": 0,
-            "max_tokens": 300,
+            "max_tokens": 2000,
             "messages": [
                 { "role": "system", "content": system },
                 { "role": "user", "content": user },
@@ -102,14 +106,27 @@ impl JudgeTransport for OpenRouterTransport {
             .set("HTTP-Referer", "https://github.com/nim444/Svault")
             .set("X-Title", "Svault")
             .send_json(body)
-            .map_err(|e| anyhow!("openrouter request failed: {e}"))?;
+            .map_err(|e| anyhow!("judge request failed: {e}"))?;
         let v: serde_json::Value = resp
             .into_json()
-            .map_err(|e| anyhow!("openrouter response not JSON: {e}"))?;
-        v["choices"][0]["message"]["content"]
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| anyhow!("openrouter response had no message content"))
+            .map_err(|e| anyhow!("judge response not JSON: {e}"))?;
+        let msg = &v["choices"][0]["message"];
+        match msg["content"].as_str() {
+            Some(c) if !c.trim().is_empty() => Ok(c.to_string()),
+            // A reasoning trace is never parsed for the verdict — a thinking
+            // model can *mention* a hypothetical allow JSON while reasoning, and
+            // this is a security gate. Empty content + a trace means the model
+            // spent its whole budget thinking; surface that clearly instead.
+            _ if msg["reasoning_content"]
+                .as_str()
+                .is_some_and(|r| !r.trim().is_empty()) =>
+            {
+                Err(anyhow!(
+                    "the model returned only a reasoning trace and no final answer — use a non-reasoning model, or one that finishes within the token budget"
+                ))
+            }
+            _ => Err(anyhow!("judge response had no message content")),
+        }
     }
 }
 

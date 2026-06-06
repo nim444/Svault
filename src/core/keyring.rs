@@ -158,6 +158,12 @@ fn default_base_url() -> String {
 fn default_judge_timeout() -> u64 {
     6
 }
+/// Effective default for judges on a local provider (Ollama / LM Studio):
+/// just-in-time model loading plus on-device reasoning easily takes tens of
+/// seconds, so the cloud default would always time out.
+fn default_local_judge_timeout() -> u64 {
+    120
+}
 fn default_allow_threshold() -> u8 {
     60
 }
@@ -274,6 +280,13 @@ impl KeyringData {
                 out.api_key = "local".to_string();
             }
             out.base_url = p.base_url.clone();
+            // Local models (Ollama / LM Studio) load just-in-time and generate
+            // on the user's hardware — the cloud-sized default timeout kills
+            // them mid-response. Give them a generous ceiling unless the judge
+            // sets its own explicit timeout.
+            if provider_kind_key_optional(&p.kind) && out.timeout_secs == default_judge_timeout() {
+                out.timeout_secs = default_local_judge_timeout();
+            }
         }
         out
     }
