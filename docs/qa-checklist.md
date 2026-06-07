@@ -245,16 +245,21 @@ denied: request not authorized for this secret
 
 ---
 
-## G. Daemon, sessions & the 6h cap (Unix)
+## G. Daemon, sessions & the re-auth cap (Unix)
 
 ### G1. Daemon lifecycle
 - **Steps:** `sv daemon start`, `sv daemon status`, `sv unlock`, an agent get, `sv daemon stop`.
 - **Expected:** Status shows running; the unlocked vault serves from memory (no `.session` while the daemon holds it); stop zeroizes and cleans up the socket/pid.
 - [ ] Pass
 
-### G2. 6-hour hard cap
-- **Steps:** Unlock a vault, then back-date its session: edit the timestamp on the first line of `$SVAULT_HOME/.svault/proj/.session` (and/or `$SVAULT_HOME/.svault/.master.session`) to >6h ago.
+### G2. Re-auth hard cap (default 6h)
+- **Steps:** Unlock a vault, then back-date its session: edit the timestamp on the first line of `$SVAULT_HOME/.svault/proj/.session` (and/or `$SVAULT_HOME/.svault/.master.session`) to >6h ago. The first line is `"<unlocked_at> <cap_secs>"` — back-date past the stamped cap (a line with no cap falls back to the 6h default).
 - **Expected:** `sv status` shows the vault as **locked**; the next `get` re-prompts the master; the stale session file is removed.
+- [ ] Pass
+
+### G2b. Configurable re-auth cap
+- **Steps:** In the GUI, Settings → Lock & sessions, set the cap to a different value (1–168h), sign out and back in. Inspect the first line of a fresh `.session` file.
+- **Expected:** The stamped `<cap_secs>` matches the configured value; the sidebar "Re-auth in" countdown reflects it. Changing the cap does NOT move the deadline of sessions stamped before the change.
 - [ ] Pass
 
 ### G3. `lock --all`

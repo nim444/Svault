@@ -10,12 +10,36 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Hard re-auth cap: a cached session is unconditionally invalid once it is this
-/// old, regardless of activity. The master, keyring, and per-vault file sessions
-/// all honor it, and the daemon uses it as its in-memory hard cap default. This
-/// bounds the window in which an already-unlocked vault (e.g. one an AI was
-/// prompted into via the CLI) can be read before the master must be re-entered.
+/// Default hard re-auth cap: a cached session is unconditionally invalid once it
+/// is this old, regardless of activity. The master, keyring, and per-vault file
+/// sessions all honor it, and the daemon uses it as its in-memory hard cap
+/// default. This bounds the window in which an already-unlocked vault (e.g. one
+/// an AI was prompted into via the CLI) can be read before the master must be
+/// re-entered. Configurable via the keyring's `lock.max_unlocked_secs` (clamped
+/// to [`MIN_SESSION_CAP_SECS`]..=[`MAX_SESSION_CAP_SECS`]); the cap that applied
+/// at unlock time is stamped into each session file, so reads never need the
+/// (possibly locked) keyring to decide expiry.
 pub const MAX_SESSION_SECS: u64 = 6 * 60 * 60;
+
+/// Floor for a configured re-auth cap — below this, unlocks churn constantly.
+pub const MIN_SESSION_CAP_SECS: u64 = 15 * 60;
+/// Ceiling for a configured re-auth cap — an unlocked store never outlives a week.
+pub const MAX_SESSION_CAP_SECS: u64 = 7 * 24 * 60 * 60;
+
+/// Clamp a configured cap into the supported range.
+pub fn clamp_session_cap(secs: u64) -> u64 {
+    secs.clamp(MIN_SESSION_CAP_SECS, MAX_SESSION_CAP_SECS)
+}
+
+/// The re-auth cap currently in force for NEW sessions: the keyring's
+/// `lock.max_unlocked_secs` (clamped) when the keyring is unlocked, else the
+/// built-in default. Reads of existing sessions use the cap stamped into the
+/// session file instead, so a locked keyring never blocks an expiry decision.
+pub fn effective_session_cap() -> u64 {
+    crate::core::keyring::open_from_session()
+        .map(|kr| clamp_session_cap(kr.data.lock.max_unlocked_secs))
+        .unwrap_or(MAX_SESSION_SECS)
+}
 
 fn session_path(vault_dir: &Path) -> PathBuf {
     vault_dir.join(".session")
@@ -40,24 +64,42 @@ pub fn secure_remove(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Write a session payload — `"<unlocked_at_unix_secs>\n<hex_key>"` — owner-only
-/// (mode 0600 on Unix, an icacls owner-only ACL on Windows, #4). The timestamp
-/// is what lets reads enforce [`MAX_SESSION_SECS`]. Never stores a passphrase.
+/// Write a session payload — `"<unlocked_at_unix_secs> <cap_secs>\n<hex_key>"` —
+/// owner-only (mode 0600 on Unix, an icacls owner-only ACL on Windows, #4). The
+/// timestamp + cap are what let reads enforce the re-auth cap. Never stores a
+/// passphrase. The cap is resolved from the keyring config when it is unlocked
+/// (see [`effective_session_cap`]); use [`write_session_key_with_cap`] when the
+/// caller already holds the applicable cap.
 pub fn write_session_key(path: &Path, key: &[u8; 32]) -> Result<()> {
-    let payload = format!("{}\n{}", now_secs(), hex::encode(key));
+    write_session_key_with_cap(path, key, effective_session_cap())
+}
+
+/// [`write_session_key`] with an explicit cap (already clamped by the caller or
+/// clamped here). Used by the keyring's own unlock, which can read its config
+/// directly with the key in hand before any session exists.
+pub fn write_session_key_with_cap(path: &Path, key: &[u8; 32], cap_secs: u64) -> Result<()> {
+    let cap = clamp_session_cap(cap_secs);
+    let payload = format!("{} {}\n{}", now_secs(), cap, hex::encode(key));
     crate::core::secfile::write_owner_only(path, payload.as_bytes())?;
     Ok(())
 }
 
 /// Read the cached key from a session file, or `None` if it is missing,
-/// malformed (e.g. a pre-timestamp or pre-0.6 file), or older than
-/// [`MAX_SESSION_SECS`]. An expired file is best-effort removed so status and
-/// prompt paths agree that the store is locked.
+/// malformed (e.g. a pre-timestamp or pre-0.6 file), or older than its stamped
+/// re-auth cap (pre-cap files fall back to [`MAX_SESSION_SECS`]). An expired
+/// file is best-effort removed so status and prompt paths agree that the store
+/// is locked.
 pub fn read_session_key(path: &Path) -> Option<[u8; 32]> {
     let contents = std::fs::read_to_string(path).ok()?;
-    let (ts, hex_key) = contents.trim().split_once('\n')?;
-    let unlocked_at: u64 = ts.trim().parse().ok()?;
-    if now_secs().saturating_sub(unlocked_at) >= MAX_SESSION_SECS {
+    let (ts_line, hex_key) = contents.trim().split_once('\n')?;
+    let mut parts = ts_line.split_whitespace();
+    let unlocked_at: u64 = parts.next()?.parse().ok()?;
+    let cap: u64 = parts
+        .next()
+        .and_then(|c| c.parse().ok())
+        .map(clamp_session_cap)
+        .unwrap_or(MAX_SESSION_SECS);
+    if now_secs().saturating_sub(unlocked_at) >= cap {
         let _ = secure_remove(path);
         return None;
     }
@@ -162,6 +204,39 @@ mod tests {
         assert_eq!(get_key(&vault_dir), None);
         assert!(!is_unlocked(&vault_dir));
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn session_honors_its_stamped_cap() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".session");
+
+        // A configured 1h cap is stamped into the file and enforced on read.
+        write_session_key_with_cap(&path, &[9u8; 32], 3600).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.starts_with(&format!("{} 3600\n", raw.split(' ').next().unwrap())));
+        assert_eq!(read_session_key(&path), Some([9u8; 32]));
+
+        // Backdate past the stamped cap (but well under the 6h default): expired.
+        let stale = now_secs() - 3601;
+        std::fs::write(&path, format!("{stale} 3600\n{}", "09".repeat(32))).unwrap();
+        assert_eq!(read_session_key(&path), None);
+        assert!(!path.exists());
+
+        // An out-of-range stamped cap is clamped on read.
+        std::fs::write(
+            &path,
+            format!("{} 999999999\n{}", now_secs(), "09".repeat(32)),
+        )
+        .unwrap();
+        let stale = now_secs() - (MAX_SESSION_CAP_SECS + 1);
+        std::fs::write(&path, format!("{stale} 999999999\n{}", "09".repeat(32))).unwrap();
+        assert_eq!(read_session_key(&path), None);
+
+        // A pre-cap (legacy) file falls back to the 6h default.
+        let fresh = now_secs() - (MAX_SESSION_SECS - 60);
+        std::fs::write(&path, format!("{fresh}\n{}", "09".repeat(32))).unwrap();
+        assert_eq!(read_session_key(&path), Some([9u8; 32]));
     }
 
     #[test]

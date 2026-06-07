@@ -11,7 +11,6 @@ use zeroize::Zeroizing;
 use crate::error::{emsg, CmdResult};
 use crate::state::GuiState;
 
-use svault_cli::core::session::MAX_SESSION_SECS;
 use svault_cli::core::{keyring, master, session, touchid, usage, vault, yubikey};
 use svault_cli::daemon::{self, client};
 
@@ -48,7 +47,8 @@ pub struct SessionStatus {
     pub touchid_supported: bool,
     /// Vault leaf names currently unlocked (daemon memory or file session).
     pub unlocked_vaults: Vec<String>,
-    /// Unix seconds at which the GUI must re-authenticate (last unlock + 6h).
+    /// Unix seconds at which the GUI must re-authenticate (last unlock + the
+    /// configured re-auth cap, default 6h).
     pub reauth_deadline: Option<i64>,
     /// Seconds until the next vault auto-locks (soonest idle/hard timer across
     /// unlocked vaults, daemon-reported). `None` when no daemon or none unlocked.
@@ -74,6 +74,17 @@ fn unlock_all_with_master(m: &master::Master) -> CmdResult<UnlockResult> {
     let mut unlocked = 0usize;
     let mut already = 0usize;
 
+    // Open the keyring FIRST (judges + ops config) so the configured re-auth cap
+    // applies to every session stamped below — and the AI judge is live without
+    // a second prompt.
+    let mut keyring_unlocked = false;
+    if keyring::exists() && master::keyring_has_keyslot() && !keyring::is_unlocked() {
+        if let Ok(dek) = m.unwrap_keyring_dek() {
+            keyring::unlock_session(dek.bytes()).map_err(emsg)?;
+            keyring_unlocked = true;
+        }
+    }
+
     for dir in vault::list_vault_dirs() {
         let l = leaf(&dir);
         if client::unlocked_vaults().iter().any(|n| n == &l) || session::is_unlocked(&dir) {
@@ -96,16 +107,6 @@ fn unlock_all_with_master(m: &master::Master) -> CmdResult<UnlockResult> {
         unlocked += 1;
     }
 
-    // A full unlock also opens the keyring (judges + their keys) under the same
-    // master, so the AI judge is live without a second prompt.
-    let mut keyring_unlocked = false;
-    if keyring::exists() && master::keyring_has_keyslot() && !keyring::is_unlocked() {
-        if let Ok(dek) = m.unwrap_keyring_dek() {
-            keyring::unlock_session(dek.bytes()).map_err(emsg)?;
-            keyring_unlocked = true;
-        }
-    }
-
     Ok(UnlockResult {
         unlocked,
         already,
@@ -117,8 +118,12 @@ fn unlock_all_with_master(m: &master::Master) -> CmdResult<UnlockResult> {
 
 pub(crate) fn stamp_unlock(state: &State<GuiState>) -> i64 {
     let now = chrono::Utc::now().timestamp();
+    // The keyring is open by now (unlock_all_with_master opens it first), so
+    // this resolves the configured cap, not just the default.
+    let cap = session::effective_session_cap();
     *state.unlocked_at.lock().unwrap() = Some(now);
-    now + MAX_SESSION_SECS as i64
+    *state.reauth_cap_secs.lock().unwrap() = Some(cap);
+    now + cap as i64
 }
 
 #[tauri::command]
@@ -136,7 +141,14 @@ pub fn session_status(state: State<GuiState>) -> SessionStatus {
         touchid_enrolled: master::touchid_enrolled(),
         touchid_supported: touchid::is_supported(),
         unlocked_vaults: unlocked_vault_names(),
-        reauth_deadline: unlocked.map(|t| t + MAX_SESSION_SECS as i64),
+        reauth_deadline: unlocked.map(|t| {
+            let cap = state
+                .reauth_cap_secs
+                .lock()
+                .unwrap()
+                .unwrap_or_else(session::effective_session_cap);
+            t + cap as i64
+        }),
         next_autolock_secs,
     }
 }
@@ -150,8 +162,10 @@ pub fn session_status(state: State<GuiState>) -> SessionStatus {
 pub async fn unlock(passphrase: String, state: State<'_, GuiState>) -> CmdResult<UnlockResult> {
     let pp = Zeroizing::new(passphrase);
     let m = master::Master::open(&pp).map_err(emsg)?;
-    master::unlock_session(m.key_bytes()).map_err(emsg)?;
+    // Unlock-all opens the keyring first, so stamping the master session after
+    // it picks up the configured re-auth cap.
     let mut res = unlock_all_with_master(&m)?;
+    master::unlock_session(m.key_bytes()).map_err(emsg)?;
     res.reauth_deadline = Some(stamp_unlock(&state));
     Ok(res)
 }
@@ -165,8 +179,8 @@ pub async fn unlock_yubikey(
 ) -> CmdResult<UnlockResult> {
     let pin = pin.map(Zeroizing::new);
     let m = master::open_with_yubikey(pin.as_deref().map(|p| p.as_str())).map_err(emsg)?;
-    master::unlock_session(m.key_bytes()).map_err(emsg)?;
     let mut res = unlock_all_with_master(&m)?;
+    master::unlock_session(m.key_bytes()).map_err(emsg)?;
     res.reauth_deadline = Some(stamp_unlock(&state));
     Ok(res)
 }
@@ -177,8 +191,8 @@ pub async fn unlock_yubikey(
 #[tauri::command]
 pub async fn unlock_touchid(state: State<'_, GuiState>) -> CmdResult<UnlockResult> {
     let m = master::open_with_touchid().map_err(emsg)?;
-    master::unlock_session(m.key_bytes()).map_err(emsg)?;
     let mut res = unlock_all_with_master(&m)?;
+    master::unlock_session(m.key_bytes()).map_err(emsg)?;
     res.reauth_deadline = Some(stamp_unlock(&state));
     Ok(res)
 }
@@ -202,5 +216,6 @@ pub fn lock_all(state: State<GuiState>) -> CmdResult<usize> {
     let _ = master::lock_session();
     let _ = keyring::lock_session();
     *state.unlocked_at.lock().unwrap() = None;
+    *state.reauth_cap_secs.lock().unwrap() = None;
     Ok(count)
 }

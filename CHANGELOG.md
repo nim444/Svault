@@ -21,6 +21,52 @@ and [docs/gui.md](docs/gui.md).
   now `svault_cli`; the installed binary is `svault`, unchanged. The desktop app
   crate stays `svault-gui` (never published; ships as Tauri bundles).
 
+### Changed
+- **The re-auth cap is configurable** (was a fixed 6h). The keyring's
+  `lock.max_unlocked_secs` now governs every session surface, clamped to
+  15min–7d: file sessions stamp the cap that applied at unlock into the
+  `.session` file (`"<unlocked_at> <cap>\n<hex_key>"`; pre-cap files fall back
+  to the 6h default, so a locked keyring never blocks an expiry decision), the
+  daemon already read it at start, and the GUI re-auth countdown follows it.
+  Unlock flows (CLI `svault unlock`, GUI sign-in) now open the keyring FIRST so
+  the configured cap applies to the master and vault sessions stamped in the
+  same flow. Editable in GUI Settings under Lock & sessions (hours, 1–168);
+  applies from the next sign-in. Downgrade note: an older binary treats the new
+  two-field session line as malformed and simply sees the store as locked —
+  re-unlock and it rewrites the old format.
+
+### Changed (GUI)
+- **Themes are wired** — the Appearance "Theme" pref now actually applies:
+  dark (default), a shadcn-light palette, a hi-contrast dark palette, and
+  "system" following the OS live (`prefers-color-scheme`). Reduce-motion is
+  applied to the document too. Palettes live in `styles.css` under
+  `[data-theme=...]`; `src/lib/theme.ts` syncs the `<html>` attributes from
+  the prefs at startup, and Settings changes apply immediately.
+- **The startup prefs do what they say** — previously every Appearance toggle
+  only wrote `gui-prefs.json` and nothing read it. Now `show_tray` gates the
+  tray/popover setup at launch; `close_to_tray` decides whether closing the
+  main window hides it (tray on) or actually exits — before, the hidden
+  popover window silently kept the process alive regardless; and
+  `launch_at_login` registers/unregisters a real OS login item
+  (`tauri-plugin-autostart`), synced on every prefs save.
+- **Toggles read at a glance** — the switch "on" state is a themed blue
+  (`--switch-on`) instead of `primary`, which in the shadcn dark palette is
+  near-white and disappeared behind the white thumb; the off track gains a
+  subtle inset border so it doesn't melt into dark cards.
+- **Sign-in shows one unlock method at a time with a remembered favorite** —
+  instead of stacking passphrase / Touch ID / YubiKey with "or" dividers, the
+  gate renders the favorite method (the last one that successfully unlocked,
+  kept in localStorage) and offers the others as icon chips below. Touch ID is
+  a large fingerprint target; YubiKey shows its PIN + touch flow only when the
+  key is plugged in.
+- **Onboarding splits the unlock methods into their own steps** — Touch ID
+  (shown only on supported Macs, skippable) and YubiKey (skippable) are now
+  separate steps 4 and 5 instead of one stacked screen; the stepper adapts to
+  4 steps on machines without Touch ID.
+- **Settings is no longer tabbed** — it is a searchable settings list (grouped
+  General / Security / System) with one focused panel per item. Security splits
+  into dedicated Passphrase, Touch ID, YubiKey, and Lock & sessions panels.
+
 ### Fixed
 - **Local AI judges (LM Studio / Ollama) no longer time out or mis-parse.**
   Judges on a local provider get a 120s default timeout instead of the
@@ -36,8 +82,8 @@ and [docs/gui.md](docs/gui.md).
 
 ### Added
 - **Touch ID in the GUI** — sign-in gains an "Unlock with Touch ID" button
-  (shown only when enrolled and available); onboarding step 4 became **Unlock
-  methods** with a Touch ID card next to the YubiKey one; Settings → Security
+  (shown only when enrolled and available); onboarding offers Touch ID
+  enrollment as its own optional step; Settings → Security
   can enroll/remove Touch ID. Commands: `unlock_touchid`, `enroll_touchid`,
   `remove_touchid`, `touchid_status`.
 - **Touch ID unlock (macOS)** — `svault master touchid enroll | remove | status`

@@ -13,9 +13,11 @@ import {
 import { useSession } from "../store/session";
 import { Button, Card, Checkbox, Field, Input } from "../components/ui";
 
-// Screen 02 — first-run onboarding. Linear 4-step stepper; the important steps
-// (disclaimer, recovery code) can't be skipped.
-type Step = 1 | 2 | 3 | 4;
+// Screen 02 — first-run onboarding. Linear stepper; the important steps
+// (disclaimer, recovery code) can't be skipped. Touch ID and YubiKey are
+// optional steps at the end; the Touch ID step only exists on supported
+// machines, so the flow is 5 steps with it and 4 without.
+type Step = 1 | 2 | 3 | 4 | 5;
 
 export default function Onboarding() {
   const [splashDone, setSplashDone] = useState(false);
@@ -24,6 +26,17 @@ export default function Onboarding() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const signIn = useSession((s) => s.signIn);
+
+  // Lifted here so the step list is known before the unlock steps render.
+  const { data: tid, refetch: refetchTid } = useQuery({
+    queryKey: ["touchid"],
+    queryFn: touchidStatus,
+  });
+
+  const labels = tid?.supported
+    ? ["Terms", "Passphrase", "Recovery", "Touch ID", "YubiKey"]
+    : ["Terms", "Passphrase", "Recovery", "YubiKey"];
+  const current = labels[step - 1];
 
   async function finish() {
     signIn();
@@ -42,7 +55,7 @@ export default function Onboarding() {
           <div className="text-lg font-semibold tracking-tight">Svault</div>
           <div className="text-xs text-muted-foreground">First-run setup</div>
         </div>
-        <Stepper step={step} />
+        <Stepper step={step} labels={labels} />
         {step === 1 && <StepTerms onNext={() => setStep(2)} />}
         {step === 2 && (
           <StepPassphrase
@@ -55,7 +68,14 @@ export default function Onboarding() {
         {step === 3 && (
           <StepRecovery code={recoveryCode} onNext={() => setStep(4)} />
         )}
-        {step === 4 && <StepExtraUnlock onDone={finish} />}
+        {current === "Touch ID" && (
+          <StepTouchId
+            tid={tid}
+            refetchTid={refetchTid}
+            onNext={() => setStep((step + 1) as Step)}
+          />
+        )}
+        {current === "YubiKey" && <StepYubikey onDone={finish} />}
       </Card>
     </div>
   );
@@ -77,24 +97,22 @@ function Splash({ onStart }: { onStart: () => void }) {
   );
 }
 
-const STEP_LABELS = ["Terms", "Passphrase", "Recovery", "Unlock methods"];
-
-function Stepper({ step }: { step: Step }) {
+function Stepper({ step, labels }: { step: Step; labels: string[] }) {
   return (
     <div className="mb-6">
       <div className="flex items-center gap-1.5">
-        {[1, 2, 3, 4].map((n) => (
+        {labels.map((label, i) => (
           <span
-            key={n}
+            key={label}
             className={
               "h-1 flex-1 rounded-full " +
-              (n <= step ? "bg-primary" : "bg-border")
+              (i < step ? "bg-primary" : "bg-border")
             }
           />
         ))}
       </div>
       <div className="mt-2 text-xs text-muted-foreground">
-        Step {step} of 4 · {STEP_LABELS[step - 1]}
+        Step {step} of {labels.length} · {labels[step - 1]}
       </div>
     </div>
   );
@@ -219,15 +237,87 @@ function StepRecovery({ code, onNext }: { code: string; onNext: () => void }) {
   );
 }
 
-function StepExtraUnlock({ onDone }: { onDone: () => void }) {
-  // Touch ID (macOS) — offered first on supported machines; YubiKey below.
-  const { data: tid, refetch: refetchTid } = useQuery({
-    queryKey: ["touchid"],
-    queryFn: touchidStatus,
-  });
+type TouchIdStatus = Awaited<ReturnType<typeof touchidStatus>>;
+
+function StepTouchId({
+  tid,
+  refetchTid,
+  onNext,
+}: {
+  tid: TouchIdStatus | undefined;
+  refetchTid: () => Promise<unknown>;
+  onNext: () => void;
+}) {
   const [tidBusy, setTidBusy] = useState(false);
   const [tidError, setTidError] = useState<string | null>(null);
 
+  async function enrollTid() {
+    setTidBusy(true);
+    setTidError(null);
+    try {
+      await enrollTouchid();
+      await refetchTid();
+    } catch (err) {
+      setTidError(String(err));
+    } finally {
+      setTidBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <h2 className="text-base font-semibold">Touch ID</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Optional. Unlock with a fingerprint instead of typing the master
+          passphrase — the passphrase always keeps working. You can also do
+          this later in Settings.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 p-4">
+        {tid?.enrolled ? (
+          <div className="flex items-center gap-2 text-sm text-state-allow">
+            <span className="size-2 rounded-full bg-state-allow" />
+            Touch ID enrolled — a fingerprint now unlocks Svault
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Fingerprint className="size-4" />
+              Touch ID
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Unlock with your Mac's fingerprint reader. The wrapping key is
+              kept in your login keychain.
+            </p>
+            <Button
+              disabled={tidBusy}
+              onClick={enrollTid}
+              className="flex items-center justify-center gap-2"
+            >
+              <Fingerprint className="size-4" />
+              {tidBusy ? "Touch the sensor…" : "Enroll Touch ID"}
+            </Button>
+          </>
+        )}
+        {tidError && <p className="text-sm text-state-deny">{tidError}</p>}
+      </div>
+
+      {tid?.enrolled ? (
+        <Button className="self-stretch" onClick={onNext}>
+          Continue
+        </Button>
+      ) : (
+        <Button variant="ghost" className="self-center" onClick={onNext}>
+          Skip
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function StepYubikey({ onDone }: { onDone: () => void }) {
   const { data: present, refetch } = useQuery({
     queryKey: ["yubikey-present"],
     queryFn: yubikeyPresent,
@@ -243,19 +333,6 @@ function StepExtraUnlock({ onDone }: { onDone: () => void }) {
   // has no PIN" acknowledgment, before we ask for a touch.
   const ready = pin.trim().length > 0 || noPin;
 
-  async function enrollTid() {
-    setTidBusy(true);
-    setTidError(null);
-    try {
-      await enrollTouchid();
-      await refetchTid();
-    } catch (err) {
-      setTidError(String(err));
-    } finally {
-      setTidBusy(false);
-    }
-  }
-
   async function enroll() {
     setBusy(true);
     setError(null);
@@ -269,49 +346,16 @@ function StepExtraUnlock({ onDone }: { onDone: () => void }) {
     }
   }
 
-  const anyEnrolled = Boolean(tid?.enrolled) || ykEnrolled;
-
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h2 className="text-base font-semibold">Extra unlock methods</h2>
+        <h2 className="text-base font-semibold">YubiKey</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Optional. Add Touch ID or a YubiKey as an alternative to typing the
+          Optional. Unlock with a hardware key as an alternative to typing the
           master passphrase — it always keeps working. You can also do this
           later in Settings.
         </p>
       </div>
-
-      {tid?.supported && (
-        <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/40 p-4">
-          {tid.enrolled ? (
-            <div className="flex items-center gap-2 text-sm text-state-allow">
-              <span className="size-2 rounded-full bg-state-allow" />
-              Touch ID enrolled — a fingerprint now unlocks Svault
-            </div>
-          ) : (
-            <>
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Fingerprint className="size-4" />
-                Touch ID
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Unlock with your Mac's fingerprint reader. The wrapping key is
-                kept in your login keychain.
-              </p>
-              <Button
-                disabled={tidBusy}
-                onClick={enrollTid}
-                className="flex items-center justify-center gap-2"
-              >
-                <Fingerprint className="size-4" />
-                {tidBusy ? "Touch the sensor…" : "Enroll Touch ID"}
-              </Button>
-            </>
-          )}
-          {tidError && <p className="text-sm text-state-deny">{tidError}</p>}
-        </div>
-      )}
 
       {ykEnrolled ? (
         <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 p-4 text-sm text-state-allow">
@@ -364,7 +408,7 @@ function StepExtraUnlock({ onDone }: { onDone: () => void }) {
 
       {error && <p className="text-sm text-state-deny">{error}</p>}
 
-      {anyEnrolled ? (
+      {ykEnrolled ? (
         <Button className="self-stretch" onClick={onDone}>
           Finish
         </Button>

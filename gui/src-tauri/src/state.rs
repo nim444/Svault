@@ -8,6 +8,10 @@ use std::sync::Mutex;
 #[derive(Default)]
 pub struct GuiState {
     /// Unix seconds of the last successful master unlock through the GUI, used to
-    /// derive the 6-hour re-auth deadline. `None` once locked.
+    /// derive the re-auth deadline. `None` once locked.
     pub unlocked_at: Mutex<Option<i64>>,
+    /// The re-auth cap (seconds) that applied at the last unlock — the keyring's
+    /// `lock.max_unlocked_secs`, captured once at stamp time so the once-a-second
+    /// status poll doesn't decrypt the keyring. `None` before the first unlock.
+    pub reauth_cap_secs: Mutex<Option<u64>>,
 }

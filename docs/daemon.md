@@ -48,7 +48,7 @@ Two timers, both stored in the **encrypted keyring** (`.svault/keyring.enc`):
 | Setting | Default | Meaning |
 |---|---|---|
 | `idle_timeout_secs` | `900` (15 min) | Drop a vault's key after this long with no access. Reset on every `get`. |
-| `max_unlocked_secs` | `21600` (6 h) | Hard cap — drop the key this long after unlock, regardless of activity. |
+| `max_unlocked_secs` | `21600` (6 h) | Hard cap — drop the key this long after unlock, regardless of activity. Also governs file/master/keyring session expiry (the re-auth cap; clamped to 15 min–7 days). Editable in the GUI under Settings → Lock & sessions. |
 
 There is **no plaintext `.svault/config.yaml`**. These knobs — along with
 `daemon.max_connections`, the backend, and the judge registry — live AES-256-GCM

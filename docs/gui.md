@@ -14,6 +14,23 @@ assets, and a manual QA pass.
 paths, logs) uses **IBM Plex Mono**. Both are bundled via `@fontsource`, so the
 app renders correctly offline.
 
+**Theming:** dark (default), light, and hi-contrast palettes live in
+`styles.css` under `[data-theme=...]`; `src/lib/theme.ts` applies the saved
+Theme pref to `<html>` at startup, with "system" following the OS live via
+`prefers-color-scheme`. Reduce-motion is applied the same way. Changes in
+Settings apply immediately. Switch/toggle "on" state uses a dedicated blue
+token (`--switch-on`, themed per palette) — `primary` is near-white/near-black
+shadcn style and would vanish behind the white thumb.
+
+**Startup prefs (`~/.svault/gui-prefs.json`):** the appearance prefs are owned
+by the frontend, but the Rust side reads three of them
+(`commands::settings::pref_bool`): `show_tray` gates `tray::setup` at launch
+(so hiding the tray icon takes effect on the next start), `close_to_tray`
+decides whether closing the main window hides it or exits the app (without it
+the hidden popover window would keep the process alive forever), and
+`launch_at_login` is synced to a real OS login item via
+`tauri-plugin-autostart` every time prefs are saved.
+
 ## Layout
 
 ```
@@ -79,8 +96,8 @@ All 12 screens from `docs/design_handoff_svault_gui/` are implemented, plus a
 |---|--------|-------------------------------|
 | — | Getting started (home) | composes `keyring_state`, `list_vaults`, `provider_save`, `judge_save` |
 | — | AI providers | `judge::provider_*` (list, save, toggle, set_default, remove, kinds, models) |
-| 01 | Sign in / out | `session` (`unlock`, `unlock_yubikey`, `unlock_touchid`, `lock_all`, `session_status`) |
-| 02 | Onboarding | `onboarding` (`init_master`, `enroll_yubikey`, `enroll_touchid`) |
+| 01 | Sign in / out | `session` (`unlock`, `unlock_yubikey`, `unlock_touchid`, `lock_all`, `session_status`) — one unlock method shown at a time; the last successful method is remembered as the favorite (localStorage) and pre-selected, the others switchable via icon chips |
+| 02 | Onboarding | `onboarding` (`init_master`, `enroll_yubikey`, `enroll_touchid`) — Touch ID (macOS, skippable) and YubiKey (skippable) are separate optional steps after the recovery code |
 | 03 | Vault list | `vaults::list_vaults`, `lock_vault`/`unlock_vault`, `delete_vault` |
 | 04 | Vault config | `vaults::create_vault` / `vault_settings` / `save_settings` |
 | 05 | Secrets | `secrets` (`list_secrets`, `add`/`edit`/`remove`, `reveal_secret`) |
@@ -89,7 +106,7 @@ All 12 screens from `docs/design_handoff_svault_gui/` are implemented, plus a
 | 08 | Audit | `audit::audit_events` (gate decisions: real peer UID + denial reason) + `audit::activity_events` (usage timeline incl. global provider/judge/MCP config changes) |
 | 09 | Pending | `pending` (`pending`, `approve_unseal`) |
 | 10 | Backup & recovery | `backup` (export/import, recover_master, rotate_code) |
-| 11 | Settings | `settings` (prefs, rekey, daemon, diagnostics, install_cli, `yubikey_status`/`touchid_status` + enroll/remove) |
+| 11 | Settings | `settings` (prefs, rekey, daemon, diagnostics, install_cli, `yubikey_status`/`touchid_status` + enroll/remove) — a searchable settings list (General / Security / System groups) with one panel per item; Security splits into Passphrase, Touch ID, YubiKey, and Lock & sessions (Lock all + the editable re-auth cap, hours 1–168) |
 | 12 | Tray popover | `tray` (`open_main`, `hide_popover`) |
 
 ### Getting started (home)

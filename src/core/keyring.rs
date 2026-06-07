@@ -376,9 +376,14 @@ impl Keyring {
 
 /// Cache the keyring's derived key (`0600`, timestamped) so the CLI fallback and
 /// the daemon can open it without re-prompting. Never stores the passphrase;
-/// expires after [`crate::core::session::MAX_SESSION_SECS`].
+/// expires after the configured re-auth cap (`lock.max_unlocked_secs`, default
+/// [`crate::core::session::MAX_SESSION_SECS`]) — read here directly with the key
+/// in hand, since the keyring's own session does not exist yet.
 pub fn unlock_session(key: &[u8; 32]) -> Result<()> {
-    crate::core::session::write_session_key(&session_path(), key)
+    let cap = Keyring::open_with_key(VaultKey::from_bytes(*key))
+        .map(|kr| crate::core::session::clamp_session_cap(kr.data.lock.max_unlocked_secs))
+        .unwrap_or(crate::core::session::MAX_SESSION_SECS);
+    crate::core::session::write_session_key_with_cap(&session_path(), key, cap)
 }
 
 /// Clear the keyring session — judge goes back to off.

@@ -23,7 +23,7 @@ After onboarding you land on the vault list, signed in.
 
 ## Sign in & logout
 
-The TUI has an app-level **sign-in** gated by the master passphrase. When you open the TUI and a master is set but you are not signed in this run — a fresh launch, or the login session expired past the **6-hour** cap — it shows a **Sign in** screen first: type the master passphrase and press `Enter`, or press `Ctrl+Y` to sign in with an enrolled YubiKey (type the PIN first if your key has one). `Esc` quits.
+The TUI has an app-level **sign-in** gated by the master passphrase. When you open the TUI and a master is set but you are not signed in this run — a fresh launch, or the login session expired past the re-auth cap (**6 hours** by default) — it shows a **Sign in** screen first: type the master passphrase and press `Enter`, or press `Ctrl+Y` to sign in with an enrolled YubiKey (type the PIN first if your key has one). `Esc` quits.
 
 Pressing `o` on the vault list **logs out**: it clears the login session and returns to the Sign in screen. Logout signs you out only — it does **not** lock or change the vaults' own state, the keyring, the daemon, the judge, or any data; signing back in returns you to the list as it was.
 

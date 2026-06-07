@@ -32,6 +32,8 @@ const buttonVariants = cva(
           "border border-input bg-transparent text-foreground shadow-sm hover:bg-accent-bg",
         ghost: "text-muted-foreground hover:bg-accent-bg hover:text-foreground",
         danger: "bg-destructive text-white shadow-sm hover:bg-destructive/90",
+        dangerOutline:
+          "border border-destructive/40 bg-transparent text-destructive/80 shadow-sm hover:border-destructive/60 hover:bg-destructive/10 hover:text-destructive",
       },
     },
     defaultVariants: { variant: "primary" },
@@ -218,7 +220,7 @@ export function Toggle({
       <SwitchPrimitive.Root
         checked={checked}
         onCheckedChange={onChange}
-        className="peer inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input"
+        className="peer inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 data-[state=checked]:bg-switch-on data-[state=unchecked]:bg-input data-[state=unchecked]:shadow-[inset_0_0_0_1px_var(--border)]"
       >
         <SwitchPrimitive.Thumb className="pointer-events-none block size-4 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0.5" />
       </SwitchPrimitive.Root>

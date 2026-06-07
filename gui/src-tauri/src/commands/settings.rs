@@ -23,10 +23,39 @@ pub fn get_prefs() -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
+/// Read one boolean pref from `gui-prefs.json` (for startup decisions the Rust
+/// side owns: show_tray, close_to_tray).
+pub fn pref_bool(key: &str, default: bool) -> bool {
+    get_prefs()
+        .get(key)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(default)
+}
+
 #[tauri::command]
-pub fn set_prefs(prefs: serde_json::Value) -> CmdResult<()> {
+pub fn set_prefs(app: tauri::AppHandle, prefs: serde_json::Value) -> CmdResult<()> {
     let body = serde_json::to_string_pretty(&prefs).map_err(emsg)?;
     std::fs::write(prefs_path(), body).map_err(emsg)?;
+    // Launch-at-login is OS state, not a file — sync it with the pref so the
+    // toggle actually registers/unregisters the app.
+    sync_autostart(&app, &prefs)?;
+    Ok(())
+}
+
+/// Register/unregister the app's OS launch-at-login entry to match the pref.
+fn sync_autostart(app: &tauri::AppHandle, prefs: &serde_json::Value) -> CmdResult<()> {
+    use tauri_plugin_autostart::ManagerExt;
+    let want = prefs
+        .get("launch_at_login")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let al = app.autolaunch();
+    let is = al.is_enabled().unwrap_or(false);
+    if want == is {
+        return Ok(());
+    }
+    if want { al.enable() } else { al.disable() }
+        .map_err(|e| format!("launch at login: {e}"))?;
     Ok(())
 }
 
@@ -132,13 +161,20 @@ pub fn daemon_doctor() -> CmdResult<bool> {
     Ok(daemon::is_running(&daemon::base_dir()))
 }
 
-/// Persist daemon/lock limits into the keyring. Takes effect on the next daemon
-/// start.
+/// Persist daemon/lock limits into the keyring. Daemon limits take effect on the
+/// next daemon start; the re-auth cap applies to sessions stamped from the next
+/// sign-in (already-cached sessions keep the cap stamped at their unlock).
 #[tauri::command]
-pub fn set_daemon_limits(idle_timeout_secs: u64, max_connections: usize) -> CmdResult<()> {
+pub fn set_daemon_limits(
+    idle_timeout_secs: u64,
+    max_connections: usize,
+    max_unlocked_secs: u64,
+) -> CmdResult<()> {
     let mut kr = open_or_init_keyring()?;
     kr.data.lock.idle_timeout_secs = idle_timeout_secs;
     kr.data.daemon.max_connections = max_connections;
+    kr.data.lock.max_unlocked_secs =
+        svault_cli::core::session::clamp_session_cap(max_unlocked_secs);
     kr.save().map_err(emsg)
 }
 

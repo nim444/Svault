@@ -78,8 +78,12 @@ as the rest of Svault. `svault master touchid status` / `remove` manage the slot
 removing it also deletes the keychain item.
 
 **Re-auth cap.** Every unlock — passphrase or YubiKey, CLI, TUI, or the daemon
-behind MCP — stays valid for at most **6 hours**, after which the master must be
-re-entered. This bounds how long an already-unlocked vault can be read.
+behind MCP — stays valid for at most the configured re-auth cap (**default 6
+hours**), after which the master must be re-entered. This bounds how long an
+already-unlocked vault can be read. The cap lives in the encrypted keyring
+(`lock.max_unlocked_secs`, clamped to 15 minutes–7 days) and is editable in the
+GUI under Settings → Lock & sessions; the cap that applied at unlock is stamped
+into each session, so a change takes effect from the next sign-in.
 
 > The **keyring** — the optional store for the AI judge's config and API keys — is
 > opened by the **same master passphrase** (`svault keyring init | unlock`); it has

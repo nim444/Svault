@@ -12,6 +12,10 @@ import "@fontsource/ibm-plex-sans/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./styles.css";
+import { initAppearance } from "./lib/theme";
+
+// Apply the saved theme / reduce-motion prefs before first paint settles.
+void initAppearance();
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },

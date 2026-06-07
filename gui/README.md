@@ -41,8 +41,9 @@ cargo clippy
   typed bridge to every Tauri command.
 - `src-tauri/` — Rust backend (crate `svault-gui`), path-depending on `svault-cli`.
   `src/commands/` holds the command modules; `src/tray.rs` the tray popover;
-  `src/lib.rs` the builder (sets `SVAULT_HOME=~`, `Source::Gui`, the tray, and
-  daemon auto-start).
+  `src/lib.rs` the builder (sets `SVAULT_HOME=~`, `Source::Gui`, the tray —
+  gated by the `show_tray` pref — close-to-tray handling, launch-at-login
+  sync, and daemon auto-start).
 
 ## Recommended IDE setup
 

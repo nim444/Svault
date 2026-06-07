@@ -408,8 +408,10 @@ fn write_master_slot(path: &Path, mk: &VaultKey, passphrase: &str) -> Result<()>
 // ── Session caching (mirrors session.rs / keyring.rs) ────────────────────────
 
 /// Cache MK (`0600`, timestamped) so `create` / `enroll` don't re-prompt within
-/// a session. Never stores the passphrase; expires after
-/// [`crate::core::session::MAX_SESSION_SECS`] so the master must be re-entered.
+/// a session. Never stores the passphrase; expires after the configured re-auth
+/// cap (default [`crate::core::session::MAX_SESSION_SECS`]) so the master must
+/// be re-entered. Callers that just opened the keyring should stamp this AFTER
+/// the keyring unlock so the configured cap applies.
 pub fn unlock_session(mk: &[u8; 32]) -> Result<()> {
     crate::core::session::write_session_key(&session_path(), mk)
 }

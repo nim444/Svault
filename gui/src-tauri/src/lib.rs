@@ -73,11 +73,38 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(state::GuiState::default())
         .setup(|app| {
-            tray::setup(app)?;
+            // The "Show in menu bar / system tray" pref — read at startup, which
+            // is why the Settings copy says it takes effect on the next start.
+            if commands::settings::pref_bool("show_tray", true) {
+                tray::setup(app)?;
+            }
             autostart_daemon();
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // "Close to tray": hide the main window instead of quitting — but
+            // only when there is a tray to come back from. Otherwise actually
+            // exit (the hidden popover window would keep the process alive).
+            if window.label() != "main" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                use tauri::Manager;
+                let to_tray = commands::settings::pref_bool("show_tray", true)
+                    && commands::settings::pref_bool("close_to_tray", true);
+                if to_tray {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else {
+                    window.app_handle().exit(0);
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,

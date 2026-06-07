@@ -54,7 +54,8 @@ override the base directory; the store then lives at `$SVAULT_HOME/.svault`.
   master.yubikey.enc ← master key wrapped under a YubiKey (FIDO2 hmac-secret),
                        if one is enrolled                 (safe to commit, owner-only)
   master.yubikey.meta ← non-secret FIDO2 credential id + salt for that slot (owner-only)
-  .master.session    ← master-key cache while unlocked, expires after 6h
+  .master.session    ← master-key cache while unlocked, expires after the
+                       re-auth cap (default 6h, configurable)
                        (gitignored, mode 0600)
   keyring.enc        ← AES-256-GCM encrypted global config: the named-judge
                        registry (model/thresholds/criteria/API key each), the

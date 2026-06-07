@@ -794,6 +794,25 @@ fn cmd_unlock(vault_name: Option<&str>) -> Result<()> {
 
     let master = ensure_master_unlocked(false)?;
 
+    // Open the keyring FIRST (judges + ops config) so the configured re-auth cap
+    // applies to the master and vault sessions stamped below — `svault unlock`
+    // also activates the AI judge without a second prompt.
+    let mut keyring_unlocked = false;
+    if keyring_unlockable {
+        match master.unwrap_keyring_dek() {
+            Ok(dek) => {
+                keyring::unlock_session(dek.bytes())?;
+                println!("{} keyring unlocked", style("ok:").green());
+                keyring_unlocked = true;
+                // Re-stamp the master session under the configured cap. Safe:
+                // master + keyring sessions share a cap, so a locked keyring next
+                // to a live master session only happens right after an unlock.
+                let _ = master::unlock_session(master.key_bytes());
+            }
+            Err(e) => eprintln!("{} keyring: {}", style("warning:").yellow(), e),
+        }
+    }
+
     let mut unlocked = 0usize;
     let mut already = 0usize;
     for dir in &targets {
@@ -832,20 +851,6 @@ fn cmd_unlock(vault_name: Option<&str>) -> Result<()> {
         }
         usage::human(dir, "unlock", None);
         unlocked += 1;
-    }
-
-    // A full unlock also opens the keyring (judges + their keys) under the same
-    // master — so the AI judge is live without a second prompt.
-    let mut keyring_unlocked = false;
-    if keyring_unlockable {
-        match master.unwrap_keyring_dek() {
-            Ok(dek) => {
-                keyring::unlock_session(dek.bytes())?;
-                println!("{} keyring unlocked", style("ok:").green());
-                keyring_unlocked = true;
-            }
-            Err(e) => eprintln!("{} keyring: {}", style("warning:").yellow(), e),
-        }
     }
 
     if unlocked == 0 && already > 0 {

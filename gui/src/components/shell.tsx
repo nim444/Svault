@@ -163,7 +163,7 @@ function DaemonBlock() {
           Lock all
         </Button>
         <Button
-          variant="ghost"
+          variant="dangerOutline"
           className="flex-1 px-2 py-1.5 text-xs"
           onClick={() => {
             signOut();

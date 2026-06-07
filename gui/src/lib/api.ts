@@ -412,7 +412,13 @@ export const daemonDoctor = () => invoke<boolean>("daemon_doctor");
 export const setDaemonLimits = (
   idleTimeoutSecs: number,
   maxConnections: number,
-) => invoke<void>("set_daemon_limits", { idleTimeoutSecs, maxConnections });
+  maxUnlockedSecs: number,
+) =>
+  invoke<void>("set_daemon_limits", {
+    idleTimeoutSecs,
+    maxConnections,
+    maxUnlockedSecs,
+  });
 export const diagnostics = () => invoke<string>("diagnostics");
 export const storeFolder = () => invoke<string>("store_folder");
 
