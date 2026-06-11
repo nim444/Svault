@@ -18,6 +18,9 @@
 
 </div>
 
+> [!WARNING]
+> **This project is deprecated.** Svault is no longer actively developed. Its successor is **[Kelid](https://github.com/nim444/kelid)** — a native Swift macOS rebuild of the same idea (structured agent requests, policy engine, AI judge, audit trail). Svault 1.x remains usable as-is and `svault-cli` stays on crates.io, but no new features or fixes are planned here.
+
 ![Svault Banner](https://raw.githubusercontent.com/nim444/Svault/main/docs/banner.jpg)
 
 Svault is a **secret access layer for AI agents**, written in Rust. It sits between an agent and your credentials and makes every request structured, policy-gated, and audited: the agent must say *which* secret, in *what* scope, and *why* — and a sensitive request is scored by an AI judge before any value is returned.
