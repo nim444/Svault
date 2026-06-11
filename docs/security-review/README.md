@@ -51,6 +51,7 @@ read-only commands that skip the master gate).
 
 | Version | Date | Reviewer | Overall posture | Review |
 |---|---|---|---|---|
+| 1.1.1 | 2026-06-10 | Claude Fable 5 (Anthropic) — *posture check, not a full independent review* | Core green (tooling pass clean, no regressions; 3 unreviewed surfaces since v1.0.0); GUI gui-1.1.0 register still open incl. both Highs (G-1, G-2) | [reviews/1.1.1-claude-fable-5.md](reviews/1.1.1-claude-fable-5.md) |
 | 0.9.9 | 2026-06-02 | opencode (x-ai/grok-build-0.1) | Low-Medium (Unix + daemon with enforced gate) — sound policy enforcement for cooperative agents; Windows / no-daemon remains higher residual; suitable for corporate CI/agent use under the documented same-UID model | [reviews/0.9.9-opencode.md](reviews/0.9.9-opencode.md) |
 | 0.7.0 | 2026-05-30 | Claude Opus 4.8 (Anthropic) | Moderate — conditionally OK on Unix as at-rest store + audit/guardrails; policy is advisory (bypassable same-UID), so not an enforcement boundary; not for high-value prod or Windows fleets | [reviews/0.7.0-claude-opus-4.8.md](reviews/0.7.0-claude-opus-4.8.md) |
 | 0.7.0 | 2026-05-30 | GLM-5.1 (z-ai, via opencode) | Moderate — with caveats; strong crypto + daemon on Unix, but policy unenforced at the daemon (bypassable same-UID); weaker on Windows | [reviews/0.7.0-glm5.1.md](reviews/0.7.0-glm5.1.md) |
